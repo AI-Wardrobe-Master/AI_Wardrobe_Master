@@ -1,4 +1,4 @@
-# ai_wardrobe
+# AI Wardrobe Master
 
 AI Wardrobe Master 团队协作仓库：Flutter 应用与组员文档。
 
