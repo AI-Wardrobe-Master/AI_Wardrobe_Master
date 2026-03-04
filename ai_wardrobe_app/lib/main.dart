@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'theme/app_theme.dart';
 import 'theme/theme_controller.dart';
-import 'ui/root_shell.dart';
+import 'ui/screens/splash_screen.dart';
 
 void main() {
   runApp(const WardrobeApp());
@@ -22,7 +22,7 @@ class WardrobeApp extends StatelessWidget {
           theme: buildLightTheme(),
           darkTheme: buildDarkTheme(),
           themeMode: themeController.mode,
-          home: const RootShell(),
+          home: const SplashScreen(),
         );
       },
     );

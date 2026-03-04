@@ -381,10 +381,6 @@ class _WebRootShellState extends State<_WebRootShell> {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final textP = isDark ? AppColors.darkTextPrimary : AppColors.textPrimary;
-    final textS = isDark ? AppColors.darkTextSecondary : AppColors.textSecondary;
-
     return Scaffold(
       body: Row(
         children: [
@@ -393,21 +389,6 @@ class _WebRootShellState extends State<_WebRootShell> {
             color: Theme.of(context).cardColor,
             child: Column(
               children: [
-                const SizedBox(height: 20),
-                Icon(
-                  Icons.style_rounded,
-                  color: textP,
-                  size: 26,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'AIW',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    color: textS,
-                  ),
-                ),
                 const SizedBox(height: 24),
                 Expanded(
                   child: NavigationRail(
