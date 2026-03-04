@@ -384,6 +384,51 @@ final appRouter = GoRouter(
 
 ---
 
+### Web vs Mobile Shell Layout
+
+For this project, we want **bottom navigation on mobile** and a **left-side navigation on web/large screens** while sharing the same core pages (`WardrobeScreen`, `DiscoverScreen`, `OutfitCanvasScreen`, `ProfileScreen`).
+
+Implementation sketch:
+
+```dart
+// root_shell.dart
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/material.dart';
+
+class RootShell extends StatelessWidget {
+  const RootShell({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isWide = constraints.maxWidth >= 900; // treat wide screens as desktop/web
+        if (kIsWeb || isWide) {
+          return const _WebRootShell();    // Left navigation + content
+        }
+        return const _MobileRootShell();   // Bottom nav bar
+      },
+    );
+  }
+}
+```
+
+- **`kIsWeb`**: true when running in the browser; false on iOS/Android/desktop.
+- **`constraints.maxWidth`**: lets us treat very wide windows as \"desktop\" even on non-web platforms.
+
+Patterns:
+
+- `_MobileRootShell` uses a `BottomNavigationBar` with 5 items: `Wardrobe / Discover / Add / Visualize / Profile`.
+- `_WebRootShell` uses `Row + NavigationRail + IndexedStack`:
+  - Left: `NavigationRail` with `Wardrobe / Discover / Visualize / Profile`.
+  - Bottom of the rail: a prominent **Add** button that opens the same `BottomSheet` as mobile (\"Add clothes\" / \"Open outfit canvas\").
+  - Right: main content area with the same page widgets as mobile.
+
+This keeps:
+
+- **Business logic & pages shared** across platforms.
+- **Shell layout swapped** automatically based on **platform + screen width**.
+
 ## Database Schema (SQLite)
 
 ### Tables

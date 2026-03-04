@@ -12,7 +12,9 @@ documents/
 ├── DATA_MODEL.md                # 数据模型和实体定义
 ├── API_CONTRACT.md              # API 接口规范
 ├── BACKEND_ARCHITECTURE.md      # 后端架构设计 (FastAPI + PostgreSQL)
-└── FLUTTER_ARCHITECTURE.md      # Flutter 架构设计
+├── FLUTTER_ARCHITECTURE.md      # Flutter 架构设计
+├── FLUTTER_GUIDE_ZH.md          # Flutter 使用手册（中文）
+└── FLUTTER_GUIDE_EN.md          # Flutter Quick Guide (English)
 ```
 
 ---
