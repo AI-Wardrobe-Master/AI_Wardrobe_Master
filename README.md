@@ -1,8 +1,6 @@
 # AI Wardrobe Master
 
-Team repository for AI Wardrobe Master: Flutter demo app + project documentation.
-
-## Repository structure (top level)
+## Repository structure
 
 ```
 ai_wardrobe/
@@ -15,7 +13,7 @@ ai_wardrobe/
 └── README.md                     # this file
 ```
 
-## Getting started (Flutter app)
+## Getting started
 
 ```bash
 # 1. Go to app directory
@@ -57,7 +55,7 @@ flutter run -d <device-id>
 - **`groupmembers'markdown/`**  
   - Per-member notes on work items, responsibilities, and progress, e.g. `cht.md` (front-end skeleton, docs, etc.).
 
-## Suggested reading order (for new teammates)
+## Suggested reading order
 
 1. `documents/TECH_STACK.md`: high-level tech stack and system overview  
 2. `documents/USER_STORIES.md`: what problems we are solving  
