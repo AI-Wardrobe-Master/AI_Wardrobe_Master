@@ -673,10 +673,10 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
     }
 
     final config = _zoneOverlay[zone]!;
-    final horizontalOffset = zone.layered ? 8.0 : 0.0;
-    final verticalOffset = zone.layered ? 10.0 : 0.0;
-    final cardWidth = zone.layered ? 70.0 : 96.0;
-    final cardHeight = zone.layered ? 46.0 : 46.0;
+    final horizontalOffset = zone.layered ? 7.0 : 0.0;
+    final verticalOffset = zone.layered ? 9.0 : 0.0;
+    final cardWidth = zone.layered ? 64.0 : 96.0;
+    final cardHeight = zone.layered ? 42.0 : 46.0;
     final stackWidth = cardWidth + ((selections.length - 1) * horizontalOffset);
     final stackHeight = cardHeight + ((selections.length - 1) * verticalOffset);
     final hotspotX = width * config.hotspot.dx;
@@ -750,9 +750,12 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
             _showGarmentDetails(zone, worn.item, currentLayer: worn.layer),
         borderRadius: BorderRadius.circular(18),
         child: Ink(
-          width: isLayered ? 70 : 96,
-          height: 46,
-          padding: const EdgeInsets.all(6),
+          width: isLayered ? 64 : 96,
+          height: isLayered ? 42 : 46,
+          padding: EdgeInsets.symmetric(
+            horizontal: isLayered ? 5 : 6,
+            vertical: isLayered ? 4 : 6,
+          ),
           decoration: BoxDecoration(
             color: surfaceColor,
             borderRadius: BorderRadius.circular(18),
@@ -769,26 +772,28 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
               ? Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     Container(
-                      width: 24,
-                      height: 24,
+                      width: 20,
+                      height: 20,
                       decoration: BoxDecoration(
                         color: worn.item.accent,
-                        borderRadius: BorderRadius.circular(9),
+                        borderRadius: BorderRadius.circular(7),
                       ),
                       alignment: Alignment.center,
                       child: Icon(
                         worn.item.icon,
-                        size: 14,
+                        size: 12,
                         color: Colors.white,
                       ),
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 2),
                     Text(
                       'L${worn.layer}',
                       style: TextStyle(
-                        fontSize: 11,
+                        fontSize: 10,
+                        height: 1,
                         fontWeight: FontWeight.w700,
                         color: _textPrimary,
                       ),

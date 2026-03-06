@@ -92,4 +92,53 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('three upper-body layers do not overflow on the canvas', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(360, 740);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const MaterialApp(home: OutfitCanvasScreen()));
+    await tester.pumpAndSettle();
+
+    final upperHotspot = find.byTooltip('Select upper body garments');
+    await tester.ensureVisible(upperHotspot);
+    await tester.pumpAndSettle();
+    await tester.tap(upperHotspot, warnIfMissed: false);
+    await tester.pumpAndSettle();
+
+    Future<void> wearLayer(String title, int layer) async {
+      final titleFinder = find.text(title);
+      await tester.ensureVisible(titleFinder);
+      await tester.pumpAndSettle();
+      final cardFinder = find.ancestor(
+        of: titleFinder,
+        matching: find.byType(InkWell),
+      );
+      final wearButton = find.descendant(
+        of: cardFinder.first,
+        matching: find.widgetWithText(FilledButton, 'Wear'),
+      );
+      await tester.tap(wearButton.first);
+      await tester.pumpAndSettle();
+      final layerOption = find.text('Wear on Layer $layer');
+      await tester.ensureVisible(layerOption);
+      await tester.pumpAndSettle();
+      await tester.tap(layerOption, warnIfMissed: false);
+      await tester.pumpAndSettle();
+    }
+
+    await wearLayer('Ivory Turtleneck', 1);
+    await wearLayer('Relaxed Oxford Shirt', 2);
+    await wearLayer('Dark Leather Jacket', 3);
+
+    await tester.tapAt(const Offset(12, 12));
+    await tester.pumpAndSettle();
+
+    expect(find.text('L3'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
