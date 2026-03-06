@@ -13,6 +13,7 @@ from app.models.clothing_item import ClothingItem, Image, Model3D, ProcessingTas
 from app.services import background_removal_service as bg
 from app.services import model_3d_service as m3d
 from app.services import angle_renderer_service as renderer
+from app.services.ai_service import AIService
 from app.services.storage_service import StorageService
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,7 @@ async def run_pipeline(
 
     base = f"{user_id}/{clothing_id}"
     uploaded: list[str] = []
+    ai_service = AIService()
 
     try:
         # --- 1. Store originals ---
@@ -78,7 +80,15 @@ async def run_pipeline(
             uploaded.append(proc_back_path)
             _add_image(db, clothing_id, "PROCESSED_BACK", proc_back_path)
 
-        # --- 3. 3D model generation ---
+        # --- 3. AI classification ---
+        _update(db, task, 25)
+        predicted_tags = ai_service.classify_bytes(front_proc)
+        item.predicted_tags = [_tag_to_dict(tag) for tag in predicted_tags]
+        item.final_tags = list(item.predicted_tags)
+        item.is_confirmed = False
+        db.commit()
+
+        # --- 4. 3D model generation ---
         _update(db, task, 30)
         mesh = await m3d.generate_3d_model(front_proc, back_proc)
         _update(db, task, 65)
@@ -96,7 +106,7 @@ async def run_pipeline(
         )
         db.add(model_record)
 
-        # --- 4. Angle rendering ---
+        # --- 5. Angle rendering ---
         _update(db, task, 70)
         angle_images = renderer.render_all_angles(mesh)
 
@@ -143,3 +153,9 @@ def _add_image(
         angle=angle,
     ))
     db.commit()
+
+
+def _tag_to_dict(tag) -> dict[str, str]:
+    if isinstance(tag, dict):
+        return tag
+    return {"key": tag.key, "value": tag.value}
