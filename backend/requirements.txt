@@ -1,0 +1,15 @@
+# AI Wardrobe Master - Backend Dependencies
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+sqlalchemy>=2.0.25
+psycopg2-binary>=2.9.9
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+python-multipart>=0.0.6
+
+# TODO: 选型后按需添加
+# torch / transformers   # 若用 Hugging Face 分类
+# tensorflow / tflite    # 若用 TF 分类
+# colorthief             # 主色提取
+# pillow                 # 图像处理
+# opencv-python-headless # 图像处理
