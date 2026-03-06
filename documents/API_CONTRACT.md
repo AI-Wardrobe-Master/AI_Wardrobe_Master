@@ -142,14 +142,30 @@ POST /clothing-items
 
 **Request Body (multipart/form-data):**
 ```
-frontImage: <file>
-backImage: <file>
+frontImage: <file>              (required)
+backImage: <file>               (optional — improves 3D generation quality)
 name: "Blue Striped T-Shirt"
 description: "Comfortable cotton t-shirt"
 tags: ["cotton", "comfortable"]
 ```
 
-**Response (201):**
+**Response (202 Accepted):**
+
+> Returns 202 instead of 201 because 3D model generation and angle rendering are processed asynchronously (~30s). Client should poll the processing-status endpoint.
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "item-001",
+    "processingTaskId": "task-001",
+    "status": "PROCESSING",
+    "estimatedTime": 30
+  }
+}
+```
+
+**Response after processing completes (via GET /clothing-items/:id):**
 ```json
 {
   "success": true,
@@ -162,8 +178,18 @@ tags: ["cotton", "comfortable"]
       "originalBackUrl": "/images/item-001-back-orig.jpg",
       "processedFrontUrl": "/images/item-001-front-proc.png",
       "processedBackUrl": "/images/item-001-back-proc.png",
-      "angleViews": { /* angle URLs */ }
+      "angleViews": {
+        "0": "/images/item-001-angle-0.png",
+        "45": "/images/item-001-angle-45.png",
+        "90": "/images/item-001-angle-90.png",
+        "135": "/images/item-001-angle-135.png",
+        "180": "/images/item-001-angle-180.png",
+        "225": "/images/item-001-angle-225.png",
+        "270": "/images/item-001-angle-270.png",
+        "315": "/images/item-001-angle-315.png"
+      }
     },
+    "model3dUrl": "/models/item-001.glb",
     "predictedTags": [
       { "key": "category", "value": "T_SHIRT" },
       { "key": "color", "value": "blue" },
@@ -184,6 +210,9 @@ tags: ["cotton", "comfortable"]
     "updatedAt": "2024-01-15T10:30:00Z"
   }
 }
+```
+
+**Note:** `originalBackUrl`, `processedBackUrl` will be `null` if no back image was provided.
 ```
 
 ### 2.2 Get Clothing Item
@@ -985,6 +1014,79 @@ POST /images/:id/generate-angles
   }
 }
 ```
+
+### 8.4 Get Processing Status
+```
+GET /clothing-items/:id/processing-status
+```
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "status": "PROCESSING",
+    "progress": 60,
+    "steps": {
+      "upload": "completed",
+      "backgroundRemoval": "completed",
+      "modelGeneration": "processing",
+      "angleRendering": "pending"
+    },
+    "errorMessage": null
+  }
+}
+```
+
+**Status values:** `PENDING` | `PROCESSING` | `COMPLETED` | `FAILED`
+
+### 8.5 Retry Failed Processing
+```
+POST /clothing-items/:id/retry
+```
+
+**Response (202):**
+```json
+{
+  "success": true,
+  "data": {
+    "processingTaskId": "task-002",
+    "status": "PROCESSING"
+  }
+}
+```
+
+### 8.6 Get Angle Views
+```
+GET /clothing-items/:id/angle-views
+```
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "angleViews": {
+      "0": "/images/item-001-angle-0.png",
+      "45": "/images/item-001-angle-45.png",
+      "90": "/images/item-001-angle-90.png",
+      "135": "/images/item-001-angle-135.png",
+      "180": "/images/item-001-angle-180.png",
+      "225": "/images/item-001-angle-225.png",
+      "270": "/images/item-001-angle-270.png",
+      "315": "/images/item-001-angle-315.png"
+    }
+  }
+}
+```
+
+### 8.7 Download 3D Model
+```
+GET /clothing-items/:id/model
+```
+
+**Response (200):**
+Returns the GLB file as binary with `Content-Type: model/gltf-binary`.
 
 ---
 
