@@ -74,6 +74,7 @@ class ClothingItemBase(BaseModel):
 
 
 class ClothingItemUpdate(BaseModel):
+    """PATCH /clothing-items/:id - tag confirmation and editing"""
     model_config = ConfigDict(extra="forbid")
 
     name: Optional[str] = None

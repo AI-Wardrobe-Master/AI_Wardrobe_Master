@@ -3,3 +3,5 @@
 Thumbs.db
 settings.json
 QUICKSTART.md
+AGENTS.md
+*.pyc
