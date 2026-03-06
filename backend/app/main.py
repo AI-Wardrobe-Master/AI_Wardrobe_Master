@@ -10,7 +10,10 @@ from app.core.config import settings
 
 logging.basicConfig(level=logging.INFO)
 
-app = FastAPI(title=settings.PROJECT_NAME, openapi_url="/api/v1/openapi.json")
+app = FastAPI(
+    title=settings.PROJECT_NAME,
+    openapi_url=f"{settings.API_V1_STR}/openapi.json",
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -28,5 +31,5 @@ app.mount("/files", StaticFiles(directory=str(storage_dir)), name="files")
 
 
 @app.get("/health")
-def health():
+def health_check():
     return {"status": "ok"}

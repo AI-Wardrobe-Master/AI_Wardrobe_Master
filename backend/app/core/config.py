@@ -1,5 +1,6 @@
+from typing import List, Optional
+
 from pydantic_settings import BaseSettings
-from typing import Optional
 
 
 class Settings(BaseSettings):
@@ -23,6 +24,7 @@ class Settings(BaseSettings):
     # Storage
     STORAGE_TYPE: str = "local"  # "s3" or "local"
     LOCAL_STORAGE_PATH: str = "./storage"
+    API_BASE_URL: str = "http://localhost:8000"
 
     # S3 / MinIO
     S3_ENDPOINT: Optional[str] = None
@@ -45,7 +47,7 @@ class Settings(BaseSettings):
     # Redis / Celery
     REDIS_URL: str = "redis://localhost:6379/0"
 
-    BACKEND_CORS_ORIGINS: list = ["*"]
+    BACKEND_CORS_ORIGINS: List[str] = ["*"]
 
     class Config:
         env_file = ".env"
