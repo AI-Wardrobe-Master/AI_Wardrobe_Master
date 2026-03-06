@@ -171,14 +171,3 @@ Database schema and data model details are maintained in their respective docume
 | Only front photo available | Single-view model produces reasonable inference; guide user to provide back |
 
 ---
-
-## 9. Timeline
-
-| Phase | Week | Scope |
-|-------|------|-------|
-| Infrastructure | 1 | Backend skeleton, DB migration, storage config, Hunyuan3D-2 setup, Docker |
-| Image Capture (1.1) | 2 | Flutter camera, capture flow, upload API |
-| Background Removal (1.2) | 2-3 | rembg integration, image storage |
-| 3D & Angles (1.3) | 3-4 | Hunyuan3D-2 integration, angle rendering, Flutter angle browser |
-| Persistence (1.4) | 4-5 | DB extensions, CRUD, async queue, retry, integration tests |
-| Polish & Test | 5-6 | Performance, error handling, E2E tests |
