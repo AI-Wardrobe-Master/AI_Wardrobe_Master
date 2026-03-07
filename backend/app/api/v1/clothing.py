@@ -245,7 +245,7 @@ async def retry_processing(item_id: UUID, db: Session = Depends(get_db)):
     if not front_bytes:
         raise HTTPException(400, "Original front image not found, please re-upload")
 
-    _, task = await run_pipeline(
+    item, task = await run_pipeline(
         db,
         storage,
         item.user_id,
@@ -253,6 +253,8 @@ async def retry_processing(item_id: UUID, db: Session = Depends(get_db)):
         back_bytes,
         item.name,
         item.description,
+        existing_item=item,
+        reuse_originals=True,
     )
     return ClothingItemCreateResponse(
         id=item.id,

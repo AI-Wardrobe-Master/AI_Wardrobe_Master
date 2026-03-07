@@ -319,6 +319,7 @@ enum Season {
   allSeason,
 }
 
+# 这个让用户自己选比较合适
 enum TargetAudience {
   @JsonValue('MEN')
   men,
