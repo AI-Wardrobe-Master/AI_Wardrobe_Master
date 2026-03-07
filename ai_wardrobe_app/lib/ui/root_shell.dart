@@ -1,7 +1,11 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
+import 'screens/capture/camera_capture_screen.dart';
+import 'screens/capture/processing_screen.dart';
 import 'screens/discover_screen.dart';
 import 'screens/outfit_canvas_screen.dart';
 import 'screens/profile_screen.dart';
@@ -130,6 +134,7 @@ class _MobileRootShellState extends State<_MobileRootShell> {
                   ),
                   onTap: () {
                     Navigator.of(context).pop();
+                    _navigateToCapture();
                   },
                 ),
                 const SizedBox(height: 8),
@@ -172,6 +177,25 @@ class _MobileRootShellState extends State<_MobileRootShell> {
           ),
         );
       },
+    );
+  }
+
+  Future<void> _navigateToCapture() async {
+    final result = await Navigator.push<Map<String, File?>>(
+      context,
+      MaterialPageRoute(builder: (_) => const CameraCaptureScreen()),
+    );
+    if (result == null || !mounted) return;
+    final front = result['front'];
+    if (front == null) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ProcessingScreen(
+          frontImage: front,
+          backImage: result['back'],
+        ),
+      ),
     );
   }
 
@@ -335,6 +359,7 @@ class _WebRootShellState extends State<_WebRootShell> {
                   ),
                   onTap: () {
                     Navigator.of(context).pop();
+                    _navigateToCapture();
                   },
                 ),
                 const SizedBox(height: 8),
@@ -376,6 +401,25 @@ class _WebRootShellState extends State<_WebRootShell> {
           ),
         );
       },
+    );
+  }
+
+  Future<void> _navigateToCapture() async {
+    final result = await Navigator.push<Map<String, File?>>(
+      context,
+      MaterialPageRoute(builder: (_) => const CameraCaptureScreen()),
+    );
+    if (result == null || !mounted) return;
+    final front = result['front'];
+    if (front == null) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ProcessingScreen(
+          frontImage: front,
+          backImage: result['back'],
+        ),
+      ),
     );
   }
 
