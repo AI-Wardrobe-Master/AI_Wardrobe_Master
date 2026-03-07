@@ -1,7 +1,8 @@
-from pydantic import BaseModel
-from typing import Optional
 from datetime import datetime
+from typing import List, Optional
 from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Tag(BaseModel):
@@ -62,3 +63,26 @@ class ClothingItemResponse(BaseModel):
 
 class AngleViewsResponse(BaseModel):
     angleViews: dict[int, str]
+
+
+class ClothingItemBase(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: Optional[str] = None
+    description: Optional[str] = None
+    custom_tags: List[str] = Field(default_factory=list, alias="customTags")
+
+
+class ClothingItemUpdate(BaseModel):
+    """PATCH /clothing-items/:id - tag confirmation and editing"""
+    model_config = ConfigDict(extra="forbid")
+
+    name: Optional[str] = None
+    description: Optional[str] = None
+    final_tags: Optional[List[Tag]] = Field(
+        None,
+        alias="finalTags",
+        description="User-confirmed tags, replaces all",
+    )
+    is_confirmed: Optional[bool] = Field(None, alias="isConfirmed")
+    custom_tags: Optional[List[str]] = Field(None, alias="customTags")

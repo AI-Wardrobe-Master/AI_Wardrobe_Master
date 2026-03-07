@@ -13,6 +13,7 @@ from app.models.clothing_item import ClothingItem, Image, Model3D, ProcessingTas
 from app.services import background_removal_service as bg
 from app.services import model_3d_service as m3d
 from app.services import angle_renderer_service as renderer
+from app.services.ai_service import AIService
 from app.services.storage_service import StorageService
 
 logger = logging.getLogger(__name__)
@@ -26,41 +27,55 @@ async def run_pipeline(
     back_bytes: bytes | None,
     name: str | None = None,
     description: str | None = None,
+    existing_item: ClothingItem | None = None,
+    reuse_originals: bool = False,
 ) -> tuple[ClothingItem, ProcessingTask]:
     """Execute the full pipeline. Returns (item, task)."""
 
-    clothing_id = uuid4()
-    item = ClothingItem(
-        id=clothing_id, user_id=user_id, source="OWNED",
-        name=name, description=description,
-        predicted_tags=[], final_tags=[], is_confirmed=False,
-    )
+    if existing_item is None:
+        clothing_id = uuid4()
+        item = ClothingItem(
+            id=clothing_id, user_id=user_id, source="OWNED",
+            name=name, description=description,
+            predicted_tags=[], final_tags=[], is_confirmed=False,
+        )
+        db.add(item)
+    else:
+        clothing_id = existing_item.id
+        item = existing_item
+        item.name = name
+        item.description = description
+        item.predicted_tags = []
+        item.final_tags = []
+        item.is_confirmed = False
+        _reset_pipeline_outputs(db, clothing_id, keep_originals=reuse_originals)
+
     task = ProcessingTask(
         id=uuid4(), clothing_item_id=clothing_id,
         task_type="FULL_PIPELINE", status="PROCESSING", progress=0,
         started_at=datetime.now(timezone.utc),
     )
-    db.add(item)
     db.add(task)
     db.commit()
 
     base = f"{user_id}/{clothing_id}"
     uploaded: list[str] = []
+    ai_service = AIService()
 
     try:
         # --- 1. Store originals ---
         _update(db, task, 5)
-        front_path = f"{base}/original_front.jpg"
-        await storage.upload(io.BytesIO(front_bytes), front_path)
-        uploaded.append(front_path)
-        _add_image(db, clothing_id, "ORIGINAL_FRONT", front_path)
+        if not reuse_originals:
+            front_path = f"{base}/original_front.jpg"
+            await storage.upload(io.BytesIO(front_bytes), front_path)
+            uploaded.append(front_path)
+            _add_image(db, clothing_id, "ORIGINAL_FRONT", front_path)
 
-        back_path = None
-        if back_bytes:
-            back_path = f"{base}/original_back.jpg"
-            await storage.upload(io.BytesIO(back_bytes), back_path)
-            uploaded.append(back_path)
-            _add_image(db, clothing_id, "ORIGINAL_BACK", back_path)
+            if back_bytes:
+                back_path = f"{base}/original_back.jpg"
+                await storage.upload(io.BytesIO(back_bytes), back_path)
+                uploaded.append(back_path)
+                _add_image(db, clothing_id, "ORIGINAL_BACK", back_path)
 
         # --- 2. Background removal ---
         _update(db, task, 15)
@@ -78,7 +93,15 @@ async def run_pipeline(
             uploaded.append(proc_back_path)
             _add_image(db, clothing_id, "PROCESSED_BACK", proc_back_path)
 
-        # --- 3. 3D model generation ---
+        # --- 3. AI classification ---
+        _update(db, task, 25)
+        predicted_tags = ai_service.classify_bytes(front_proc)
+        item.predicted_tags = [_tag_to_dict(tag) for tag in predicted_tags]
+        item.final_tags = list(item.predicted_tags)
+        item.is_confirmed = False
+        db.commit()
+
+        # --- 4. 3D model generation ---
         _update(db, task, 30)
         mesh = await m3d.generate_3d_model(front_proc, back_proc)
         _update(db, task, 65)
@@ -96,7 +119,7 @@ async def run_pipeline(
         )
         db.add(model_record)
 
-        # --- 4. Angle rendering ---
+        # --- 5. Angle rendering ---
         _update(db, task, 70)
         angle_images = renderer.render_all_angles(mesh)
 
@@ -132,6 +155,25 @@ def _update(db: Session, task: ProcessingTask, progress: int):
     db.commit()
 
 
+def _reset_pipeline_outputs(
+    db: Session,
+    clothing_id: UUID,
+    *,
+    keep_originals: bool,
+):
+    image_query = db.query(Image).filter(Image.clothing_item_id == clothing_id)
+    if keep_originals:
+        image_query = image_query.filter(
+            Image.image_type.in_(["PROCESSED_FRONT", "PROCESSED_BACK", "ANGLE_VIEW"])
+        )
+    image_query.delete(synchronize_session=False)
+
+    db.query(Model3D).filter(Model3D.clothing_item_id == clothing_id).delete(
+        synchronize_session=False
+    )
+    db.commit()
+
+
 def _add_image(
     db: Session, clothing_id: UUID, image_type: str,
     path: str, angle: int | None = None,
@@ -143,3 +185,9 @@ def _add_image(
         angle=angle,
     ))
     db.commit()
+
+
+def _tag_to_dict(tag) -> dict[str, str]:
+    if isinstance(tag, dict):
+        return tag
+    return {"key": tag.key, "value": tag.value}

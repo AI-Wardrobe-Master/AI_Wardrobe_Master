@@ -1,18 +1,24 @@
+from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_current_user_id
+from app.crud import clothing as crud_clothing
 from app.db.session import get_db
 from app.models.clothing_item import ClothingItem, Image, Model3D, ProcessingTask
 from app.schemas.clothing_item import (
     AngleViewsResponse,
     ClothingItemCreateResponse,
     ClothingItemResponse,
+    ClothingItemUpdate,
     ImageSetResponse,
     ProcessingStatusResponse,
 )
+from app.schemas.search import SearchRequest
 from app.services.clothing_pipeline import run_pipeline
+from app.services.search_service import SearchService
 from app.services.storage_service import StorageService, get_storage_service
 
 router = APIRouter(prefix="/clothing-items", tags=["clothing"])
@@ -22,7 +28,21 @@ def _storage() -> StorageService:
     return get_storage_service()
 
 
-# ---- POST /clothing-items ----
+def _item_to_response(item) -> dict:
+    return {
+        "id": str(item.id),
+        "userId": str(item.user_id),
+        "source": item.source,
+        "predictedTags": item.predicted_tags or [],
+        "finalTags": item.final_tags or [],
+        "isConfirmed": item.is_confirmed,
+        "name": item.name,
+        "description": item.description,
+        "customTags": item.custom_tags or [],
+        "createdAt": item.created_at.isoformat() if item.created_at else None,
+        "updatedAt": item.updated_at.isoformat() if item.updated_at else None,
+    }
+
 
 @router.post("", response_model=ClothingItemCreateResponse, status_code=202)
 async def create_clothing_item(
@@ -36,22 +56,22 @@ async def create_clothing_item(
     back_bytes = await back_image.read() if back_image else None
     storage = _storage()
 
-    # TODO: move to Celery for true async; for now run inline
     item, task = await run_pipeline(
-        db, storage,
-        user_id=UUID("00000000-0000-0000-0000-000000000001"),  # placeholder until auth
+        db,
+        storage,
+        user_id=UUID("00000000-0000-0000-0000-000000000001"),
         front_bytes=front_bytes,
         back_bytes=back_bytes,
         name=name,
         description=description,
     )
     return ClothingItemCreateResponse(
-        id=item.id, processingTaskId=task.id,
-        status=task.status, estimatedTime=30,
+        id=item.id,
+        processingTaskId=task.id,
+        status=task.status,
+        estimatedTime=30,
     )
 
-
-# ---- GET /clothing-items/:id ----
 
 @router.get("/{item_id}", response_model=ClothingItemResponse)
 def get_clothing_item(item_id: UUID, db: Session = Depends(get_db)):
@@ -65,18 +85,112 @@ def get_clothing_item(item_id: UUID, db: Session = Depends(get_db)):
 
     image_set = _build_image_set(images, storage)
     return ClothingItemResponse(
-        id=item.id, userId=item.user_id, source=item.source,
+        id=item.id,
+        userId=item.user_id,
+        source=item.source,
         images=image_set,
         model3dUrl=storage.get_url(model.storage_path) if model else None,
         predictedTags=item.predicted_tags or [],
         finalTags=item.final_tags or [],
         isConfirmed=item.is_confirmed,
-        name=item.name, description=item.description,
-        createdAt=item.created_at, updatedAt=item.updated_at,
+        name=item.name,
+        description=item.description,
+        createdAt=item.created_at,
+        updatedAt=item.updated_at,
     )
 
 
-# ---- GET /clothing-items/:id/processing-status ----
+@router.patch("/{item_id}")
+def update_clothing_item(
+    item_id: UUID,
+    body: ClothingItemUpdate,
+    db: Session = Depends(get_db),
+    user_id: UUID = Depends(get_current_user_id),
+):
+    item = crud_clothing.update(
+        db,
+        item_id,
+        user_id,
+        name=body.name,
+        description=body.description,
+        final_tags=body.final_tags,
+        is_confirmed=body.is_confirmed,
+        custom_tags=body.custom_tags,
+    )
+    if not item:
+        raise HTTPException(status_code=404, detail="Clothing item not found")
+    return {"success": True, "data": _item_to_response(item)}
+
+
+@router.get("")
+def list_clothing_items(
+    db: Session = Depends(get_db),
+    user_id: UUID = Depends(get_current_user_id),
+    source: Optional[str] = Query(None),
+    tag_key: Optional[str] = Query(None, alias="tagKey"),
+    tag_value: Optional[str] = Query(None, alias="tagValue"),
+    search: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+):
+    items, total = crud_clothing.list_with_tag_filter(
+        db,
+        user_id,
+        source=source,
+        tag_key=tag_key,
+        tag_value=tag_value,
+        search=search,
+        page=page,
+        limit=limit,
+    )
+    import math
+
+    total_pages = math.ceil(total / limit) if limit > 0 else 0
+    return {
+        "success": True,
+        "data": {
+            "items": [_item_to_response(i) for i in items],
+            "pagination": {
+                "page": page,
+                "limit": limit,
+                "total": total,
+                "totalPages": total_pages,
+            },
+        },
+    }
+
+
+@router.post("/search")
+def search_clothing_items(
+    body: SearchRequest,
+    db: Session = Depends(get_db),
+    user_id: UUID = Depends(get_current_user_id),
+):
+    filters = body.filters.model_dump(exclude_none=True) if body.filters else None
+    items, total = SearchService().search(
+        db,
+        user_id,
+        query=body.query,
+        filters=filters,
+        page=body.page,
+        limit=body.limit,
+    )
+    import math
+
+    total_pages = math.ceil(total / body.limit) if body.limit > 0 else 0
+    return {
+        "success": True,
+        "data": {
+            "items": [_item_to_response(i) for i in items],
+            "pagination": {
+                "page": body.page,
+                "limit": body.limit,
+                "total": total,
+                "totalPages": total_pages,
+            },
+        },
+    }
+
 
 @router.get("/{item_id}/processing-status", response_model=ProcessingStatusResponse)
 def get_processing_status(item_id: UUID, db: Session = Depends(get_db)):
@@ -91,12 +205,12 @@ def get_processing_status(item_id: UUID, db: Session = Depends(get_db)):
 
     steps = _progress_to_steps(task.progress, task.status)
     return ProcessingStatusResponse(
-        status=task.status, progress=task.progress,
-        steps=steps, errorMessage=task.error_message,
+        status=task.status,
+        progress=task.progress,
+        steps=steps,
+        errorMessage=task.error_message,
     )
 
-
-# ---- POST /clothing-items/:id/retry ----
 
 @router.post("/{item_id}/retry", response_model=ClothingItemCreateResponse, status_code=202)
 async def retry_processing(item_id: UUID, db: Session = Depends(get_db)):
@@ -113,7 +227,6 @@ async def retry_processing(item_id: UUID, db: Session = Depends(get_db)):
     if last_task and last_task.status != "FAILED":
         raise HTTPException(400, "Only failed tasks can be retried")
 
-    # Re-read originals from storage and re-run
     storage = _storage()
     images = db.query(Image).filter(
         Image.clothing_item_id == item_id,
@@ -132,17 +245,24 @@ async def retry_processing(item_id: UUID, db: Session = Depends(get_db)):
     if not front_bytes:
         raise HTTPException(400, "Original front image not found, please re-upload")
 
-    _, task = await run_pipeline(
-        db, storage, item.user_id,
-        front_bytes, back_bytes, item.name, item.description,
+    item, task = await run_pipeline(
+        db,
+        storage,
+        item.user_id,
+        front_bytes,
+        back_bytes,
+        item.name,
+        item.description,
+        existing_item=item,
+        reuse_originals=True,
     )
     return ClothingItemCreateResponse(
-        id=item.id, processingTaskId=task.id,
-        status=task.status, estimatedTime=30,
+        id=item.id,
+        processingTaskId=task.id,
+        status=task.status,
+        estimatedTime=30,
     )
 
-
-# ---- GET /clothing-items/:id/angle-views ----
 
 @router.get("/{item_id}/angle-views", response_model=AngleViewsResponse)
 def get_angle_views(item_id: UUID, db: Session = Depends(get_db)):
@@ -153,11 +273,13 @@ def get_angle_views(item_id: UUID, db: Session = Depends(get_db)):
         .all()
     )
     storage = _storage()
-    views = {img.angle: storage.get_url(img.storage_path) for img in images if img.angle is not None}
+    views = {
+        img.angle: storage.get_url(img.storage_path)
+        for img in images
+        if img.angle is not None
+    }
     return AngleViewsResponse(angleViews=views)
 
-
-# ---- GET /clothing-items/:id/model ----
 
 @router.get("/{item_id}/model")
 async def download_model(item_id: UUID, db: Session = Depends(get_db)):
@@ -169,14 +291,13 @@ async def download_model(item_id: UUID, db: Session = Depends(get_db)):
     data = await storage.download(model.storage_path)
 
     from fastapi.responses import Response
+
     return Response(
         content=data,
         media_type="model/gltf-binary",
         headers={"Content-Disposition": f"attachment; filename={item_id}.glb"},
     )
 
-
-# ---- helpers ----
 
 def _build_image_set(images: list[Image], storage: StorageService) -> ImageSetResponse:
     result = ImageSetResponse(originalFrontUrl="")
@@ -202,8 +323,12 @@ def _build_image_set(images: list[Image], storage: StorageService) -> ImageSetRe
 
 def _progress_to_steps(progress: int, status: str) -> dict[str, str]:
     if status == "FAILED":
-        return {"upload": "completed", "backgroundRemoval": "failed",
-                "modelGeneration": "pending", "angleRendering": "pending"}
+        return {
+            "upload": "completed",
+            "backgroundRemoval": "failed",
+            "modelGeneration": "pending",
+            "angleRendering": "pending",
+        }
 
     def _s(threshold: int) -> str:
         if progress >= threshold + 20:
