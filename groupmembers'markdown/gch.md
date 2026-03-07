@@ -18,11 +18,11 @@
 #### 1. 完成相机请求、拍照、上传
 ##### 1. 依赖
   - pubspec.yaml
-    -- camera / image_picker — 摄像头拍照 + 相册选取
-dio — HTTP 上传 & API 调用
-permission_handler — 权限管理
-cached_network_image — 网络图片缓存加载
-path_provider — 文件路径
+    - camera / image_picker — 摄像头拍照 + 相册选取
+    - dio — HTTP 上传 & API 调用
+    - permission_handler — 权限管理
+    - cached_network_image — 网络图片缓存加载
+    - path_provider — 文件路径
 ##### 2. api
   - api_config.dart
   - clothing_api_service.dart
