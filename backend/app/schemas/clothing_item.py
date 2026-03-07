@@ -54,6 +54,7 @@ class ClothingItemResponse(BaseModel):
     isConfirmed: bool
     name: Optional[str] = None
     description: Optional[str] = None
+    customTags: List[str] = []
     createdAt: datetime
     updatedAt: datetime
 

@@ -13,10 +13,14 @@ Development: http://localhost:3000/api/v1
 Production: https://api.aiwardrobe.com/v1
 ```
 
+**Current local demo backend:** `http://localhost:8000/api/v1`
+
 ### Authentication
 ```
 Authorization: Bearer <JWT_TOKEN>
 ```
+
+**Current implementation note:** Module 2 demo backend still uses a fixed demo user internally and does not enforce real JWT verification yet.
 
 ### Common Headers
 ```
@@ -142,12 +146,13 @@ POST /clothing-items
 
 **Request Body (multipart/form-data):**
 ```
-frontImage: <file>              (required)
-backImage: <file>               (optional — improves 3D generation quality)
+front_image: <file>             (required, current backend implementation)
+back_image: <file>              (optional — improves 3D generation quality)
 name: "Blue Striped T-Shirt"
 description: "Comfortable cotton t-shirt"
-tags: ["cotton", "comfortable"]
 ```
+
+**Current implementation note:** `customTags` / `tags` are not accepted during creation in the current backend implementation. User-defined tags are added later via `PATCH /clothing-items/:id`.
 
 **Response (202 Accepted):**
 
@@ -205,7 +210,6 @@ tags: ["cotton", "comfortable"]
     "isConfirmed": false,
     "name": "Blue Striped T-Shirt",
     "description": "Comfortable cotton t-shirt",
-    "customTags": ["cotton", "comfortable"],
     "createdAt": "2024-01-15T10:30:00Z",
     "updatedAt": "2024-01-15T10:30:00Z"
   }
@@ -227,6 +231,8 @@ GET /clothing-items/:id
   "data": { /* ClothingItem object */ }
 }
 ```
+
+**Current implementation note:** The detail response now includes `customTags`.
 
 ### 2.3 Update Clothing Item (Including Tag Confirmation)
 ```

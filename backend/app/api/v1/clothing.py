@@ -95,6 +95,7 @@ def get_clothing_item(item_id: UUID, db: Session = Depends(get_db)):
         isConfirmed=item.is_confirmed,
         name=item.name,
         description=item.description,
+        customTags=item.custom_tags or [],
         createdAt=item.created_at,
         updatedAt=item.updated_at,
     )

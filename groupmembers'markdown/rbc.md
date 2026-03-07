@@ -75,3 +75,54 @@
 - 后端数据库初始化不再只能依赖 `scripts/init_schema.sql`
 - 后续表结构变更可以通过 Alembic migration 进行版本化管理
 - 当前 Module 2 demo 所需的核心表结构已经有可追踪的迁移起点
+
+---
+
+## rbc 工作记录 2026.3.7（未提交修改补充）
+
+### 本次修改主题
+
+补齐前后端联调所需的 Docker 启动链路，并同步修正文档与接口返回细节，使本地联调流程更接近“开箱即用”。
+
+### 已完成内容
+
+- 增加容器化联调入口
+  - 新增仓库根目录 `docker-compose.yml`
+  - 提供 `db` 与 `backend` 两个服务，统一本地 PostgreSQL 和 FastAPI 启动方式
+  - 支持通过环境变量覆盖宿主机端口与 `API_BASE_URL`
+
+- 调整后端镜像启动流程
+  - 修改 `backend/Dockerfile`，增加 `PYTHONDONTWRITEBYTECODE` 与 `PYTHONUNBUFFERED`
+  - 将容器默认启动命令改为执行 `scripts/docker_start.py`
+  - 新增 `backend/scripts/docker_start.py`，负责：
+    - 等待数据库就绪
+    - 自动执行 `alembic upgrade head`
+    - 自动创建固定 demo 用户
+    - 创建本地存储目录后再启动 `uvicorn`
+
+- 更新后端和联调说明
+  - 更新 `backend/README.md`
+  - 补充基于 `docker compose up --build` 的启动说明、端口覆盖方式、日志查看和清理命令
+  - 明确 compose 场景下不需要额外复制 `.env`
+  - 补充当前 demo 用户和当前认证状态说明
+
+- 调整环境配置说明
+  - 更新 `backend/.env.example`
+  - 明确该文件主要用于非 Docker 的本地直跑场景
+  - 说明 compose 会直接向容器注入环境变量
+
+- 修正接口返回与文档一致性
+  - 修改 `backend/app/schemas/clothing_item.py`
+  - 在 `ClothingItemResponse` 中补回 `customTags`
+  - 修改 `backend/app/api/v1/clothing.py`
+  - 让 `GET /api/v1/clothing-items/{id}` 实际返回 `customTags`
+  - 更新 `documents/API_CONTRACT.md`
+  - 标注当前本地 demo base URL、认证仍为固定 demo 用户
+  - 明确创建衣物接口当前实际接收的 multipart 字段为 `front_image`、`back_image`
+  - 补充“创建时暂不接收 `customTags`，后续通过 PATCH 编辑”的实现说明
+  - 补充详情接口当前会返回 `customTags`
+
+### 影响范围
+
+- 前端或联调同学可以通过一条 `docker compose up --build` 拉起数据库和后端
+- 后端容器启动时会自动完成 migration 和 demo 用户准备，减少手工初始化步骤

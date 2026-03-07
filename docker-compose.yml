@@ -1,0 +1,41 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: wardrobe_user
+      POSTGRES_PASSWORD: wardrobe_pass
+      POSTGRES_DB: wardrobe_db
+    ports:
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wardrobe_user -d wardrobe_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      POSTGRES_SERVER: db
+      POSTGRES_USER: wardrobe_user
+      POSTGRES_PASSWORD: wardrobe_pass
+      POSTGRES_DB: wardrobe_db
+      POSTGRES_PORT: 5432
+      LOCAL_STORAGE_PATH: /app/storage
+      API_BASE_URL: ${API_BASE_URL:-http://localhost:8000}
+      PYTHONPATH: /app
+    ports:
+      - "${BACKEND_HOST_PORT:-8000}:8000"
+    volumes:
+      - backend_storage:/app/storage
+
+volumes:
+  pg_data:
+  backend_storage:
