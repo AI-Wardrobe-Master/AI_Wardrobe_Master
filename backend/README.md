@@ -18,6 +18,9 @@ pip install -r requirements.txt
 # 2. 配置环境变量（复制 .env.example 为 .env）
 
 # 3. 初始化数据库（需先启动 PostgreSQL）
+alembic upgrade head
+
+# 如需直接初始化一套空库，也可执行
 psql -U wardrobe_user -d wardrobe_db -f scripts/init_schema.sql
 
 # 4. 启动服务
@@ -25,6 +28,19 @@ uvicorn app.main:app --reload --port 8000
 ```
 
 API 文档：http://localhost:8000/docs
+
+## 数据库迁移
+
+```bash
+# 迁移到最新版本
+alembic upgrade head
+
+# 查看当前迁移版本
+alembic current
+
+# 新建迁移文件（后续开发使用）
+alembic revision -m "describe change"
+```
 
 ## 队友对接
 

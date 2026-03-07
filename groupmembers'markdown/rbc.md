@@ -35,3 +35,43 @@
 
 - 本次只修了当前已经实现的 Module 2 接口命名问题
 - 未处理认证、统一错误体、`meta` 字段、`images/provenance` 等其他文档不一致项
+
+---
+
+## rbc 工作记录 2026.3.7
+
+### 本次修改主题
+完善了数据库
+为后端补上可实际使用的 Alembic 数据库迁移能力，并把当前 Module 2 demo 依赖的数据库结构落成第一版 migration。
+
+### 已完成内容
+
+- 补充 Alembic 目录结构
+  - 新增 `backend/alembic/env.py`
+  - 新增 `backend/alembic/script.py.mako`
+  - 新增 `backend/alembic/versions/20260307_000001_init_module2_schema.py`
+
+- 落地第一版初始化迁移
+  - 在 migration 中创建 `users`、`clothing_items`、`images`、`models_3d`、`processing_tasks`
+  - 补齐外键、级联删除、状态约束、GIN 索引与组合索引
+  - 使用 `CREATE EXTENSION IF NOT EXISTS pgcrypto` 支持 `gen_random_uuid()`
+
+- 校正 ORM 与数据库结构的一致性
+  - 为 `user_id`、`clothing_item_id` 等字段补充 `ForeignKey`
+  - 为 `processing_tasks` 增加 `(clothing_item_id, created_at)` 索引
+  - 为 `clothing_items.final_tags`、`custom_tags` 增加 GIN 索引定义
+  - 修复 `backend/app/models/user.py` 缺少 `UUID` 导入的问题
+
+- 更新后端使用说明
+  - 在 `backend/README.md` 中补充 `alembic upgrade head`、`alembic current`、`alembic revision` 的基本命令
+
+### 验证结果
+
+- `python -m compileall backend/app/models backend/app/services` 通过
+- 当前环境未安装 `sqlalchemy` 运行依赖，因此未执行真实的 Alembic 升级命令和数据库连接验证
+
+### 影响范围
+
+- 后端数据库初始化不再只能依赖 `scripts/init_schema.sql`
+- 后续表结构变更可以通过 Alembic migration 进行版本化管理
+- 当前 Module 2 demo 所需的核心表结构已经有可追踪的迁移起点
