@@ -180,10 +180,3 @@ Database schema and data model details are maintained in their respective docume
  - GET /api/v1/clothing-items/:id/angle-views — 8 角度视图
  - GET /api/v1/clothing-items/:id/model — 下载 GLB 模型
 
-## 9. API
-POST /api/v1/clothing-items — 上传图片，触发全流程
-GET /api/v1/clothing-items/:id — 获取衣物详情
-GET /api/v1/clothing-items/:id/processing-status — 处理进度
-POST /api/v1/clothing-items/:id/retry — 重试失败任务
-GET /api/v1/clothing-items/:id/angle-views — 8 角度视图
-GET /api/v1/clothing-items/:id/model — 下载 GLB 模型
