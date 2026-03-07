@@ -28,10 +28,27 @@
   - clothing_api_service.dart
 ##### 3. 拍照流程
   - camera_capture_screen.dart
+    - 打开后置摄像头，显示取景框引导
+    - 先拍正面（必须），拍完进入预览确认
+    - 弹出底部弹窗询问「是否拍背面」，可跳过
+    - 无摄像头时自动回退到相册选取
+    - 完成后返回 {front: File, back: File?}
 ##### 4. 照片预览
   - image_preview_screen.dart
+    - 全屏显示拍摄结果
+    - 两个按钮：「重拍」/「使用照片」
 ##### 5. 处理进度
   - processing_screen.dart
+    - 上传后每 2 秒轮询后端 /processing-status
+    - 实时显示进度条 + 百分比
+    - 4 个步骤状态：Upload → Background Removal → 3D Model Generation → Angle Rendering
+    - 失败时显示错误信息和返回按钮
+    - 完成后自动跳转结果页
 ##### 6. 角度预览
   - clothing_result_screen.dart
-  - 修改root_shell.dart
+    - 加载 8 个角度图并展示
+    - 底部缩略图列表可点击切换
+    - 左右滑动手势切换角度
+    - 显示当前角度度数（0° / 45° / 90° …）
+    - 点击「Done」返回首页
+##### 7. 修改root_shell.dart
