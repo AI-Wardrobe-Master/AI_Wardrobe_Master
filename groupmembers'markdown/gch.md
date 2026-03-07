@@ -16,3 +16,11 @@
 
 ### 2026.3.7
 #### 1. 完成相机请求、拍照、上传
+  - pubspec.yaml
+  - api_config.dart
+  - clothing_api_service.dart
+  - camera_capture_screen.dart
+  - image_preview_screen.dart
+  - processing_screen.dart
+  - clothing_result_screen.dart
+  - 修改root_shell.dart
