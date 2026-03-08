@@ -101,15 +101,15 @@ def _detect_pattern(_image_bytes: bytes) -> str:
 
 
 def _classify_mock(_image_bytes: bytes) -> List[Tag]:
-    """Mock 分类结果，用于开发联调。"""
+    """
+    Mock 分类结果，仅返回 2.1/2.2 属性（品类、颜色、图案）。
+    style/season/audience 由用户手动选择（2.3.3），不做自动分配（2.3.2 已移除）。
+    """
     return [
         Tag(key="category", value=_classify_category(_image_bytes)),
         Tag(key="color", value="blue"),
         Tag(key="color", value="white"),
         Tag(key="pattern", value=_detect_pattern(_image_bytes)),
-        Tag(key="style", value="casual"),
-        Tag(key="season", value="summer"),
-        Tag(key="audience", value="unisex"),
     ]
 
 
