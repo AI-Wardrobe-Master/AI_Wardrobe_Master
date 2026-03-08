@@ -66,3 +66,35 @@ uvicorn app.main:app --reload --port 8000
 ```
 
 API 文档：http://localhost:8000/docs
+
+---
+
+### 6. 合并 main 后完成度对比（2025.3 更新）
+
+已将主分支 `main` 合并到 `feature/wkd-module2`。主分支包含 Module 1（gch/rbc 等）的完整实现，Module 2 与流水线已打通。对照 USER_STORIES 的完成情况如下：
+
+| User Story | 验收标准 | 状态 | 说明 |
+|------------|----------|------|------|
+| **US-2.1** 自动分类 | AI 返回 Tag[]，无置信度；创建后自动分类 | ✅ 流程就绪 | `clothing_pipeline` 已调用 `ai_service.classify_bytes()`；**⚠️ 仍为 Mock** |
+| **US-2.2** 颜色/图案 | 检测主次色、图案类型；可手动编辑 | ⚠️ Mock | 品类/颜色/图案均返回固定值，需接入实际模型 |
+| **US-2.3** 额外属性 | style、season、audience 可配置 | ⚠️ Mock | Mock 已返回，需真实图像分析 |
+| **US-2.4** 手动确认 | 可查看 predictedTags、编辑 finalTags、持久化 | ✅ | PATCH 接口完整，predictedTags 不可改 |
+| **US-2.5** 快速搜索 | &lt;1s，基于 finalTags，支持多过滤 | ✅ | search_service + crud 已实现 |
+
+#### 仍未完成项（Module 2 范围）
+
+| 项目 | 当前状态 | 待办 |
+|------|----------|------|
+| AI 品类分类 | Mock 固定返回 T_SHIRT | 选型并接入真实模型 |
+| 颜色检测 | Mock 固定 blue/white | colorthief / Pillow K-Means 等 |
+| 图案识别 | Mock 固定 striped | 规则或轻量 CNN |
+| Auth | `get_current_user_id()` 固定 UUID | 接入 JWT 校验 |
+| 低置信度处理 | 无 | 内部记录策略（可选） |
+
+#### 主分支新增能力（已合并）
+
+- Module 1：拍照 → 去背景 → 3D 生成 → 8 角度渲染 → 持久化
+- `POST /clothing-items` 上传 + 异步 pipeline
+- `GET /clothing-items/{id}/processing-status` 进度查询
+- `POST /clothing-items/{id}/retry` 失败重试
+- Storage（S3/MinIO/Local）、Alembic 迁移、Docker Compose
