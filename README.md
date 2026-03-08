@@ -16,16 +16,19 @@ ai_wardrobe/
 ## Getting started
 
 ```bash
-# 1. Go to app directory
+# 1. download Hunyuan3D-2 and its pretrained models
+git clone https://github.com/Tencent-Hunyuan/Hunyuan3D-2.git
+
+# 2. Go to app directory
 cd ai_wardrobe_app
 
-# 2. Install dependencies
+# 3. Install dependencies
 flutter pub get
 
-# 3. Run in browser (good for layout preview)
+# 4. Run in browser (good for layout preview)
 flutter run -d chrome
 
-# 4. Run on a physical device (iOS / Android)
+# 5. Run on a physical device (iOS / Android)
 flutter devices              # list device IDs
 flutter run -d <device-id>
 ```

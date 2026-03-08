@@ -1,16 +1,13 @@
-"""
-Configuration management
-"""
-from typing import List
+from typing import List, Optional
+
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    # API
-    API_V1_STR: str = "/api/v1"
     PROJECT_NAME: str = "AI Wardrobe Master"
+    API_V1_STR: str = "/api/v1"
 
-    # Database - TODO: 与队友确认数据库连接字符串
+    # Database
     POSTGRES_SERVER: str = "localhost"
     POSTGRES_USER: str = "wardrobe_user"
     POSTGRES_PASSWORD: str = "wardrobe_pass"
@@ -24,12 +21,32 @@ class Settings(BaseSettings):
             f"@{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
         )
 
-    # Local file storage base path (for imageUrl resolution)
-    # TODO: 与 Module 1 队友确认图片存储根路径
+    # Storage
+    STORAGE_TYPE: str = "local"  # "s3" or "local"
     LOCAL_STORAGE_PATH: str = "./storage"
     API_BASE_URL: str = "http://localhost:8000"
 
-    # CORS
+    # S3 / MinIO
+    S3_ENDPOINT: Optional[str] = None
+    S3_ACCESS_KEY: Optional[str] = None
+    S3_SECRET_KEY: Optional[str] = None
+    S3_BUCKET: Optional[str] = None
+    S3_REGION: str = "us-east-1"
+    S3_PUBLIC_URL: Optional[str] = None
+
+    # Security
+    SECRET_KEY: str = "CHANGE-ME-in-production"
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7
+
+    # Hunyuan3D-2
+    HUNYUAN3D_MODEL_PATH: str = "tencent/Hunyuan3D-2"
+    HUNYUAN3D_MV_MODEL_PATH: str = "tencent/Hunyuan3D-2mv"
+    HUNYUAN3D_LOW_VRAM: bool = False
+
+    # Redis / Celery
+    REDIS_URL: str = "redis://localhost:6379/0"
+
     BACKEND_CORS_ORIGINS: List[str] = ["*"]
 
     class Config:

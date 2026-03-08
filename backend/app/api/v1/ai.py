@@ -5,13 +5,13 @@ Module 2.1
 from fastapi import APIRouter, Depends
 
 from app.api.deps import get_current_user_id
-from app.schemas.ai import ClassifyRequest, ClassifyResponse
+from app.schemas.ai import ClassifyRequest, ClassifyResponse, ClassifyResponseData
 from app.services.ai_service import AIService
 
 router = APIRouter()
 
 
-@router.post("/classify", response_model=dict)
+@router.post("/classify", response_model=ClassifyResponse)
 def classify_clothing(
     body: ClassifyRequest,
     _user_id=Depends(get_current_user_id),
@@ -22,4 +22,7 @@ def classify_clothing(
     """
     ai_service = AIService()
     tags = ai_service.classify(body.image_url)
-    return {"success": True, "data": {"predictedTags": [t.model_dump() for t in tags]}}
+    return ClassifyResponse(
+        success=True,
+        data=ClassifyResponseData(predicted_tags=tags),
+    )

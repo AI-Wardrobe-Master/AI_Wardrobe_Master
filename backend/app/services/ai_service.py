@@ -3,13 +3,13 @@ AI Classification Service - Module 2.1, 2.2
 Integrates: category classification, color detection, pattern recognition.
 TODO: 替换 _classify_mock 为实际模型调用。
 """
+import logging
 from pathlib import Path
 from typing import List
-import logging
 
-from app.schemas.clothing_item import Tag
-from app.core.config import settings
 from app.core.exceptions import ClassificationError
+from app.core.config import settings
+from app.schemas.clothing_item import Tag
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +64,8 @@ def _load_image_bytes(image_path: str) -> bytes:
     path = image_path
     if path.startswith("/"):
         path = path.lstrip("/")
+    if path.startswith("files/"):
+        path = path[len("files/") :]
     if path.startswith("images/"):
         path = path
     full = Path(settings.LOCAL_STORAGE_PATH) / path
@@ -114,6 +116,17 @@ def _classify_mock(_image_bytes: bytes) -> List[Tag]:
 class AIService:
     """AI 分类服务：品类、颜色、图案及扩展属性"""
 
+    def classify_bytes(self, image_bytes: bytes) -> List[Tag]:
+        """
+        对图片字节进行分类，返回 predictedTags。
+        内部处理流程和 API 路径读取共用这一入口。
+        """
+        try:
+            return _classify_mock(image_bytes)
+        except Exception as e:
+            logger.exception("Failed to classify image bytes")
+            raise ClassificationError(str(e))
+
     def classify(self, image_url: str) -> List[Tag]:
         """
         对单张服装图片进行分类，返回 predictedTags。
@@ -125,6 +138,4 @@ class AIService:
             logger.exception("Failed to load image for classification")
             raise ClassificationError(str(e))
 
-        # TODO: 替换为实际模型调用
-        tags = _classify_mock(image_bytes)
-        return tags
+        return self.classify_bytes(image_bytes)

@@ -5,6 +5,7 @@ TODO: 与负责 Auth 的队友确认 - 完整的 User 模型由谁实现？
 import uuid
 from datetime import datetime
 from sqlalchemy import Column, String, Boolean, DateTime
+from sqlalchemy.dialects.postgresql import UUID
 
 from app.db.base import Base
 
