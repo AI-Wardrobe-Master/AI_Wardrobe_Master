@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../l10n/app_strings_provider.dart';
 import '../../theme/app_theme.dart';
 
 const _referenceImagePath =
@@ -165,8 +166,9 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final s = AppStringsProvider.of(context);
     return Scaffold(
-      appBar: AppBar(title: const Text('Visualize')),
+      appBar: AppBar(title: Text(s.visualizeTitle)),
       body: SafeArea(
         child: Column(
           children: [
@@ -256,7 +258,7 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
                         side: BorderSide(color: Theme.of(context).dividerColor),
                         padding: const EdgeInsets.symmetric(vertical: 14),
                       ),
-                      child: const Text('Clear'),
+                      child: Text(s.clear),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -270,7 +272,7 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(vertical: 14),
                       ),
-                      child: const Text('Generate Preview'),
+                      child: Text(s.generatePreview),
                     ),
                   ),
                 ],

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../l10n/app_strings_provider.dart';
 import '../../theme/app_theme.dart';
 import '../root_shell.dart';
 
@@ -8,6 +9,7 @@ class LoginScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = AppStringsProvider.of(context);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final textP = isDark ? AppColors.darkTextPrimary : AppColors.textPrimary;
     final textS = isDark ? AppColors.darkTextSecondary : AppColors.textSecondary;
@@ -20,7 +22,7 @@ class LoginScreen extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'AI Wardrobe Master',
+                s.appTitle,
                 style: TextStyle(
                   fontSize: 26,
                   fontWeight: FontWeight.w800,
@@ -30,7 +32,7 @@ class LoginScreen extends StatelessWidget {
               ),
               const SizedBox(height: 6),
               Text(
-                'Sign in to keep your clothes and outfits in sync across devices.',
+                s.loginSubtitle,
                 style: TextStyle(
                   fontSize: 13,
                   color: textS,
@@ -62,7 +64,7 @@ class LoginScreen extends StatelessWidget {
                       ),
                       const SizedBox(height: 24),
                       Text(
-                        'No account setup required for the demo.\nJust continue to your wardrobe.',
+                        s.loginDemoHint,
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 13,
@@ -92,9 +94,9 @@ class LoginScreen extends StatelessWidget {
                         borderRadius: BorderRadius.circular(16),
                       ),
                     ),
-                    child: const Text(
-                      'Continue',
-                      style: TextStyle(
+                    child: Text(
+                      s.continueButton,
+                      style: const TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w600,
                       ),
@@ -110,7 +112,7 @@ class LoginScreen extends StatelessWidget {
                       );
                     },
                     child: Text(
-                      'Skip for now',
+                      s.skipForNow,
                       style: TextStyle(
                         fontSize: 13,
                         color: textS,

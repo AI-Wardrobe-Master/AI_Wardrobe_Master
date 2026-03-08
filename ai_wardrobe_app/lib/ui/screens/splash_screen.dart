@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../l10n/app_strings_provider.dart';
 import '../../theme/app_theme.dart';
 import 'login_screen.dart';
 
@@ -54,6 +55,7 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   Widget build(BuildContext context) {
+    final s = AppStringsProvider.of(context);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final textP = isDark ? AppColors.darkTextPrimary : AppColors.textPrimary;
 
@@ -96,7 +98,7 @@ class _SplashScreenState extends State<SplashScreen>
                         ),
                         const SizedBox(height: 16),
                         Text(
-                          'AI Wardrobe Master',
+                          s.splashTitle,
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             fontSize: 22,

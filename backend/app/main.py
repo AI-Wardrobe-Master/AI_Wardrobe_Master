@@ -25,6 +25,17 @@ app.add_middleware(
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
 
+
+@app.get("/")
+def root():
+    return {
+        "message": "AI Wardrobe Master API",
+        "docs": "/docs",
+        "health": "/health",
+        "api": settings.API_V1_STR,
+    }
+
+
 storage_dir = Path(settings.LOCAL_STORAGE_PATH)
 storage_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/files", StaticFiles(directory=str(storage_dir)), name="files")

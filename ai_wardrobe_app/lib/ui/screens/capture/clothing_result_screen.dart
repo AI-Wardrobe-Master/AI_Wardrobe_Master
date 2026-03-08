@@ -1,8 +1,11 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
+import '../../../l10n/app_strings_provider.dart';
 import '../../../services/api_config.dart';
 import '../../../services/clothing_api_service.dart';
+import '../../../services/wardrobe_service.dart';
+import '../../../state/current_wardrobe_controller.dart';
 import '../../../theme/app_theme.dart';
 
 class ClothingResultScreen extends StatefulWidget {
@@ -19,6 +22,8 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
   List<dynamic> _angleViews = [];
   int _selectedAngle = 0;
   bool _loading = true;
+  bool _addingToWardrobe = false;
+  bool _addedToWardrobe = false;
 
   @override
   void initState() {
@@ -46,6 +51,55 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
     if (url == null || url.isEmpty) return '';
     if (url.startsWith('http')) return url;
     return '$fileBaseUrl$url';
+  }
+
+  Future<void> _addToCurrentWardrobe() async {
+    if (_addingToWardrobe || _addedToWardrobe) return;
+    String? wardrobeId = CurrentWardrobeController.currentWardrobeId;
+    if (wardrobeId == null) {
+      try {
+        final list = await WardrobeService.fetchWardrobes();
+        if (list.isEmpty) {
+          if (mounted) {
+            final s = AppStringsProvider.of(context);
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(s.createWardrobeFirst)),
+            );
+          }
+          return;
+        }
+        wardrobeId = list.first.id;
+        CurrentWardrobeController.setCurrentWardrobeId(wardrobeId);
+      } catch (_) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Failed to load wardrobes')),
+          );
+        }
+        return;
+      }
+    }
+    setState(() => _addingToWardrobe = true);
+    try {
+      await WardrobeService.addItemToWardrobe(wardrobeId, widget.itemId);
+      if (mounted) {
+        setState(() {
+          _addingToWardrobe = false;
+          _addedToWardrobe = true;
+        });
+        final s = AppStringsProvider.of(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(s.addedToWardrobe)),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _addingToWardrobe = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString())),
+        );
+      }
+    }
   }
 
   @override
@@ -179,20 +233,54 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
 
             // Action buttons
             Padding(
-              padding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
-              child: SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  style: FilledButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 14),
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: (_addingToWardrobe || _addedToWardrobe)
+                          ? null
+                          : _addToCurrentWardrobe,
+                      icon: _addingToWardrobe
+                          ? SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: textP,
+                              ),
+                            )
+                          : Icon(
+                              _addedToWardrobe
+                                  ? Icons.check_circle
+                                  : Icons.add_to_photos_outlined,
+                              size: 20,
+                              color: _addedToWardrobe
+                                  ? Colors.green
+                                  : textP,
+                            ),
+                      label: Text(
+                        AppStringsProvider.of(context).addToCurrentWardrobe,
+                        style: TextStyle(color: textP),
+                      ),
+                    ),
                   ),
-                  onPressed: () {
-                    Navigator.of(context).popUntil((r) => r.isFirst);
-                  },
-                  child: const Text('Done'),
-                ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton(
+                      style: FilledButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                      onPressed: () {
+                        Navigator.of(context).popUntil((r) => r.isFirst);
+                      },
+                      child: const Text('Done'),
+                    ),
+                  ),
+                ],
               ),
             ),
+            const SizedBox(height: 20),
           ],
         ),
       ),

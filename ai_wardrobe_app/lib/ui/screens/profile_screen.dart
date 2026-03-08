@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../l10n/app_strings_provider.dart';
+import '../../l10n/locale_controller.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/theme_controller.dart';
 
@@ -8,6 +10,7 @@ class ProfileScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = AppStringsProvider.of(context);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final textP = isDark ? AppColors.darkTextPrimary : AppColors.textPrimary;
     final textS = isDark ? AppColors.darkTextSecondary : AppColors.textSecondary;
@@ -22,7 +25,7 @@ class ProfileScreen extends StatelessWidget {
             Row(
               children: [
                 Text(
-                  'Profile',
+                  s.profileTitle,
                   style: TextStyle(
                     fontSize: 24,
                     fontWeight: FontWeight.w800,
@@ -43,7 +46,7 @@ class ProfileScreen extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              'Your digital wardrobe identity.',
+              s.profileSubtitle,
               style: TextStyle(fontSize: 12, color: textS),
             ),
             const SizedBox(height: 20),
@@ -64,7 +67,7 @@ class ProfileScreen extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Your name',
+                      s.yourName,
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w700,
@@ -73,7 +76,7 @@ class ProfileScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Tap to connect accounts later',
+                      s.tapToConnectAccounts,
                       style: TextStyle(fontSize: 12, color: textS),
                     ),
                   ],
@@ -83,11 +86,11 @@ class ProfileScreen extends StatelessWidget {
             const SizedBox(height: 24),
             Row(
               children: [
-                _ProfileStat(label: 'Clothes', value: '0'),
+                _ProfileStat(label: s.statClothes, value: '0'),
                 const SizedBox(width: 14),
-                _ProfileStat(label: 'Outfits', value: '0'),
+                _ProfileStat(label: s.statOutfits, value: '0'),
                 const SizedBox(width: 14),
-                _ProfileStat(label: 'Packs', value: '0'),
+                _ProfileStat(label: s.statPacks, value: '0'),
               ],
             ),
             const SizedBox(height: 24),
@@ -99,7 +102,7 @@ class ProfileScreen extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Virtual wardrobes',
+                      s.virtualWardrobes,
                       style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w700,
@@ -108,7 +111,7 @@ class ProfileScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Keep imported looks separate from your physical wardrobe.',
+                      s.keepImportedSeparate,
                       style: TextStyle(fontSize: 12, color: textS),
                     ),
                     const SizedBox(height: 12),
@@ -126,7 +129,7 @@ class ProfileScreen extends StatelessWidget {
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
-                              'Imported looks',
+                              s.importedLooks,
                               style: TextStyle(
                                 fontSize: 13,
                                 fontWeight: FontWeight.w600,
@@ -200,7 +203,8 @@ class _ProfileStat extends StatelessWidget {
 
 void _showProfileSettingsSheet(BuildContext context) {
   bool darkMode = themeController.isDark;
-  String language = 'English';
+  final s = AppStringsProvider.of(context);
+  String languageCode = localeController.locale.languageCode;
 
   final isDark = Theme.of(context).brightness == Brightness.dark;
   final textP = isDark ? AppColors.darkTextPrimary : AppColors.textPrimary;
@@ -218,6 +222,7 @@ void _showProfileSettingsSheet(BuildContext context) {
           padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
           child: StatefulBuilder(
             builder: (context, setModalState) {
+              final languageLabel = languageCode == 'zh' ? s.languageZh : s.languageEnglish;
               return Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -234,7 +239,7 @@ void _showProfileSettingsSheet(BuildContext context) {
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    'Settings',
+                    s.settings,
                     style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.w700,
@@ -245,7 +250,7 @@ void _showProfileSettingsSheet(BuildContext context) {
                   ListTile(
                     contentPadding: EdgeInsets.zero,
                     title: Text(
-                      'Language',
+                      s.language,
                       style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w600,
@@ -253,27 +258,28 @@ void _showProfileSettingsSheet(BuildContext context) {
                       ),
                     ),
                     subtitle: Text(
-                      language,
+                      languageLabel,
                       style: TextStyle(fontSize: 12, color: textS),
                     ),
                     trailing: DropdownButton<String>(
-                      value: language,
+                      value: languageCode,
                       underline: const SizedBox.shrink(),
-                      items: const [
+                      items: [
                         DropdownMenuItem(
-                          value: 'English',
-                          child: Text('English'),
+                          value: 'en',
+                          child: Text(s.languageEnglish),
                         ),
                         DropdownMenuItem(
-                          value: '中文',
-                          child: Text('中文'),
+                          value: 'zh',
+                          child: Text(s.languageZh),
                         ),
                       ],
                       onChanged: (value) {
                         if (value == null) return;
                         setModalState(() {
-                          language = value;
+                          languageCode = value;
                         });
+                        localeController.setLocale(Locale(value));
                       },
                     ),
                   ),
@@ -288,7 +294,7 @@ void _showProfileSettingsSheet(BuildContext context) {
                       themeController.setDark(value);
                     },
                     title: Text(
-                      'Dark mode',
+                      s.darkMode,
                       style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w600,
@@ -296,7 +302,7 @@ void _showProfileSettingsSheet(BuildContext context) {
                       ),
                     ),
                     subtitle: Text(
-                      darkMode ? 'On' : 'Off',
+                      darkMode ? s.on : s.off,
                       style: TextStyle(fontSize: 12, color: textS),
                     ),
                   ),
