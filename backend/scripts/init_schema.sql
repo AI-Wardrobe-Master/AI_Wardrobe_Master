@@ -99,3 +99,26 @@ CREATE TABLE IF NOT EXISTS processing_tasks (
 
 CREATE INDEX IF NOT EXISTS idx_processing_tasks_item_created
 ON processing_tasks(clothing_item_id, created_at);
+
+-- Module 3: Wardrobes (delete wardrobe only removes links, not clothing_items)
+CREATE TABLE IF NOT EXISTS wardrobes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name VARCHAR(100) NOT NULL,
+    type VARCHAR(20) NOT NULL DEFAULT 'REGULAR' CHECK (type IN ('REGULAR', 'VIRTUAL')),
+    description TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_wardrobes_user ON wardrobes(user_id);
+
+CREATE TABLE IF NOT EXISTS wardrobe_items (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    wardrobe_id UUID NOT NULL REFERENCES wardrobes(id) ON DELETE CASCADE,
+    clothing_item_id UUID NOT NULL REFERENCES clothing_items(id) ON DELETE CASCADE,
+    added_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    display_order INTEGER,
+    UNIQUE(wardrobe_id, clothing_item_id)
+);
+CREATE INDEX IF NOT EXISTS idx_wardrobe_items_wardrobe ON wardrobe_items(wardrobe_id);
+CREATE INDEX IF NOT EXISTS idx_wardrobe_items_clothing ON wardrobe_items(clothing_item_id);

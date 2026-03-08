@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../l10n/app_strings_provider.dart';
 import '../../theme/app_theme.dart';
 
 class DiscoverScreen extends StatelessWidget {
@@ -7,6 +8,7 @@ class DiscoverScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = AppStringsProvider.of(context);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final textP = isDark ? AppColors.darkTextPrimary : AppColors.textPrimary;
     final textS = isDark ? AppColors.darkTextSecondary : AppColors.textSecondary;
@@ -18,7 +20,7 @@ class DiscoverScreen extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Discover',
+              s.discoverTitle,
               style: TextStyle(
                 fontSize: 24,
                 fontWeight: FontWeight.w800,
@@ -28,7 +30,7 @@ class DiscoverScreen extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              'Browse creator packs and styling ideas.',
+              s.discoverSubtitle,
               style: TextStyle(
                 fontSize: 12,
                 color: textS,
@@ -47,7 +49,7 @@ class DiscoverScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'No creator packs yet.',
+                      s.noCreatorPacksYet,
                       style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
@@ -56,7 +58,7 @@ class DiscoverScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Once creators share outfits, they will appear here.',
+                      s.onceCreatorsShare,
                       style: TextStyle(
                         fontSize: 12,
                         color: textS,
