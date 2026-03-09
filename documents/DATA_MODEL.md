@@ -179,87 +179,85 @@ enum ItemSource {
 }
 
 enum ClothingType {
-  // Tops - Core
-  @JsonValue('T_SHIRT')
+  // Current Roboflow-supported values used by the backend today
+  @JsonValue('t-shirt')
   tShirt,
-  @JsonValue('SHIRT')
+  @JsonValue('shirt')
   shirt,
-  @JsonValue('BLOUSE')
-  blouse,
-  @JsonValue('POLO')
-  polo,
-  @JsonValue('TANK_TOP')
-  tankTop,
-  @JsonValue('SWEATER')
-  sweater,
-  @JsonValue('HOODIE')
-  hoodie,
-  @JsonValue('SWEATSHIRT')
-  sweatshirt,
-  @JsonValue('CARDIGAN')
-  cardigan,
-  
-  // Bottoms - Core
-  @JsonValue('JEANS')
-  jeans,
-  @JsonValue('TROUSERS')
-  trousers,
-  @JsonValue('SHORTS')
+  @JsonValue('longsleeve')
+  longSleeve,
+  @JsonValue('pants')
+  pants,
+  @JsonValue('shorts')
   shorts,
-  @JsonValue('SKIRT')
-  skirt,
-  @JsonValue('LEGGINGS')
-  leggings,
-  @JsonValue('SWEATPANTS')
-  sweatpants,
-  
-  // Outerwear - Core
-  @JsonValue('JACKET')
-  jacket,
-  @JsonValue('COAT')
-  coat,
-  @JsonValue('BLAZER')
-  blazer,
-  @JsonValue('PUFFER')
-  puffer,
-  @JsonValue('WIND_BREAKER')
-  windBreaker,
-  @JsonValue('VEST')
-  vest,
-  
-  // Full Body - Core
-  @JsonValue('DRESS')
+  @JsonValue('outwear')
+  outwear,
+  @JsonValue('dress')
   dress,
-  @JsonValue('JUMPSUIT')
-  jumpsuit,
-  @JsonValue('ROMPER')
-  romper,
-  
-  // Footwear - Core
-  @JsonValue('SNEAKERS')
-  sneakers,
-  @JsonValue('BOOTS')
-  boots,
-  @JsonValue('SANDALS')
-  sandals,
-  @JsonValue('DRESS_SHOES')
-  dressShoes,
-  @JsonValue('HEELS')
-  heels,
-  @JsonValue('SLIPPERS')
-  slippers,
-  
-  // Accessories - Core
-  @JsonValue('HAT')
+  @JsonValue('shoes')
+  shoes,
+  @JsonValue('hat')
   hat,
-  @JsonValue('SCARF')
-  scarf,
-  @JsonValue('BELT')
-  belt,
-  
-  // Other - Fallback
-  @JsonValue('OTHER')
-  other,
+
+  // Temporarily disabled until the model actually supports them
+  // @JsonValue('BLOUSE')
+  // blouse,
+  // @JsonValue('POLO')
+  // polo,
+  // @JsonValue('TANK_TOP')
+  // tankTop,
+  // @JsonValue('SWEATER')
+  // sweater,
+  // @JsonValue('HOODIE')
+  // hoodie,
+  // @JsonValue('SWEATSHIRT')
+  // sweatshirt,
+  // @JsonValue('CARDIGAN')
+  // cardigan,
+  // @JsonValue('JEANS')
+  // jeans,
+  // @JsonValue('TROUSERS')
+  // trousers,
+  // @JsonValue('SKIRT')
+  // skirt,
+  // @JsonValue('LEGGINGS')
+  // leggings,
+  // @JsonValue('SWEATPANTS')
+  // sweatpants,
+  // @JsonValue('JACKET')
+  // jacket,
+  // @JsonValue('COAT')
+  // coat,
+  // @JsonValue('BLAZER')
+  // blazer,
+  // @JsonValue('PUFFER')
+  // puffer,
+  // @JsonValue('WIND_BREAKER')
+  // windBreaker,
+  // @JsonValue('VEST')
+  // vest,
+  // @JsonValue('JUMPSUIT')
+  // jumpsuit,
+  // @JsonValue('ROMPER')
+  // romper,
+  // @JsonValue('SNEAKERS')
+  // sneakers,
+  // @JsonValue('BOOTS')
+  // boots,
+  // @JsonValue('SANDALS')
+  // sandals,
+  // @JsonValue('DRESS_SHOES')
+  // dressShoes,
+  // @JsonValue('HEELS')
+  // heels,
+  // @JsonValue('SLIPPERS')
+  // slippers,
+  // @JsonValue('SCARF')
+  // scarf,
+  // @JsonValue('BELT')
+  // belt,
+  // @JsonValue('OTHER')
+  // other,
 }
 
 enum Pattern {
@@ -319,7 +317,7 @@ enum Season {
   allSeason,
 }
 
-# 这个让用户自己选比较合适
+// 当前实现里，style / season / TargetAudience 不由后端自动预测，交给用户手动补充。
 enum TargetAudience {
   @JsonValue('MEN')
   men,
@@ -664,7 +662,7 @@ Tags are key-value pairs used for classification and search:
 ```dart
 class Tag {
   String key;    // e.g., "category", "color", "style"
-  String value;  // e.g., "T_SHIRT", "blue", "CASUAL"
+  String value;  // e.g., "t-shirt", "blue", "casual"
 }
 ```
 
@@ -672,12 +670,12 @@ class Tag {
 
 Standard tag keys used in the system:
 
-- `category`: Clothing type (uses ClothingType enum values)
+- `category`: Clothing type (current backend auto-prediction only supports the active Roboflow labels)
 - `color`: Color name (e.g., "blue", "red", "black")
 - `pattern`: Pattern type (uses Pattern enum values)
-- `style`: Style category (uses Style enum values)
-- `season`: Season suitability (uses Season enum values)
-- `audience`: Target audience (uses TargetAudience enum values)
+- `style`: Style category (currently user-supplied)
+- `season`: Season suitability (currently user-supplied)
+- `audience`: Target audience (currently user-supplied)
 - `material`: Fabric material (e.g., "cotton", "wool", "polyester")
 - `brand`: Brand name (optional)
 - `custom`: User-defined custom tags

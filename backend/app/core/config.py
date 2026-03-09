@@ -26,6 +26,14 @@ class Settings(BaseSettings):
     LOCAL_STORAGE_PATH: str = "./storage"
     API_BASE_URL: str = "http://localhost:8000"
 
+    # Roboflow Workflow
+    ROBOFLOW_API_URL: str = "https://serverless.roboflow.com"
+    ROBOFLOW_API_KEY: Optional[str] = None
+    ROBOFLOW_WORKSPACE_NAME: Optional[str] = None
+    ROBOFLOW_WORKFLOW_ID: Optional[str] = None
+    ROBOFLOW_IMAGE_INPUT_NAME: str = "image"
+    ROBOFLOW_TIMEOUT_SECONDS: float = 30.0
+
     # S3 / MinIO
     S3_ENDPOINT: Optional[str] = None
     S3_ACCESS_KEY: Optional[str] = None

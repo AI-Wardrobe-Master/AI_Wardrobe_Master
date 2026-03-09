@@ -2,7 +2,7 @@
 
 ## Module 2 实现范围
 
-- `POST /api/v1/ai/classify` - AI 服装分类（含 Mock）
+- `POST /api/v1/ai/classify` - AI 服装分类（Roboflow workflow）
 - `PATCH /api/v1/clothing-items/:id` - 标签确认/编辑
 - `GET /api/v1/clothing-items` - 列表（支持 tag 过滤）
 - `POST /api/v1/clothing-items/search` - 搜索（使用 finalTags）
@@ -16,6 +16,12 @@ source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
 # 2. 配置环境变量（复制 .env.example 为 .env）
+
+# Roboflow workflow 至少需要：
+# ROBOFLOW_API_URL=https://serverless.roboflow.com
+# ROBOFLOW_API_KEY=<your-key>
+# ROBOFLOW_WORKSPACE_NAME=bcs-workspace-vo3qr
+# ROBOFLOW_WORKFLOW_ID=custom-workflow
 
 # 3. 初始化数据库（需先启动 PostgreSQL）
 alembic upgrade head
@@ -107,6 +113,9 @@ docker run --rm -p 8000:8000 \
   - `customTags` 属于用户可选补充信息，当前通过 `PATCH /api/v1/clothing-items/{id}` 添加或修改
 - `GET /api/v1/clothing-items/{id}` 当前会返回 `customTags`
 - `POST /api/v1/clothing-items` 创建完成后会自动触发分类流程，初始写入 `predictedTags` 和 `finalTags`
+- 当前自动分类只写入 `category` 标签，且仅接受 Roboflow workflow 已支持的值：
+  `dress`、`hat`、`longsleeve`、`outwear`、`pants`、`shirt`、`shoes`、`shorts`、`t-shirt`
+- `season`、`style`、`audience` 当前不再由后端自动生成，改为用户后续手动补充到 `finalTags`
 - 当前认证仍是 demo 占位，使用固定测试用户，不是真实 JWT
 
 ## 数据库迁移

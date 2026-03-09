@@ -196,16 +196,10 @@ description: "Comfortable cotton t-shirt"
     },
     "model3dUrl": "/models/item-001.glb",
     "predictedTags": [
-      { "key": "category", "value": "T_SHIRT" },
-      { "key": "color", "value": "blue" },
-      { "key": "color", "value": "white" },
-      { "key": "pattern", "value": "striped" }
+      { "key": "category", "value": "t-shirt" }
     ],
     "finalTags": [
-      { "key": "category", "value": "T_SHIRT" },
-      { "key": "color", "value": "blue" },
-      { "key": "color", "value": "white" },
-      { "key": "pattern", "value": "striped" }
+      { "key": "category", "value": "t-shirt" }
     ],
     "isConfirmed": false,
     "name": "Blue Striped T-Shirt",
@@ -232,7 +226,9 @@ GET /clothing-items/:id
 }
 ```
 
-**Current implementation note:** The detail response now includes `customTags`.
+**Current implementation notes:**
+- The detail response now includes `customTags`.
+- Automatic prediction currently only fills `category`. `season`, `style`, and `audience` are expected to be user-added later through `PATCH /clothing-items/:id`.
 
 ### 2.3 Update Clothing Item (Including Tag Confirmation)
 ```
@@ -249,8 +245,7 @@ PATCH /clothing-items/:id
 {
   "name": "Updated Name",
   "finalTags": [
-    { "key": "category", "value": "SHIRT" },
-    { "key": "color", "value": "blue" },
+    { "key": "category", "value": "shirt" },
     { "key": "style", "value": "casual" },
     { "key": "season", "value": "summer" },
     { "key": "audience", "value": "unisex" }
@@ -279,9 +274,7 @@ PATCH /clothing-items/:id
 {
   "isConfirmed": true,
   "finalTags": [
-    { "key": "category", "value": "T_SHIRT" },
-    { "key": "color", "value": "blue" },
-    { "key": "pattern", "value": "striped" }
+    { "key": "category", "value": "t-shirt" }
   ]
 }
 ```
@@ -291,9 +284,9 @@ PATCH /clothing-items/:id
 {
   "isConfirmed": true,
   "finalTags": [
-    { "key": "category", "value": "SHIRT" },
-    { "key": "color", "value": "blue" },
-    { "key": "pattern", "value": "solid" }
+    { "key": "category", "value": "shirt" },
+    { "key": "season", "value": "summer" },
+    { "key": "style", "value": "casual" }
   ]
 }
 ```
@@ -321,7 +314,7 @@ GET /clothing-items
 
 **Example:**
 ```
-GET /clothing-items?source=OWNED&tagKey=category&tagValue=T_SHIRT&page=1&limit=20
+GET /clothing-items?source=OWNED&tagKey=category&tagValue=t-shirt&page=1&limit=20
 GET /clothing-items?tagKey=season&tagValue=summer&search=blue
 ```
 
@@ -353,11 +346,8 @@ POST /clothing-items/search
   "filters": {
     "source": "OWNED",
     "tags": [
-      { "key": "category", "value": "T_SHIRT" },
-      { "key": "category", "value": "SHIRT" },
-      { "key": "color", "value": "blue" },
-      { "key": "pattern", "value": "solid" },
-      { "key": "pattern", "value": "striped" },
+      { "key": "category", "value": "t-shirt" },
+      { "key": "category", "value": "shirt" },
       { "key": "style", "value": "casual" },
       { "key": "season", "value": "summer" }
     ]
@@ -366,6 +356,8 @@ POST /clothing-items/search
   "limit": 20
 }
 ```
+
+**Current implementation note:** the backend currently auto-predicts only `category`, and the supported values are `dress`, `hat`, `longsleeve`, `outwear`, `pants`, `shirt`, `shoes`, `shorts`, `t-shirt`. `season`, `style`, and `audience` remain valid searchable tags, but are expected to be user-supplied in `finalTags`.
 
 **Response (200):**
 ```json
