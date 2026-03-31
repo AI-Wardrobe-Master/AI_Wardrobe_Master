@@ -48,7 +48,7 @@ docker compose up --build
 - 启动 PostgreSQL 16
 - 等待数据库 ready
 - 自动执行 `alembic upgrade head`
-- 自动插入固定 demo 用户
+- 自动准备一个可登录的开发 seed user
 - 启动 FastAPI 服务
 
 启动后可直接访问：
@@ -84,7 +84,10 @@ docker compose down -v
 
 - `docker-compose.yml` 位于仓库根目录，不在 `backend/` 目录下
 - compose 已经注入数据库连接参数，不需要再手动复制 `.env`
-- 当前 demo 用户是固定占位用户，ID 为 `00000000-0000-0000-0000-000000000001`
+- 本地 seed user 默认信息：
+  - `email`: `demo@example.com`
+  - `password`: `demo123456`
+  - `user_id`: `00000000-0000-0000-0000-000000000001`
 
 ## 单独运行 Docker 镜像
 
@@ -103,7 +106,7 @@ docker run --rm -p 8000:8000 \
   ai-wardrobe-backend
 ```
 
-镜像启动时会自动等待数据库、执行 migration、插入 demo 用户，然后再启动 API。
+镜像启动时会自动等待数据库、执行 migration、准备 seed user，然后再启动 API。
 
 ## 当前实现说明
 
@@ -116,7 +119,26 @@ docker run --rm -p 8000:8000 \
 - 当前自动分类只写入 `category` 标签，且仅接受 Roboflow workflow 已支持的值：
   `dress`、`hat`、`longsleeve`、`outwear`、`pants`、`shirt`、`shoes`、`shorts`、`t-shirt`
 - `season`、`style`、`audience` 当前不再由后端自动生成，改为用户后续手动补充到 `finalTags`
-- 当前认证仍是 demo 占位，使用固定测试用户，不是真实 JWT
+- 当前受保护接口需要 Bearer JWT
+- 先调用 `POST /api/v1/auth/login` 获取 token，再访问衣物/衣橱接口
+
+登录示例：
+
+```bash
+curl -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"demo@example.com","password":"demo123456"}'
+```
+
+注册示例：
+
+```bash
+curl -X POST http://localhost:8000/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"username":"new_user","email":"new_user@example.com","password":"secret123"}'
+```
+
+注册成功后会直接返回 JWT，可立刻用于访问受保护接口。
 
 ## 数据库迁移
 

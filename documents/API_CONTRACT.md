@@ -20,7 +20,7 @@ Production: https://api.aiwardrobe.com/v1
 Authorization: Bearer <JWT_TOKEN>
 ```
 
-**Current implementation note:** Module 2 demo backend still uses a fixed demo user internally and does not enforce real JWT verification yet.
+**Current implementation note:** The local backend now enforces Bearer JWT on protected endpoints. For local Docker-based development, a seed user is prepared automatically: `demo@example.com` / `demo123456`.
 
 ### Common Headers
 ```
@@ -94,6 +94,8 @@ POST /auth/register
 }
 ```
 
+**Current implementation note:** `userType` is accepted for forward compatibility, but the backend currently creates newly registered users as `CONSUMER` by default.
+
 **Response (201):**
 ```json
 {
@@ -110,6 +112,10 @@ POST /auth/register
   }
 }
 ```
+
+**Error responses:**
+- `409 Conflict` - email already registered or username already taken
+- `422 Unprocessable Entity` - invalid username/email/password format
 
 ### 1.2 Login
 ```

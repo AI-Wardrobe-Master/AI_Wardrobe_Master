@@ -51,6 +51,7 @@ async def create_clothing_item(
     name: str | None = Form(None),
     description: str | None = Form(None),
     db: Session = Depends(get_db),
+    user_id: UUID = Depends(get_current_user_id),
 ):
     front_bytes = await front_image.read()
     back_bytes = await back_image.read() if back_image else None
@@ -59,7 +60,7 @@ async def create_clothing_item(
     item, task = await run_pipeline(
         db,
         storage,
-        user_id=UUID("00000000-0000-0000-0000-000000000001"),
+        user_id=user_id,
         front_bytes=front_bytes,
         back_bytes=back_bytes,
         name=name,
@@ -74,8 +75,12 @@ async def create_clothing_item(
 
 
 @router.get("/{item_id}", response_model=ClothingItemResponse)
-def get_clothing_item(item_id: UUID, db: Session = Depends(get_db)):
-    item = db.query(ClothingItem).filter(ClothingItem.id == item_id).first()
+def get_clothing_item(
+    item_id: UUID,
+    db: Session = Depends(get_db),
+    user_id: UUID = Depends(get_current_user_id),
+):
+    item = crud_clothing.get(db, item_id, user_id)
     if not item:
         raise HTTPException(404, "Clothing item not found")
 
@@ -194,7 +199,15 @@ def search_clothing_items(
 
 
 @router.get("/{item_id}/processing-status", response_model=ProcessingStatusResponse)
-def get_processing_status(item_id: UUID, db: Session = Depends(get_db)):
+def get_processing_status(
+    item_id: UUID,
+    db: Session = Depends(get_db),
+    user_id: UUID = Depends(get_current_user_id),
+):
+    item = crud_clothing.get(db, item_id, user_id)
+    if not item:
+        raise HTTPException(404, "Clothing item not found")
+
     task = (
         db.query(ProcessingTask)
         .filter(ProcessingTask.clothing_item_id == item_id)
@@ -214,8 +227,12 @@ def get_processing_status(item_id: UUID, db: Session = Depends(get_db)):
 
 
 @router.post("/{item_id}/retry", response_model=ClothingItemCreateResponse, status_code=202)
-async def retry_processing(item_id: UUID, db: Session = Depends(get_db)):
-    item = db.query(ClothingItem).filter(ClothingItem.id == item_id).first()
+async def retry_processing(
+    item_id: UUID,
+    db: Session = Depends(get_db),
+    user_id: UUID = Depends(get_current_user_id),
+):
+    item = crud_clothing.get(db, item_id, user_id)
     if not item:
         raise HTTPException(404, "Clothing item not found")
 
@@ -266,7 +283,15 @@ async def retry_processing(item_id: UUID, db: Session = Depends(get_db)):
 
 
 @router.get("/{item_id}/angle-views", response_model=AngleViewsResponse)
-def get_angle_views(item_id: UUID, db: Session = Depends(get_db)):
+def get_angle_views(
+    item_id: UUID,
+    db: Session = Depends(get_db),
+    user_id: UUID = Depends(get_current_user_id),
+):
+    item = crud_clothing.get(db, item_id, user_id)
+    if not item:
+        raise HTTPException(404, "Clothing item not found")
+
     images = (
         db.query(Image)
         .filter(Image.clothing_item_id == item_id, Image.image_type == "ANGLE_VIEW")
@@ -283,7 +308,15 @@ def get_angle_views(item_id: UUID, db: Session = Depends(get_db)):
 
 
 @router.get("/{item_id}/model")
-async def download_model(item_id: UUID, db: Session = Depends(get_db)):
+async def download_model(
+    item_id: UUID,
+    db: Session = Depends(get_db),
+    user_id: UUID = Depends(get_current_user_id),
+):
+    item = crud_clothing.get(db, item_id, user_id)
+    if not item:
+        raise HTTPException(404, "Clothing item not found")
+
     model = db.query(Model3D).filter(Model3D.clothing_item_id == item_id).first()
     if not model:
         raise HTTPException(404, "3D model not found")
