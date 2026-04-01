@@ -127,11 +127,12 @@ Database schema and data model details are maintained in their respective docume
 | Mechanism | Purpose |
 |-----------|---------|
 | Foreign key CASCADE | Deleting a clothing item auto-removes all images, models, tasks |
-| DB transactions | Rollback on failure + cleanup uploaded files |
+| DB transactions | Short DB transactions for create/retry; long-running work moves to Celery workers |
 | Unique constraint | One 3D model per clothing item |
 | Pydantic validation | Input validation at API boundary |
-| Failure recovery | Failed tasks recorded with error; user can retry |
-| Startup recovery | On restart, mark stale PROCESSING tasks as FAILED |
+| Failure recovery | Failed tasks recorded with error; derived outputs are cleaned; originals remain for retry |
+| Concurrency guard | One active processing task (`PENDING`/`PROCESSING`) per clothing item |
+| Startup recovery | On restart, stale leased tasks are marked `FAILED` |
 
 ---
 
@@ -169,6 +170,16 @@ Database schema and data model details are maintained in their respective docume
 | Slow 3D generation | Use Turbo variant (FlashVDM); async + progress feedback |
 | Poor 3D quality for clothing | Abstract service layer; swap to TripoSR/InstantMesh if needed |
 | Only front photo available | Single-view model produces reasonable inference; guide user to provide back |
+| High concurrent uploads | API only stores originals and enqueues work; Celery workers and DB constraints absorb load |
+
+## 8.1 Failure / Retry Semantics
+
+- `POST /clothing-items` only writes originals + `ProcessingTask(PENDING)` and then enqueues background work.
+- Worker claims the task and moves it to `PROCESSING`; the API process does not run the full pipeline.
+- On failure, keep `clothing_items`, `processing_tasks`, `original_front`, and `original_back`.
+- On failure, remove `processed_front`, `processed_back`, `model.glb`, all `angle_*` images, and their DB records.
+- Retry always creates a new `ProcessingTask`, reuses the original uploads, and clears old derived outputs before rerunning.
+- A clothing item can have many historical tasks, but at most one active task.
 
 ---
 
@@ -179,4 +190,3 @@ Database schema and data model details are maintained in their respective docume
  - POST /api/v1/clothing-items/:id/retry — 重试失败任务
  - GET /api/v1/clothing-items/:id/angle-views — 8 角度视图
  - GET /api/v1/clothing-items/:id/model — 下载 GLB 模型
-

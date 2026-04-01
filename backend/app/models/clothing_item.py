@@ -158,9 +158,17 @@ class ProcessingTask(Base):
         index=True,
     )
     task_type = Column(String(30), nullable=False)
+    attempt_no = Column(Integer, nullable=False, default=1)
+    retry_of_task_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("processing_tasks.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     status = Column(String(20), nullable=False, default="PENDING")
     progress = Column(Integer, default=0)
     error_message = Column(Text, nullable=True)
+    worker_id = Column(String(255), nullable=True)
+    lease_expires_at = Column(DateTime(timezone=True), nullable=True)
     started_at = Column(DateTime(timezone=True), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(
@@ -173,12 +181,20 @@ class ProcessingTask(Base):
             "'ANGLE_RENDERING','FULL_PIPELINE')",
             name="ck_task_type",
         ),
+        CheckConstraint("attempt_no >= 1", name="ck_attempt_no"),
         CheckConstraint(
             "status IN ('PENDING','PROCESSING','COMPLETED','FAILED')",
             name="ck_task_status",
         ),
         CheckConstraint("progress BETWEEN 0 AND 100", name="ck_progress"),
         Index("idx_processing_tasks_item_created", "clothing_item_id", "created_at"),
+        Index(
+            "uq_processing_tasks_active_item",
+            "clothing_item_id",
+            unique=True,
+            postgresql_where=sql_text("status IN ('PENDING','PROCESSING')"),
+        ),
     )
 
     clothing_item = relationship("ClothingItem", back_populates="processing_tasks")
+    retry_of_task = relationship("ProcessingTask", remote_side=[id], uselist=False)

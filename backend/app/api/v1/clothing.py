@@ -1,10 +1,13 @@
+import logging
 from typing import Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user_id
+from app.core.config import settings
 from app.crud import clothing as crud_clothing
 from app.db.session import get_db
 from app.models.clothing_item import ClothingItem, Image, Model3D, ProcessingTask
@@ -17,11 +20,18 @@ from app.schemas.clothing_item import (
     ProcessingStatusResponse,
 )
 from app.schemas.search import SearchRequest
-from app.services.clothing_pipeline import run_pipeline
+from app.services.clothing_pipeline import cleanup_pipeline_artifacts
+from app.services.processing_task_service import (
+    ACTIVE_TASK_STATUSES,
+    create_processing_task,
+    get_latest_task,
+)
 from app.services.search_service import SearchService
 from app.services.storage_service import StorageService, get_storage_service
+from app.tasks import process_pipeline
 
 router = APIRouter(prefix="/clothing-items", tags=["clothing"])
+logger = logging.getLogger(__name__)
 
 
 def _storage() -> StorageService:
@@ -53,19 +63,50 @@ async def create_clothing_item(
     db: Session = Depends(get_db),
     user_id: UUID = Depends(get_current_user_id),
 ):
-    front_bytes = await front_image.read()
-    back_bytes = await back_image.read() if back_image else None
+    front_bytes = await _read_upload_bytes(front_image, "front_image")
+    back_bytes = (
+        await _read_upload_bytes(back_image, "back_image")
+        if back_image else None
+    )
     storage = _storage()
-
-    item, task = await run_pipeline(
-        db,
-        storage,
+    item = ClothingItem(
+        id=uuid4(),
         user_id=user_id,
-        front_bytes=front_bytes,
-        back_bytes=back_bytes,
+        source="OWNED",
         name=name,
         description=description,
+        predicted_tags=[],
+        final_tags=[],
+        is_confirmed=False,
     )
+    front_path = _storage_path(user_id, item.id, "original_front.jpg")
+    back_path = _storage_path(user_id, item.id, "original_back.jpg") if back_bytes else None
+    uploaded_paths: list[str] = []
+
+    try:
+        await storage.upload(_to_buffer(front_bytes), front_path)
+        uploaded_paths.append(front_path)
+        if back_bytes and back_path:
+            await storage.upload(_to_buffer(back_bytes), back_path)
+            uploaded_paths.append(back_path)
+
+        db.add(item)
+        db.flush()
+        db.add(Image(clothing_item_id=item.id, image_type="ORIGINAL_FRONT", storage_path=front_path))
+        if back_path:
+            db.add(Image(clothing_item_id=item.id, image_type="ORIGINAL_BACK", storage_path=back_path))
+        task = create_processing_task(db, item.id, attempt_no=1)
+        db.commit()
+    except Exception:
+        db.rollback()
+        for path in uploaded_paths:
+            try:
+                await storage.delete(path)
+            except Exception:
+                logger.warning("Failed to cleanup original upload %s", path, exc_info=True)
+        raise
+
+    _dispatch_processing_task(db, task.id)
     return ClothingItemCreateResponse(
         id=item.id,
         processingTaskId=task.id,
@@ -208,12 +249,7 @@ def get_processing_status(
     if not item:
         raise HTTPException(404, "Clothing item not found")
 
-    task = (
-        db.query(ProcessingTask)
-        .filter(ProcessingTask.clothing_item_id == item_id)
-        .order_by(ProcessingTask.created_at.desc())
-        .first()
-    )
+    task = get_latest_task(db, item_id)
     if not task:
         raise HTTPException(404, "No processing task found")
 
@@ -232,48 +268,38 @@ async def retry_processing(
     db: Session = Depends(get_db),
     user_id: UUID = Depends(get_current_user_id),
 ):
-    item = crud_clothing.get(db, item_id, user_id)
+    item = (
+        db.query(ClothingItem)
+        .filter(ClothingItem.id == item_id, ClothingItem.user_id == user_id)
+        .with_for_update()
+        .first()
+    )
     if not item:
         raise HTTPException(404, "Clothing item not found")
 
-    last_task = (
-        db.query(ProcessingTask)
-        .filter(ProcessingTask.clothing_item_id == item_id)
-        .order_by(ProcessingTask.created_at.desc())
-        .first()
-    )
-    if last_task and last_task.status != "FAILED":
+    last_task = get_latest_task(db, item_id)
+    if last_task is None:
+        raise HTTPException(400, "No failed task available to retry")
+    if last_task.status in ACTIVE_TASK_STATUSES:
+        raise HTTPException(409, "Processing is already active for this item")
+    if last_task.status != "FAILED":
         raise HTTPException(400, "Only failed tasks can be retried")
 
     storage = _storage()
-    images = db.query(Image).filter(
-        Image.clothing_item_id == item_id,
-        Image.image_type.in_(["ORIGINAL_FRONT", "ORIGINAL_BACK"]),
-    ).all()
+    await cleanup_pipeline_artifacts(db, storage, item.id, commit=False)
+    try:
+        task = create_processing_task(
+            db,
+            item.id,
+            attempt_no=last_task.attempt_no + 1,
+            retry_of_task_id=last_task.id,
+        )
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Processing is already active for this item")
 
-    front_bytes = None
-    back_bytes = None
-    for img in images:
-        data = await storage.download(img.storage_path)
-        if img.image_type == "ORIGINAL_FRONT":
-            front_bytes = data
-        else:
-            back_bytes = data
-
-    if not front_bytes:
-        raise HTTPException(400, "Original front image not found, please re-upload")
-
-    item, task = await run_pipeline(
-        db,
-        storage,
-        item.user_id,
-        front_bytes,
-        back_bytes,
-        item.name,
-        item.description,
-        existing_item=item,
-        reuse_originals=True,
-    )
+    _dispatch_processing_task(db, task.id)
     return ClothingItemCreateResponse(
         id=item.id,
         processingTaskId=task.id,
@@ -353,6 +379,44 @@ def _build_image_set(images: list[Image], storage: StorageService) -> ImageSetRe
 
     result.angleViews = angle_views
     return result
+
+
+async def _read_upload_bytes(file: UploadFile, field_name: str) -> bytes:
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(422, f"{field_name} must be an image")
+
+    payload = await file.read()
+    if not payload:
+        raise HTTPException(422, f"{field_name} is empty")
+    if len(payload) > settings.MAX_UPLOAD_SIZE_BYTES:
+        raise HTTPException(
+            413,
+            f"{field_name} exceeds the {settings.MAX_UPLOAD_SIZE_BYTES} byte limit",
+        )
+    return payload
+
+
+def _storage_path(user_id: UUID, item_id: UUID, filename: str) -> str:
+    return f"{user_id}/{item_id}/{filename}"
+
+
+def _to_buffer(payload: bytes):
+    import io
+
+    return io.BytesIO(payload)
+
+
+def _dispatch_processing_task(db: Session, task_id: UUID) -> None:
+    try:
+        process_pipeline.delay(str(task_id))
+    except Exception as exc:
+        logger.exception("Failed to dispatch processing task %s", task_id)
+        task = db.query(ProcessingTask).filter(ProcessingTask.id == task_id).first()
+        if task is not None:
+            task.status = "FAILED"
+            task.error_message = f"Task dispatch failed: {exc}"[:500]
+            db.commit()
+        raise HTTPException(503, "Processing queue is unavailable")
 
 
 def _progress_to_steps(progress: int, status: str) -> dict[str, str]:

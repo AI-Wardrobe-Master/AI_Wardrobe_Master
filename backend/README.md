@@ -31,6 +31,9 @@ psql -U wardrobe_user -d wardrobe_db -f scripts/init_schema.sql
 
 # 4. 启动服务
 uvicorn app.main:app --reload --port 8000
+
+# 5. 启动 Celery worker（处理衣物数字化长任务）
+celery -A app.core.celery_app.celery_app worker -Q clothing_pipeline --loglevel=info
 ```
 
 API 文档：http://localhost:8000/docs
@@ -113,14 +116,25 @@ docker run --rm -p 8000:8000 \
 - `POST /api/v1/clothing-items`
   - 当前实际接收的 multipart 字段是：`front_image`、`back_image`、`name`、`description`
   - 当前实现不在创建时接收 `customTags`
+  - 当前接口只负责保存原图、创建 `PENDING` 的处理任务并入队，不会在 API 请求里同步跑完整 3D pipeline
   - `customTags` 属于用户可选补充信息，当前通过 `PATCH /api/v1/clothing-items/{id}` 添加或修改
 - `GET /api/v1/clothing-items/{id}` 当前会返回 `customTags`
-- `POST /api/v1/clothing-items` 创建完成后会自动触发分类流程，初始写入 `predictedTags` 和 `finalTags`
+- `POST /api/v1/clothing-items` 入队后，worker 会异步完成背景去除、分类、3D 生成和多角度渲染
 - 当前自动分类只写入 `category` 标签，且仅接受 Roboflow workflow 已支持的值：
   `dress`、`hat`、`longsleeve`、`outwear`、`pants`、`shirt`、`shoes`、`shorts`、`t-shirt`
 - `season`、`style`、`audience` 当前不再由后端自动生成，改为用户后续手动补充到 `finalTags`
 - 当前受保护接口需要 Bearer JWT
 - 先调用 `POST /api/v1/auth/login` 获取 token，再访问衣物/衣橱接口
+
+## 处理失败与重试
+
+- 最新任务状态通过 `GET /api/v1/clothing-items/{id}/processing-status` 轮询。
+- 如果任务失败：
+  - 保留 `clothing_items`、`processing_tasks`、`original_front`、`original_back`
+  - 清理 `processed_*`、`model.glb`、`angle_*` 及其数据库记录
+- `POST /api/v1/clothing-items/{id}/retry` 仅允许重试最新的 `FAILED` 任务。
+- retry 会新建一个 task，复用原图，并在重新执行前清空旧的派生产物。
+- 同一件衣物同一时刻最多只有一个活跃任务（`PENDING` 或 `PROCESSING`）。
 
 登录示例：
 

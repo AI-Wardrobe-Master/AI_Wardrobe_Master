@@ -54,6 +54,9 @@ class Settings(BaseSettings):
 
     # Redis / Celery
     REDIS_URL: str = "redis://localhost:6379/0"
+    CELERY_TASK_ALWAYS_EAGER: bool = False
+    PROCESSING_TASK_LEASE_SECONDS: int = 900
+    MAX_UPLOAD_SIZE_BYTES: int = 10 * 1024 * 1024
 
     BACKEND_CORS_ORIGINS: List[str] = ["*"]
 

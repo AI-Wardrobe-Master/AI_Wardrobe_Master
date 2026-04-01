@@ -87,11 +87,15 @@ CREATE TABLE IF NOT EXISTS processing_tasks (
             'FULL_PIPELINE'
         )
     ),
+    attempt_no INTEGER NOT NULL DEFAULT 1 CHECK (attempt_no >= 1),
+    retry_of_task_id UUID REFERENCES processing_tasks(id) ON DELETE SET NULL,
     status VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK (
         status IN ('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED')
     ),
     progress INTEGER DEFAULT 0 CHECK (progress BETWEEN 0 AND 100),
     error_message TEXT,
+    worker_id VARCHAR(255),
+    lease_expires_at TIMESTAMP WITH TIME ZONE,
     started_at TIMESTAMP WITH TIME ZONE,
     completed_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
@@ -99,6 +103,9 @@ CREATE TABLE IF NOT EXISTS processing_tasks (
 
 CREATE INDEX IF NOT EXISTS idx_processing_tasks_item_created
 ON processing_tasks(clothing_item_id, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_processing_tasks_active_item
+ON processing_tasks(clothing_item_id)
+WHERE status IN ('PENDING', 'PROCESSING');
 
 -- Module 3: Wardrobes (delete wardrobe only removes links, not clothing_items)
 CREATE TABLE IF NOT EXISTS wardrobes (

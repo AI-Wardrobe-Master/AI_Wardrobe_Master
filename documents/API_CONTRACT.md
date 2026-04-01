@@ -162,7 +162,7 @@ description: "Comfortable cotton t-shirt"
 
 **Response (202 Accepted):**
 
-> Returns 202 instead of 201 because 3D model generation and angle rendering are processed asynchronously (~30s). Client should poll the processing-status endpoint.
+> Returns 202 because the request only stores the originals, creates a processing task, and enqueues background work. Client should poll the processing-status endpoint.
 
 ```json
 {
@@ -170,11 +170,17 @@ description: "Comfortable cotton t-shirt"
   "data": {
     "id": "item-001",
     "processingTaskId": "task-001",
-    "status": "PROCESSING",
+    "status": "PENDING",
     "estimatedTime": 30
   }
 }
 ```
+
+**Failure / retry semantics:**
+- Original assets (`originalFrontUrl`, `originalBackUrl`) remain available after failure.
+- Derived assets (`processedFrontUrl`, `processedBackUrl`, `model3dUrl`, `angleViews`) must be empty when the latest processing task is `FAILED`.
+- `POST /clothing-items/:id/retry` creates a new processing task, reuses the original uploads, and clears previous derived outputs before rerunning.
+- Only one active processing task (`PENDING` or `PROCESSING`) is allowed per clothing item.
 
 **Response after processing completes (via GET /clothing-items/:id):**
 ```json
@@ -1044,6 +1050,24 @@ GET /clothing-items/:id/processing-status
 
 **Status values:** `PENDING` | `PROCESSING` | `COMPLETED` | `FAILED`
 
+**FAILED example:**
+```json
+{
+  "success": true,
+  "data": {
+    "status": "FAILED",
+    "progress": 25,
+    "steps": {
+      "upload": "completed",
+      "backgroundRemoval": "failed",
+      "modelGeneration": "pending",
+      "angleRendering": "pending"
+    },
+    "errorMessage": "Background removal failed"
+  }
+}
+```
+
 ### 8.5 Retry Failed Processing
 ```
 POST /clothing-items/:id/retry
@@ -1054,11 +1078,17 @@ POST /clothing-items/:id/retry
 {
   "success": true,
   "data": {
+    "id": "item-001",
     "processingTaskId": "task-002",
-    "status": "PROCESSING"
+    "status": "PENDING"
   }
 }
 ```
+
+**Retry rules:**
+- Latest task must be `FAILED`.
+- If the clothing item already has an active `PENDING` or `PROCESSING` task, retry returns `409 Conflict`.
+- Retry preserves the original uploads, removes previous derived outputs, and creates a brand new processing task for auditability.
 
 ### 8.6 Get Angle Views
 ```

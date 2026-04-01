@@ -7,6 +7,8 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.router import api_router
 from app.core.config import settings
+from app.db.session import SessionLocal
+from app.services.processing_task_service import fail_expired_tasks
 
 logging.basicConfig(level=logging.INFO)
 
@@ -39,6 +41,17 @@ def root():
 storage_dir = Path(settings.LOCAL_STORAGE_PATH)
 storage_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/files", StaticFiles(directory=str(storage_dir)), name="files")
+
+
+@app.on_event("startup")
+def recover_stale_processing_tasks() -> None:
+    db = SessionLocal()
+    try:
+        recovered = fail_expired_tasks(db)
+        if recovered:
+            logging.warning("Recovered %s stale processing task(s)", recovered)
+    finally:
+        db.close()
 
 
 @app.get("/health")

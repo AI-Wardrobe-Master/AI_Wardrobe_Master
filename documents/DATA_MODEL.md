@@ -548,9 +548,13 @@ class ProcessingTask {
   String id;                    // UUID
   String clothingItemId;        // Reference to ClothingItem
   ProcessingTaskType taskType;  // BACKGROUND_REMOVAL | 3D_GENERATION | ANGLE_RENDERING | FULL_PIPELINE
+  int attemptNo;                // 1 for first run, increments on retry
+  String? retryOfTaskId;        // Previous failed task if this is a retry
   ProcessingStatus status;      // PENDING | PROCESSING | COMPLETED | FAILED
   int progress;                 // 0-100
   String? errorMessage;         // Error details if FAILED
+  String? workerId;             // Worker currently processing the task
+  DateTime? leaseExpiresAt;     // Claim lease timeout for worker recovery
   DateTime? startedAt;
   DateTime? completedAt;
   DateTime createdAt;
@@ -606,6 +610,8 @@ enum ProcessingStatus {
    - ClothingItem can exist without being in any wardrobe
    - Deleting wardrobe does NOT delete ClothingItem
    - Deleting ClothingItem removes all WardrobeItem references
+   - Failed clothing processing keeps original uploads and task history, but not derived outputs
+   - At most one `PENDING` or `PROCESSING` task may exist per clothing item
 
 2. **Source Isolation**
    - `source = OWNED`: Must have `provenance = null`

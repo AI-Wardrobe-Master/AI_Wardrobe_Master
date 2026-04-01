@@ -1,7 +1,7 @@
 import asyncio
 import unittest
 from datetime import datetime, timezone
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException
@@ -330,10 +330,12 @@ class R1AuthTests(unittest.TestCase):
 
     def test_user_cannot_retry_other_users_processing(self):
         item_id = uuid4()
+        db = Mock()
+        db.query.return_value.filter.return_value.with_for_update.return_value.first.return_value = None
 
         with patch.object(clothing_api.crud_clothing, "get", return_value=None):
             with self.assertRaises(HTTPException) as ctx:
-                asyncio.run(clothing_api.retry_processing(item_id, object(), uuid4()))
+                asyncio.run(clothing_api.retry_processing(item_id, db, uuid4()))
 
         self.assertEqual(ctx.exception.status_code, 404)
 
