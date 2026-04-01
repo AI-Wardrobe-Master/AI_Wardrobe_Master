@@ -3,7 +3,7 @@
   "scope": "backend",
   "overallAssessment": {
     "status": "partially_implemented",
-    "summary": "后端基础路由、JWT 鉴权、数据库迁移、衣物处理主流程和衣橱 CRUD 已经搭起来；当前仅保留 3D 依赖闭环与上传入口输入校验两项待完善功能用于持续跟踪。",
+    "summary": "后端基础路由、JWT 鉴权、数据库迁移、衣物处理主流程和衣橱 CRUD 已经搭起来，但文档定义的搭配持久化、创作者内容、卡包导入与溯源等核心业务能力仍未落地。",
     "implementedAreas": [
       "auth register/login with JWT",
       "clothing item CRUD basics",
@@ -12,9 +12,66 @@
       "alembic migrations",
       "local storage support"
     ],
-    "incompleteAreasCount": 2
+    "incompleteAreasCount": 6
   },
   "findings": [
+    {
+      "id": "BE-008",
+      "severity": "high",
+      "title": "Outfit 持久化能力在文档中已定义，但后端没有任何对应模型和接口实现",
+      "status": "incomplete",
+      "statusBar": {
+        "label": "未完成",
+        "completed": false,
+        "progress": 0,
+        "display": "[----------] 0%"
+      },
+      "evidence": [
+        {
+          "file": "/mnt/d/ai_wardrobe_master/documents/API_CONTRACT.md",
+          "lines": "536-660",
+          "note": "文档定义了 POST/GET/PATCH/DELETE /outfits 以及缩略图生成接口"
+        },
+        {
+          "file": "/mnt/d/ai_wardrobe_master/backend/app/api/v1/router.py",
+          "lines": "1-9",
+          "note": "当前仅注册 auth、ai、clothing、wardrobe 路由，没有 outfits 路由"
+        }
+      ],
+      "impact": "用户无法保存、读取、编辑或删除搭配，文档中的 Module 5.3 和 5.4 在后端没有可依赖的数据能力。",
+      "recommendation": "补齐 outfit/outfit_item 数据模型、CRUD、API schema 与 /outfits 路由，至少先支持保存、列表、详情、更新、删除五个基础操作。"
+    },
+    {
+      "id": "BE-009",
+      "severity": "high",
+      "title": "Creator/Card Pack 平台内容能力未实现",
+      "status": "incomplete",
+      "statusBar": {
+        "label": "未完成",
+        "completed": false,
+        "progress": 0,
+        "display": "[----------] 0%"
+      },
+      "evidence": [
+        {
+          "file": "/mnt/d/ai_wardrobe_master/documents/USER_STORIES.md",
+          "lines": "184-235",
+          "note": "文档定义了 Creator Upload、Create Card Pack、Browse Creator Content、Import Card Pack"
+        },
+        {
+          "file": "/mnt/d/ai_wardrobe_master/documents/API_CONTRACT.md",
+          "lines": "664-720",
+          "note": "文档定义了 /card-packs 相关接口"
+        },
+        {
+          "file": "/mnt/d/ai_wardrobe_master/backend/app/api/v1/router.py",
+          "lines": "1-9",
+          "note": "当前没有 creator/card-pack/import 相关路由"
+        }
+      ],
+      "impact": "平台内容侧完全不可用，既不能让创作者发布内容，也不能让消费者浏览或导入卡包。",
+      "recommendation": "先定义 creator、card_pack、card_pack_item、import_history 的后端数据模型，再分阶段补充创建、发布、查询、按分享链接读取和导入接口。"
+    },
     {
       "id": "BE-007",
       "severity": "medium",
@@ -40,11 +97,78 @@
       ],
       "impact": "坏文件、超大文件和非图片文件会进入重处理链路，造成更晚失败和额外资源消耗。",
       "recommendation": "在 API 层先做文件类型和大小校验，必要时补充尺寸约束与更清晰的 4xx 错误返回。"
+    },
+    {
+      "id": "BE-010",
+      "severity": "medium",
+      "title": "Imported item 的 provenance 追踪字段未建模",
+      "status": "incomplete",
+      "statusBar": {
+        "label": "未完成",
+        "completed": false,
+        "progress": 0,
+        "display": "[----------] 0%"
+      },
+      "evidence": [
+        {
+          "file": "/mnt/d/ai_wardrobe_master/documents/USER_STORIES.md",
+          "lines": "274-289",
+          "note": "文档要求 imported item 保存 creator、import timestamp、pack 信息"
+        },
+        {
+          "file": "/mnt/d/ai_wardrobe_master/backend/app/models/clothing_item.py",
+          "lines": "19-50",
+          "note": "当前 ClothingItem 仅有 source、tags、name、description、custom_tags，没有 creator/pack/import metadata 字段"
+        }
+      ],
+      "impact": "即使后续导入功能补上，也无法满足来源隔离和溯源展示要求，导入内容与普通衣物难以区分。",
+      "recommendation": "为 imported clothing 增加 provenance 字段或独立 import_history 关联表，并在 clothing detail/list 接口中返回这些元数据。"
+    },
+    {
+      "id": "BE-011",
+      "severity": "medium",
+      "title": "Virtual Wardrobe 自动创建与自动归档逻辑缺失",
+      "status": "incomplete",
+      "statusBar": {
+        "label": "未完成",
+        "completed": false,
+        "progress": 0,
+        "display": "[----------] 0%"
+      },
+      "evidence": [
+        {
+          "file": "/mnt/d/ai_wardrobe_master/documents/USER_STORIES.md",
+          "lines": "171-180",
+          "note": "文档要求 imported 内容自动进入系统创建的 Virtual Wardrobe"
+        },
+        {
+          "file": "/mnt/d/ai_wardrobe_master/backend/app/crud/wardrobe.py",
+          "lines": "20-37",
+          "note": "当前仅支持显式创建 wardrobe，没有用户级默认 virtual wardrobe 初始化逻辑"
+        }
+      ],
+      "impact": "后续卡包导入无法自动落到隔离容器，平台内容与 owned 内容的边界无法靠后端保证。",
+      "recommendation": "补充用户初始化或首次导入时的 virtual wardrobe 创建逻辑，并在导入流程中自动写入 wardrobe_items。"
+    },
+        {
+      "id": "BE-0012",
+      "severity": "high",
+      "title": "通过查找搜索自己感兴趣的衣物套装，需要通过云端来实现",
+      "status": "incomplete",
+      "statusBar": {
+        "label": "未完成",
+        "completed": false,
+        "progress": 0,
+        "display": "[----------] 0%"
+      }
     }
+    
   ],
   "quickWins": [
-    "补 3D 依赖安装说明与环境检查",
-    "增加上传文件校验"
+    "增加上传文件校验",
+    "先补 outfits 基础 CRUD",
+    "为 imported clothing 建 provenance 字段",
+    "补 virtual wardrobe 自动创建逻辑"
   ],
   "verificationNotes": {
     "codeReviewBased": true,
