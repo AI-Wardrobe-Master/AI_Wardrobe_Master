@@ -257,3 +257,93 @@ class CreatorProcessingTask(Base):
 
     creator_item = relationship("CreatorItem", back_populates="processing_tasks")
     retry_of_task = relationship("CreatorProcessingTask", remote_side=[id], uselist=False)
+
+
+class CardPack(Base):
+    __tablename__ = "card_packs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    creator_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name = Column(String(160), nullable=False)
+    description = Column(Text, nullable=True)
+    pack_type = Column(String(40), nullable=False, default="CLOTHING_COLLECTION")
+    status = Column(String(20), nullable=False, default="DRAFT")
+    cover_image_storage_path = Column(Text, nullable=True)
+    share_id = Column(String(64), nullable=True, unique=True)
+    import_count = Column(Integer, nullable=False, default=0)
+    published_at = Column(DateTime(timezone=True), nullable=True)
+    archived_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "pack_type IN ('CLOTHING_COLLECTION')",
+            name="ck_card_pack_type",
+        ),
+        CheckConstraint(
+            "status IN ('DRAFT','PUBLISHED','ARCHIVED')",
+            name="ck_card_pack_status",
+        ),
+        Index("idx_card_pack_creator_status", "creator_id", "status"),
+        Index("idx_card_pack_creator_created", "creator_id", "created_at"),
+    )
+
+    items = relationship(
+        "CardPackItem",
+        back_populates="card_pack",
+        cascade="all, delete-orphan",
+        order_by="CardPackItem.sort_order, CardPackItem.created_at",
+    )
+
+
+class CardPackItem(Base):
+    __tablename__ = "card_pack_items"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    card_pack_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("card_packs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    creator_item_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("creator_items.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    sort_order = Column(Integer, nullable=False, default=0)
+    created_at = Column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+    __table_args__ = (
+        Index(
+            "uq_card_pack_items_pack_creator_item",
+            "card_pack_id",
+            "creator_item_id",
+            unique=True,
+        ),
+        Index(
+            "uq_card_pack_items_pack_sort_order",
+            "card_pack_id",
+            "sort_order",
+            unique=True,
+        ),
+        Index("idx_card_pack_items_pack", "card_pack_id"),
+    )
+
+    card_pack = relationship("CardPack", back_populates="items")
+    creator_item = relationship("CreatorItem", backref="pack_items")

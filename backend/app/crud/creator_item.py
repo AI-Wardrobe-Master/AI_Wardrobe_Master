@@ -1,17 +1,24 @@
+from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.creator import CreatorItem
 
 
-def get_owned_creator_item(db: Session, *, item_id, creator_id):
-    return (
-        db.query(CreatorItem)
-        .filter(
-            CreatorItem.id == item_id,
-            CreatorItem.creator_id == creator_id,
-        )
-        .first()
+def get_owned_creator_item(
+    db: Session,
+    *,
+    item_id,
+    creator_id,
+    for_update: bool = False,
+):
+    query = db.query(CreatorItem).filter(
+        CreatorItem.id == item_id,
+        CreatorItem.creator_id == creator_id,
     )
+    if for_update:
+        query = query.with_for_update()
+    return query.first()
 
 
 def create_creator_item(
@@ -67,7 +74,14 @@ def update_creator_item(
 
 def delete_creator_item(db: Session, item: CreatorItem) -> None:
     db.delete(item)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Creator item delete conflicts with current database state",
+        ) from exc
 
 
 def list_public_creator_items_by_creator(

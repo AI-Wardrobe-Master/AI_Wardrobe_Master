@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_creator_user_id
 from app.core.config import settings
+from app.crud import card_pack as crud_card_pack
 from app.crud import creator_item as crud_creator_item
 from app.db.session import get_db
 from app.models.creator import CreatorItemImage, CreatorProcessingTask
@@ -152,9 +153,15 @@ def delete_creator_item(
         db,
         item_id=item_id,
         creator_id=creator_id,
+        for_update=True,
     )
     if item is None:
         raise HTTPException(404, "Creator item not found")
+    if crud_card_pack.has_published_pack_reference(db, creator_item_id=item_id):
+        raise HTTPException(
+            409,
+            "Creator item belongs to a published pack. Delete the published pack first.",
+        )
     crud_creator_item.delete_creator_item(db, item)
     return None
 

@@ -400,6 +400,14 @@ def get_current_creator_user_id(...)
 约束：
 
 - 若衣物已被某个 `PUBLISHED` Pack 引用，则返回 `409 Conflict`
+- 当前后端错误文案为：
+  - `Creator item belongs to a published pack. Delete the published pack first.`
+
+前端建议：
+
+- 不要把这类 `409` 统一映射成“删除失败，请重试”
+- 应直接展示文案，并把用户引导到对应 pack 的管理页
+- 若后续前端能拿到 pack 反查能力，可在这里追加“查看相关卡包”入口
 
 #### `GET /creators/{creatorId}/items`
 
@@ -441,7 +449,13 @@ def get_current_creator_user_id(...)
 
 #### `GET /creators/{creatorId}/card-packs`
 
-对外只返回 `PUBLISHED`，Creator 自己可通过 `status` 查看 DRAFT / ARCHIVED。
+对外只返回 `PUBLISHED`。
+
+当前实现补充：
+
+- Creator 自己访问时，不需要额外传 `status` 参数，也会返回 `DRAFT` / `PUBLISHED` / `ARCHIVED`
+- 当前响应体为 `data.items + data.pagination`
+- 前端应以登录态区分“公开浏览模式”和“本人管理模式”
 
 #### `PATCH /card-packs/{id}`
 
@@ -455,6 +469,9 @@ def get_current_creator_user_id(...)
 限制：
 
 - 仅 `DRAFT` 可改 `itemIds`
+- `ARCHIVED` 不能更新任何字段
+- 当前后端允许 `PUBLISHED` 更新元数据字段，但不允许变更 `itemIds`
+- 若发生并发冲突或唯一约束冲突，返回 `409 Card pack update conflicts with current database state`
 
 #### `POST /card-packs/{id}/publish`
 
@@ -470,18 +487,37 @@ def get_current_creator_user_id(...)
 - `shareLink`
 - `publishedAt`
 
+前端建议：
+
+- 对 `409` 按业务原因展示，不要统一归类成“服务器异常”
+- 当前已知冲突文案包括：
+  - `Pack cannot be published`
+  - `Pack must contain at least one item`
+  - `All pack items must be processed before publishing`
+  - `Card pack publish conflicts with current database state`
+- 最后一类应提示用户刷新 pack 详情后重试
+
 #### `POST /card-packs/{id}/archive`
 
 效果：
 
 - `PUBLISHED -> ARCHIVED`
 - 已导入记录保留，不影响既有 imported 副本
+- 并发冲突时返回 `409 Card pack archive conflicts with current database state`
 
 #### `DELETE /card-packs/{id}`
 
-限制：
+当前实现：
 
-- 仅 `DRAFT` 可删除
+- Owner 可以删除 `DRAFT`、`PUBLISHED`、`ARCHIVED` 的 pack
+- 删除 `PUBLISHED` pack 是允许的，用于配合“先删已发布 pack，再删 pack 内 item”的管理路径
+- 并发冲突时返回 `409 Card pack delete conflicts with current database state`
+
+前端建议：
+
+- `PUBLISHED` pack 删除前必须二次确认
+- 删除按钮文案不要写成“仅草稿可删”，否则会和当前后端行为冲突
+- 如果 UI 需要更保守，可以仅对 `PUBLISHED` 增加危险确认，不要额外拦截请求
 
 ### 6.6 Import APIs
 

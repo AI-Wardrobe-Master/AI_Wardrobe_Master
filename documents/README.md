@@ -14,12 +14,28 @@ documents/
 ├── BACKEND_ARCHITECTURE.md      # 后端架构设计 (FastAPI + PostgreSQL)
 ├── FLUTTER_ARCHITECTURE.md      # Flutter 架构设计
 ├── FLUTTER_GUIDE_ZH.md          # Flutter 使用手册（中文）
-└── FLUTTER_GUIDE_EN.md          # Flutter Quick Guide (English)
+├── FLUTTER_GUIDE_EN.md          # Flutter Quick Guide (English)
+└── backend_missing_feature_design/ # 缺失能力专项设计与实现指引
 ```
 
 ---
 
 ## 文档说明
+
+### 0.1 backend_missing_feature_design/ - 缺失能力专项设计
+
+**用途：** 为尚未落地的后端能力提供专项设计稿、流程图和实现指引
+
+**适用人群：**
+- 后端开发：补齐未实现能力
+- 架构师：确认专项设计范围
+- Agent：按既定边界执行开发
+
+**当前与 Outfit Preview 相关的重要文档：**
+- `backend_missing_feature_design/outfit_preview_backend_design.md`
+  定义单件试穿预览的前后端职责、后端 API、状态机、表结构与存储边界
+- `backend_missing_feature_design/outfit_preview_agent_guide.md`
+  定义下游代码 agent 实现试穿预览任务链路时的修改范围、实现顺序与验收标准
 
 ### 0. TECH_STACK.md - 技术栈总览 ⭐ 新增
 

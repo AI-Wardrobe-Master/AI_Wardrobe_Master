@@ -45,6 +45,15 @@ def get_current_user_id(
     return user_id
 
 
+def get_optional_current_user_id(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    db: Session = Depends(get_db),
+) -> UUID | None:
+    if credentials is None:
+        return None
+    return get_current_user_id(credentials, db)
+
+
 def get_current_creator_user_id(
     user_id: UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db),

@@ -3,11 +3,17 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user_id
+from app.api.deps import get_current_user_id, get_optional_current_user_id
+from app.crud import card_pack as crud_card_pack
 from app.crud import creator as crud_creator
 from app.crud import creator_item as crud_creator_item
 from app.db.session import get_db
 from app.models.user import User
+from app.schemas.card_pack import (
+    CardPackListData,
+    CardPackListItem,
+    CardPackListResponse,
+)
 from app.schemas.creator import (
     CreatorDetail,
     CreatorItemListData,
@@ -50,7 +56,10 @@ def list_creators(
             if profile.avatar_storage_path
             else None,
             bioSummary=_bio_summary(profile.bio),
-            packCount=0,
+            packCount=crud_card_pack.count_published_card_packs_by_creator(
+                db,
+                creator_id=profile.user_id,
+            ),
             isVerified=profile.is_verified,
         )
         for profile, user in rows
@@ -157,6 +166,39 @@ def list_creator_items(
     )
 
 
+@router.get("/{creator_id}/card-packs", response_model=CardPackListResponse)
+def list_creator_card_packs(
+    creator_id: UUID,
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user_id: UUID | None = Depends(get_optional_current_user_id),
+):
+    if current_user_id == creator_id:
+        profile = crud_creator.get_by_user_id(db, creator_id)
+        include_unpublished = True
+    else:
+        profile = crud_creator.get_public_creator_profile(db, creator_id=creator_id)
+        include_unpublished = False
+    if profile is None:
+        raise HTTPException(404, "Creator not found")
+
+    packs, total = crud_card_pack.list_creator_card_packs(
+        db,
+        creator_id=creator_id,
+        include_unpublished=include_unpublished,
+        page=page,
+        limit=limit,
+    )
+    response_items = [_to_card_pack_list_item(pack) for pack in packs]
+    return CardPackListResponse(
+        data=CardPackListData(
+            items=response_items,
+            pagination=Pagination.build(page=page, limit=limit, total=total),
+        )
+    )
+
+
 def _bio_summary(bio: str | None) -> str | None:
     if not bio:
         return None
@@ -184,4 +226,24 @@ def _to_creator_detail(profile, username: str) -> CreatorDetail:
         verifiedAt=profile.verified_at,
         createdAt=profile.created_at,
         updatedAt=profile.updated_at,
+    )
+
+
+def _to_card_pack_list_item(pack) -> CardPackListItem:
+    item_count = len(pack.items)
+    return CardPackListItem(
+        id=pack.id,
+        creatorId=pack.creator_id,
+        name=pack.name,
+        description=pack.description,
+        type=pack.pack_type,
+        status=pack.status,
+        coverImage=pack.cover_image_storage_path,
+        shareId=pack.share_id,
+        importCount=pack.import_count,
+        publishedAt=pack.published_at,
+        archivedAt=pack.archived_at,
+        itemCount=item_count,
+        createdAt=pack.created_at,
+        updatedAt=pack.updated_at,
     )

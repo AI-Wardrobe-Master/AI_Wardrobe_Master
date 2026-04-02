@@ -24,6 +24,8 @@
   覆盖统一界面的前端信息架构、页面入口、能力可见性和推荐的 `GET /me` capability 字段。
 - `backend_implementation_draft.md`
   覆盖更接近实现的后端草案：文件清单、模型骨架、schema 草案、路由签名、事务流程与 Alembic 落地顺序。
+- `code_implementation_agent_guide.md`
+  定义代码实现 agent 在整个流水线中的位置、当前目标、修改范围、实现指导与交付标准。
 
 建议阅读顺序：
 
@@ -34,3 +36,4 @@
 4. 若要推进单界面多身份方案，再看 `unified_role_ui_design.md`。
 5. 若要继续细化前端落地，再看 `unified_role_frontend_ia.md`。
 6. 若要开始后端实现，再看 `backend_implementation_draft.md`。
+7. 若要按当前开发进度驱动代码 agent 执行，再看 `code_implementation_agent_guide.md`。

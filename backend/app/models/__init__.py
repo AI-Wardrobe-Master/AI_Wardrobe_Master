@@ -1,6 +1,6 @@
 from app.models.user import User
 from app.models.clothing_item import ClothingItem
-from app.models.creator import CreatorItem, CreatorProfile
+from app.models.creator import CardPack, CardPackItem, CreatorItem, CreatorProfile
 from app.models.wardrobe import Wardrobe, WardrobeItem
 
 __all__ = [
@@ -8,6 +8,8 @@ __all__ = [
     "ClothingItem",
     "CreatorProfile",
     "CreatorItem",
+    "CardPack",
+    "CardPackItem",
     "Wardrobe",
     "WardrobeItem",
 ]

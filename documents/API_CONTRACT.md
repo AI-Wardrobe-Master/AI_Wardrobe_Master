@@ -663,6 +663,16 @@ POST /outfits/:id/thumbnail
 
 ## 5. Card Packs (Creator Content)
 
+**Current implementation notes for frontend:**
+- `GET /card-packs/:id` is dual-mode. Owner can read `DRAFT` / `PUBLISHED` / `ARCHIVED`; public callers only receive `PUBLISHED`.
+- `GET /creators/:creatorId/card-packs` is also dual-mode. Public callers only receive `PUBLISHED`; the creator themself receives all statuses.
+- Current response payload uses `coverImage`, not `coverImageUrl`.
+- Current list response shape is `{ success, data: { items, pagination } }`, not `{ packs, pagination }`.
+- Current create/update/detail payloads return full pack objects with nested `items`; there is no top-level `itemIds` array in the response.
+- `DELETE /card-packs/:id` currently allows deleting owner-owned `PUBLISHED` packs as well as `DRAFT` packs. Frontend should treat delete as a destructive action and require confirmation for published packs.
+- When deleting a creator item that belongs to a published pack, backend returns `409` with a user-facing message instructing the user to delete the published pack first.
+- State-changing endpoints now use row locks and return `409` on transaction / uniqueness conflicts. Frontend should treat these as retry-or-refresh situations, not as generic server errors.
+
 ### 5.1 Create Card Pack
 ```
 POST /card-packs
@@ -675,7 +685,7 @@ POST /card-packs
   "description": "Must-have items for summer",
   "type": "CLOTHING_COLLECTION",
   "itemIds": ["item-001", "item-002", "item-003"],
-  "coverImage": "<base64_encoded_image>"
+  "coverImage": "packs/cover.jpg"
 }
 ```
 
@@ -687,20 +697,40 @@ POST /card-packs
     "id": "pack-001",
     "creatorId": "creator-456",
     "name": "Summer Essentials 2024",
-    "description": "Must-have items for summer",
-    "coverImageUrl": "/images/pack-001-cover.jpg",
     "type": "CLOTHING_COLLECTION",
-    "itemIds": ["item-001", "item-002", "item-003"],
-    "itemCount": 3,
-    "shareLink": "https://app.com/pack/pack-001",
     "status": "DRAFT",
+    "description": "Must-have items for summer",
+    "coverImage": "packs/cover.jpg",
+    "shareId": null,
     "importCount": 0,
+    "itemCount": 3,
+    "archivedAt": null,
     "createdAt": "2024-01-15T10:30:00Z",
     "publishedAt": null,
-    "updatedAt": "2024-01-15T10:30:00Z"
+    "updatedAt": "2024-01-15T10:30:00Z",
+    "items": [
+      {
+        "id": "pack-item-001",
+        "creatorItemId": "item-001",
+        "sortOrder": 0,
+        "name": "White Shirt",
+        "description": "Relaxed fit",
+        "catalogVisibility": "PACK_ONLY",
+        "processingStatus": "COMPLETED",
+        "coverUrl": "/files/items/item-001/front.jpg",
+        "finalTags": [
+          { "key": "category", "value": "shirt" }
+        ],
+        "createdAt": "2024-01-15T10:30:00Z"
+      }
+    ]
   }
 }
 ```
+
+**Frontend handling:**
+- `itemIds` is write-only in create/update requests. Use `data.items[*].creatorItemId` when you need selected item ids after persistence.
+- `coverImage` is currently treated as a storage path string. Frontend should not send base64 here unless backend upload flow changes.
 
 ### 5.2 Get Card Pack
 ```
@@ -716,6 +746,10 @@ GET /card-packs/:id
   }
 }
 ```
+
+**Frontend handling:**
+- If creator opens their own draft or archived pack, the same endpoint works with auth.
+- If a public caller or another user requests a non-published pack, backend returns `404`, not `403`.
 
 ### 5.3 Get Card Pack by Share Link
 ```
@@ -736,7 +770,6 @@ GET /creators/:creatorId/card-packs
 ```
 
 **Query Parameters:**
-- `status` (optional): `DRAFT` | `PUBLISHED` | `ARCHIVED`
 - `page` (optional, default: 1)
 - `limit` (optional, default: 20)
 
@@ -745,11 +778,17 @@ GET /creators/:creatorId/card-packs
 {
   "success": true,
   "data": {
-    "packs": [ /* Array of CardPack objects */ ],
+    "items": [ /* Array of CardPack summary objects */ ],
     "pagination": { /* pagination info */ }
   }
 }
 ```
+
+**Frontend handling:**
+- There is no `status` query parameter in the current backend.
+- Frontend should infer visibility from auth:
+  - with creator auth on own profile, expect `DRAFT` / `PUBLISHED` / `ARCHIVED`
+  - otherwise expect only `PUBLISHED`
 
 ### 5.5 Update Card Pack
 ```
@@ -773,6 +812,11 @@ PATCH /card-packs/:id
 }
 ```
 
+**Conflict cases the frontend should surface directly:**
+- `409 Published packs cannot change items`
+- `409 Archived packs cannot be updated`
+- `409 Card pack update conflicts with current database state`
+
 ### 5.6 Publish Card Pack
 ```
 POST /card-packs/:id/publish
@@ -783,10 +827,16 @@ POST /card-packs/:id/publish
 {
   "success": true,
   "data": {
-    /* CardPack object with status: "PUBLISHED" and publishedAt timestamp */
+    /* CardPack object with status: "PUBLISHED", publishedAt, and shareLink */
   }
 }
 ```
+
+**Conflict cases the frontend should surface directly:**
+- `409 Pack cannot be published`
+- `409 Pack must contain at least one item`
+- `409 All pack items must be processed before publishing`
+- `409 Card pack publish conflicts with current database state`
 
 ### 5.7 Archive Card Pack
 ```
@@ -803,15 +853,39 @@ POST /card-packs/:id/archive
 }
 ```
 
+**Conflict cases the frontend should surface directly:**
+- `409 Pack cannot be archived`
+- `409 Card pack archive conflicts with current database state`
+
 ### 5.8 Delete Card Pack
 ```
 DELETE /card-packs/:id
 ```
 
-**Note:** Only DRAFT packs can be deleted. Published packs must be archived first.
+**Current implementation note:** Owner can currently delete both `DRAFT` and `PUBLISHED` packs. `ARCHIVED` packs are also deletable if the owner explicitly calls delete. This is implementation behavior and may be tightened later, so frontend should not hard-code a stricter local rule than the backend.
 
 **Response (204):**
 No content
+
+**Conflict cases the frontend should surface directly:**
+- `409 Card pack delete conflicts with current database state`
+
+### 5.9 Creator Item Delete Guard
+```
+DELETE /creator-items/:id
+```
+
+**Current implementation note:** If the item belongs to any published pack, backend returns:
+
+```json
+{
+  "detail": "Creator item belongs to a published pack. Delete the published pack first."
+}
+```
+
+**Frontend handling:**
+- Show this message directly in the delete flow.
+- Offer a secondary action that routes the creator to pack management instead of retrying the same delete.
 
 ---
 

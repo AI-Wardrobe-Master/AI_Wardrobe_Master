@@ -1,18 +1,20 @@
 {
-  "generatedAt": "2026-04-01",
+  "generatedAt": "2026-04-02",
   "scope": "backend",
   "overallAssessment": {
     "status": "partially_implemented",
-    "summary": "后端基础路由、JWT 鉴权、数据库迁移、衣物处理主流程和衣橱 CRUD 已经搭起来，但文档定义的搭配持久化、创作者内容、卡包导入与溯源等核心业务能力仍未落地。",
+    "summary": "后端基础路由、JWT 鉴权、数据库迁移、衣物处理主流程、衣橱 CRUD 以及 creator 基础能力已经落地，但文档定义的搭配持久化、Card Pack 发布、导入与溯源等核心业务能力仍未完成。",
     "implementedAreas": [
       "auth register/login with JWT",
       "clothing item CRUD basics",
       "search by final tags",
       "wardrobe CRUD basics",
       "alembic migrations",
-      "local storage support"
+      "local storage support",
+      "creator profile and creator item foundation",
+      "GET /me creator capabilities"
     ],
-    "incompleteAreasCount": 6
+    "incompleteAreasCount": 5
   },
   "findings": [
     {
@@ -45,12 +47,12 @@
       "id": "BE-009",
       "severity": "high",
       "title": "Creator/Card Pack 平台内容能力未实现",
-      "status": "incomplete",
+      "status": "partially_implemented",
       "statusBar": {
-        "label": "未完成",
+        "label": "部分完成",
         "completed": false,
-        "progress": 0,
-        "display": "[----------] 0%"
+        "progress": 45,
+        "display": "[#####-----] 45%"
       },
       "evidence": [
         {
@@ -59,18 +61,28 @@
           "note": "文档定义了 Creator Upload、Create Card Pack、Browse Creator Content、Import Card Pack"
         },
         {
-          "file": "/mnt/d/ai_wardrobe_master/documents/API_CONTRACT.md",
-          "lines": "664-720",
-          "note": "文档定义了 /card-packs 相关接口"
+          "file": "/mnt/d/ai_wardrobe_master/backend/app/api/v1/creators.py",
+          "lines": "1-193",
+          "note": "已实现 creators 列表、详情、本人 profile 更新与公开 creator items 浏览接口"
+        },
+        {
+          "file": "/mnt/d/ai_wardrobe_master/backend/app/api/v1/creator_items.py",
+          "lines": "1-140",
+          "note": "已实现 creator-items 创建、详情、更新、删除，以及 creator 权限校验"
         },
         {
           "file": "/mnt/d/ai_wardrobe_master/backend/app/api/v1/router.py",
-          "lines": "1-9",
-          "note": "当前没有 creator/card-pack/import 相关路由"
+          "lines": "1-20",
+          "note": "当前已注册 me、creators、creator-items 路由，但仍缺少 card-packs 与 imports 路由"
+        },
+        {
+          "file": "/mnt/d/ai_wardrobe_master/documents/backend_missing_feature_design/api_interface_design.md",
+          "lines": "409-560",
+          "note": "文档要求继续补齐 /card-packs、publish/archive/share 与 /imports/card-pack"
         }
       ],
-      "impact": "平台内容侧完全不可用，既不能让创作者发布内容，也不能让消费者浏览或导入卡包。",
-      "recommendation": "先定义 creator、card_pack、card_pack_item、import_history 的后端数据模型，再分阶段补充创建、发布、查询、按分享链接读取和导入接口。"
+      "impact": "创作者资料和 creator item 已可管理，但平台内容侧仍无法组装、发布和分享 Card Pack，消费者也无法导入 Pack。",
+      "recommendation": "下一阶段优先实现 card_pack、card_pack_item 的数据模型、CRUD、publish/archive/share 接口；imports、virtual wardrobe 与 provenance 继续放在 card pack 发布能力稳定之后。"
     },
     {
       "id": "BE-007",
@@ -167,15 +179,15 @@
   "quickWins": [
     "增加上传文件校验",
     "先补 outfits 基础 CRUD",
-    "为 imported clothing 建 provenance 字段",
-    "补 virtual wardrobe 自动创建逻辑"
+    "补 card pack 基础 CRUD 与 publish",
+    "为 imported clothing 建 provenance 字段"
   ],
   "verificationNotes": {
     "codeReviewBased": true,
     "runtimeVerification": "partial",
     "notes": [
       "已阅读 backend 入口、路由、服务、CRUD、模型、迁移和测试文件。",
-      "尝试执行 `pytest backend/tests -q`，但当前环境返回 `/bin/bash: pytest: command not found`，因此没有完成本地自动化验证。"
+      "已在 Docker 环境中完成 creator foundation 相关迁移、接口冒烟和 unittest 验证，包括 `tests/test_creator_foundation.py` 与 `tests/test_r1_auth.py`。"
     ]
   }
 }
