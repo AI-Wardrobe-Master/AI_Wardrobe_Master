@@ -16,6 +16,12 @@ from app.models.creator import (  # noqa: F401
     CreatorProcessingTask,
     CreatorProfile,
 )
+from app.models.outfit_preview import (  # noqa: F401
+    Outfit,
+    OutfitItem,
+    OutfitPreviewTask,
+    OutfitPreviewTaskItem,
+)
 from app.models.wardrobe import Wardrobe, WardrobeItem  # noqa: F401
 
 config = context.config

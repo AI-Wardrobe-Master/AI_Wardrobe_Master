@@ -4,6 +4,7 @@
 
 - 上传入口前置校验
 - Outfit 持久化与缩略图生成
+- Outfit Preview 异步生成任务
 - Creator Profile / Creator Item / Card Pack 能力
 - Card Pack 导入、导入历史与 provenance 追踪
 - Virtual Wardrobe 自动创建与系统托管约束
@@ -26,6 +27,10 @@
   覆盖更接近实现的后端草案：文件清单、模型骨架、schema 草案、路由签名、事务流程与 Alembic 落地顺序。
 - `code_implementation_agent_guide.md`
   定义代码实现 agent 在整个流水线中的位置、当前目标、修改范围、实现指导与交付标准。
+- `outfit_preview_backend_design.md`
+  定义当前版本单件试穿预览的后端方案，明确前端输入职责、后端 API、状态机、表结构和存储边界。
+- `outfit_preview_agent_guide.md`
+  定义下游代码 agent 落地 outfit preview 任务链路时的修改范围、顺序约束、非目标和验收标准。
 
 建议阅读顺序：
 
@@ -33,7 +38,9 @@
 1. 再看 `feature_flow.html`，确认整体业务闭环。
 2. 然后看 `feature_architecture.html`，确认后端模块拆分和依赖关系。
 3. 接着看 `api_interface_design.md`，作为后续建模和接口落地的基线。
-4. 若要推进单界面多身份方案，再看 `unified_role_ui_design.md`。
-5. 若要继续细化前端落地，再看 `unified_role_frontend_ia.md`。
-6. 若要开始后端实现，再看 `backend_implementation_draft.md`。
-7. 若要按当前开发进度驱动代码 agent 执行，再看 `code_implementation_agent_guide.md`。
+4. 若当前目标是单件试穿预览，先看 `outfit_preview_backend_design.md`。
+5. 若要驱动代码 agent 落地试穿预览，再看 `outfit_preview_agent_guide.md`。
+6. 若要推进单界面多身份方案，再看 `unified_role_ui_design.md`。
+7. 若要继续细化前端落地，再看 `unified_role_frontend_ia.md`。
+8. 若要开始其他后端能力实现，再看 `backend_implementation_draft.md`。
+9. 若要按既有 creator / pack 开发进度驱动代码 agent 执行，再看 `code_implementation_agent_guide.md`。

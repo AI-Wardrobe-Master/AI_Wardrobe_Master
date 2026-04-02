@@ -7,6 +7,7 @@ from app.api.v1 import (
     clothing,
     creator_items,
     creators,
+    outfit_preview,
     me,
     wardrobe,
 )
@@ -19,4 +20,5 @@ api_router.include_router(clothing.router)
 api_router.include_router(card_packs.router)
 api_router.include_router(creator_items.router)
 api_router.include_router(creators.router)
+api_router.include_router(outfit_preview.router)
 api_router.include_router(wardrobe.router)
