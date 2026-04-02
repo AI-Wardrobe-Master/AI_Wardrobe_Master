@@ -11,6 +11,7 @@ from sqlalchemy.exc import OperationalError
 from app.core.config import settings
 from app.core.security import get_password_hash
 from app.db.session import SessionLocal, engine
+from app.models.creator import CreatorProfile
 from app.models.user import User
 
 
@@ -18,6 +19,9 @@ DEMO_USER_ID = UUID("00000000-0000-0000-0000-000000000001")
 DEMO_USERNAME = "demo_user"
 DEMO_EMAIL = "demo@example.com"
 DEMO_PASSWORD = "demo123456"
+DEMO_CREATOR_DISPLAY_NAME = "Demo Creator"
+DEMO_CREATOR_BRAND_NAME = "Demo Brand"
+DEMO_CREATOR_BIO = "Seed creator profile for local Docker integration."
 DB_WAIT_TIMEOUT_SECONDS = 60
 DB_RETRY_INTERVAL_SECONDS = 2
 
@@ -75,6 +79,38 @@ def ensure_demo_user() -> None:
     )
 
 
+def ensure_demo_creator_profile() -> None:
+    print("Ensuring demo creator profile exists...", flush=True)
+    with SessionLocal() as session:
+        profile = session.get(CreatorProfile, DEMO_USER_ID)
+        if profile is not None:
+            profile.status = "ACTIVE"
+            profile.display_name = DEMO_CREATOR_DISPLAY_NAME
+            profile.brand_name = DEMO_CREATOR_BRAND_NAME
+            profile.bio = DEMO_CREATOR_BIO
+            profile.social_links = {}
+            profile.is_verified = False
+            session.commit()
+            return
+
+        session.add(
+            CreatorProfile(
+                user_id=DEMO_USER_ID,
+                status="ACTIVE",
+                display_name=DEMO_CREATOR_DISPLAY_NAME,
+                brand_name=DEMO_CREATOR_BRAND_NAME,
+                bio=DEMO_CREATOR_BIO,
+                social_links={},
+                is_verified=False,
+            )
+        )
+        session.commit()
+    print(
+        f"Seed creator ready: user_id={DEMO_USER_ID} display_name={DEMO_CREATOR_DISPLAY_NAME}",
+        flush=True,
+    )
+
+
 def ensure_storage_path() -> None:
     os.makedirs(settings.LOCAL_STORAGE_PATH, exist_ok=True)
 
@@ -91,6 +127,7 @@ def main() -> None:
     wait_for_database()
     run_migrations()
     ensure_demo_user()
+    ensure_demo_creator_profile()
     ensure_storage_path()
     start_server()
 
