@@ -7,6 +7,13 @@ from app.core.config import settings
 from app.db.base import Base
 from app.models.user import User  # noqa: F401
 from app.models.clothing_item import ClothingItem, Image, Model3D, ProcessingTask  # noqa: F401
+from app.models.creator import (  # noqa: F401
+    CreatorItem,
+    CreatorItemImage,
+    CreatorItemModel3D,
+    CreatorProcessingTask,
+    CreatorProfile,
+)
 from app.models.wardrobe import Wardrobe, WardrobeItem  # noqa: F401
 
 config = context.config

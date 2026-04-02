@@ -1,0 +1,674 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Wardrobe Master 数据库 E-R Model Diagram</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --bg-soft: #111827;
+      --panel: #111827;
+      --panel-2: #0b1220;
+      --card: #0f172a;
+      --line: rgba(148, 163, 184, 0.22);
+      --text: #e5e7eb;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --accent-2: #34d399;
+      --accent-3: #fbbf24;
+      --danger: #f87171;
+      --shadow: 0 18px 48px rgba(2, 6, 23, 0.45);
+      --radius: 18px;
+      --radius-sm: 12px;
+      --max: 1280px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: Inter, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(56, 189, 248, 0.14), transparent 32%),
+        radial-gradient(circle at top right, rgba(52, 211, 153, 0.12), transparent 28%),
+        linear-gradient(180deg, #020617 0%, #0f172a 45%, #111827 100%);
+      color: var(--text);
+      line-height: 1.65;
+    }
+
+    a { color: #7dd3fc; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .page {
+      max-width: var(--max);
+      margin: 0 auto;
+      padding: 32px 20px 48px;
+    }
+
+    .hero {
+      padding: 28px 28px 24px;
+      background: linear-gradient(180deg, rgba(15, 23, 42, 0.92), rgba(15, 23, 42, 0.78));
+      border: 1px solid var(--line);
+      border-radius: 26px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(10px);
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 7px 12px;
+      border: 1px solid rgba(125, 211, 252, 0.24);
+      border-radius: 999px;
+      color: #bae6fd;
+      background: rgba(14, 165, 233, 0.08);
+      font-size: 13px;
+      letter-spacing: 0.02em;
+      margin-bottom: 16px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(30px, 4vw, 46px);
+      line-height: 1.12;
+      letter-spacing: -0.03em;
+    }
+
+    .subtitle {
+      margin: 14px 0 0;
+      color: var(--muted);
+      max-width: 980px;
+      font-size: 16px;
+    }
+
+    .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 22px;
+    }
+
+    .meta {
+      padding: 14px 16px;
+      border-radius: 16px;
+      background: rgba(15, 23, 42, 0.88);
+      border: 1px solid var(--line);
+    }
+
+    .meta .label {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .meta strong {
+      font-size: 15px;
+      color: var(--text);
+    }
+
+    .section {
+      margin-top: 24px;
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(15, 23, 42, 0.9);
+      box-shadow: var(--shadow);
+    }
+
+    .section h2 {
+      margin: 0 0 12px;
+      font-size: 24px;
+      letter-spacing: -0.02em;
+    }
+
+    .section p.lead,
+    .section li,
+    .section td {
+      color: #cbd5e1;
+    }
+
+    .bullets {
+      margin: 0;
+      padding-left: 20px;
+    }
+
+    .note {
+      margin-top: 14px;
+      padding: 14px 16px;
+      border-radius: 14px;
+      background: rgba(56, 189, 248, 0.08);
+      border: 1px solid rgba(56, 189, 248, 0.2);
+      color: #dbeafe;
+    }
+
+    .warning {
+      background: rgba(251, 191, 36, 0.08);
+      border-color: rgba(251, 191, 36, 0.22);
+      color: #fef3c7;
+    }
+
+    .diagram-wrap {
+      overflow-x: auto;
+      padding: 14px 0 0;
+    }
+
+    .diagram {
+      min-width: 1180px;
+      border-radius: 22px;
+      background:
+        linear-gradient(rgba(148, 163, 184, 0.06) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(148, 163, 184, 0.06) 1px, transparent 1px),
+        rgba(2, 6, 23, 0.52);
+      background-size: 32px 32px;
+      border: 1px solid var(--line);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+    }
+
+    .table-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 18px;
+    }
+
+    .table-card {
+      padding: 18px;
+      border-radius: 18px;
+      background: linear-gradient(180deg, rgba(15, 23, 42, 0.95), rgba(11, 18, 32, 0.94));
+      border: 1px solid var(--line);
+    }
+
+    .table-card h3 {
+      margin: 0 0 10px;
+      font-size: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .tag {
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      color: #bae6fd;
+      background: rgba(14, 165, 233, 0.1);
+      border: 1px solid rgba(14, 165, 233, 0.18);
+      white-space: nowrap;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    th, td {
+      text-align: left;
+      vertical-align: top;
+      padding: 10px 8px;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+    }
+
+    th {
+      color: #94a3b8;
+      font-weight: 600;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .relations {
+      margin-top: 12px;
+      padding-left: 18px;
+    }
+
+    .relations li {
+      margin-bottom: 8px;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1.15fr 0.85fr;
+      gap: 16px;
+      align-items: start;
+    }
+
+    .mini-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 14px;
+      margin-top: 16px;
+    }
+
+    .entity-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 18px;
+    }
+
+    .entity {
+      padding: 18px;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: rgba(2, 6, 23, 0.38);
+    }
+
+    .entity h4 {
+      margin: 0 0 10px;
+      font-size: 17px;
+    }
+
+    .entity ul {
+      margin: 0;
+      padding-left: 18px;
+    }
+
+    .entity li { margin-bottom: 8px; }
+
+    .footer {
+      margin-top: 24px;
+      color: var(--muted);
+      font-size: 13px;
+      text-align: center;
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 5px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      color: #dbeafe;
+      background: rgba(56, 189, 248, 0.08);
+      border: 1px solid rgba(56, 189, 248, 0.16);
+    }
+
+    @media (max-width: 980px) {
+      .meta-grid,
+      .table-grid,
+      .two-col,
+      .entity-list {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <div class="eyebrow">AI Wardrobe Master · PostgreSQL / SQLAlchemy / Alembic</div>
+      <h1>数据库 E-R Model Diagram</h1>
+      <p class="subtitle">
+        这份文档根据仓库中当前可见的数据库实现生成，重点覆盖 <code>backend/app/models</code>、<code>backend/alembic/versions</code>、
+        <code>backend/scripts/init_schema.sql</code> 和相关数据库设计文档。它描述的是“现行落地的物理表结构”和它们之间的真实关系，
+        同时把文档里还未落地的规划实体单独标出来，避免混淆。
+      </p>
+
+      <div class="meta-grid">
+        <div class="meta">
+          <span class="label">数据库类型</span>
+          <strong>PostgreSQL 15+</strong>
+        </div>
+        <div class="meta">
+          <span class="label">现行表数量</span>
+          <strong>7 张核心业务表</strong>
+        </div>
+        <div class="meta">
+          <span class="label">核心中心表</span>
+          <strong>clothing_items</strong>
+        </div>
+        <div class="meta">
+          <span class="label">关系模式</span>
+          <strong>1:N / 1:1 / N:M / 自引用</strong>
+        </div>
+      </div>
+    </header>
+
+    <section class="section">
+      <h2>1. 建模范围</h2>
+      <p class="lead">
+        本文档把项目里的数据库内容分成两类：
+      </p>
+      <ul class="bullets">
+        <li><strong>已实现并进入当前后端 Schema 的表</strong>：users、clothing_items、images、models_3d、processing_tasks、wardrobes、wardrobe_items。</li>
+        <li><strong>文档中规划过但当前后端未落地的实体</strong>：user_profiles、outfits、outfit_items、creators、card_packs、card_pack_items、import_history、provenance。</li>
+      </ul>
+      <div class="note warning">
+        说明：<code>documents/DATA_MODEL.md</code> 和 <code>documents/BACKEND_ARCHITECTURE.md</code> 包含较完整的产品级概念模型，但仓库中的后端 ORM / Alembic / init_schema 目前只实现了衣物、图片、3D 模型、处理任务和衣橱管理这条主链路。
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>2. E-R 图</h2>
+      <p class="lead">
+        下图展示当前已实现的主数据路径。衣物记录是中心实体，媒体资源和处理任务都围绕它展开；衣橱则通过中间表把用户的衣物组织成集合。
+      </p>
+      <div class="diagram-wrap">
+        <svg class="diagram" viewBox="0 0 1180 760" role="img" aria-label="AI Wardrobe Master database ER diagram">
+          <defs>
+            <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+              <path d="M 0 0 L 12 6 L 0 12 z" fill="#38bdf8"></path>
+            </marker>
+            <marker id="arrow-soft" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+              <path d="M 0 0 L 12 6 L 0 12 z" fill="#94a3b8"></path>
+            </marker>
+          </defs>
+
+          <g>
+            <line x1="290" y1="106" x2="420" y2="220" stroke="#38bdf8" stroke-width="2.2" marker-end="url(#arrow)"/>
+            <text x="307" y="135" fill="#bfdbfe" font-size="13">1 : N</text>
+
+            <line x1="180" y1="150" x2="180" y2="560" stroke="#38bdf8" stroke-width="2.2" marker-end="url(#arrow)"/>
+            <text x="190" y="356" fill="#bfdbfe" font-size="13">1 : N</text>
+
+            <path d="M 550 310 H 410 V 380 H 300" fill="none" stroke="#38bdf8" stroke-width="2.2" marker-end="url(#arrow)"/>
+            <text x="362" y="336" fill="#bfdbfe" font-size="13">1 : N</text>
+
+            <line x1="565" y1="310" x2="565" y2="330" stroke="#34d399" stroke-width="2.2" marker-end="url(#arrow-soft)"/>
+            <text x="577" y="326" fill="#bbf7d0" font-size="13">0..1</text>
+
+            <path d="M 710 245 H 770 V 330" fill="none" stroke="#fbbf24" stroke-width="2.2" marker-end="url(#arrow-soft)"/>
+            <text x="722" y="226" fill="#fef3c7" font-size="13">1 : N</text>
+
+            <line x1="565" y1="310" x2="565" y2="560" stroke="#38bdf8" stroke-width="2.2" marker-end="url(#arrow)"/>
+            <text x="577" y="442" fill="#bfdbfe" font-size="13">1 : N</text>
+
+            <path d="M 290 610 H 410" fill="none" stroke="#38bdf8" stroke-width="2.2" marker-end="url(#arrow)"/>
+            <text x="332" y="598" fill="#bfdbfe" font-size="13">N : 1</text>
+
+            <path d="M 890 330 C 980 300, 1030 290, 1015 208 C 1000 126, 915 112, 845 134"
+                  fill="none" stroke="#94a3b8" stroke-width="2" stroke-dasharray="8 7" marker-end="url(#arrow-soft)"/>
+            <text x="1003" y="210" fill="#cbd5e1" font-size="13">retry_of_task_id</text>
+          </g>
+
+          <g>
+            <rect x="60" y="40" rx="18" ry="18" width="230" height="110" fill="#0b1220" stroke="rgba(148,163,184,0.28)"/>
+            <text x="175" y="72" fill="#e5e7eb" text-anchor="middle" font-size="18" font-weight="700">users</text>
+            <text x="175" y="96" fill="#94a3b8" text-anchor="middle" font-size="13">PK: id</text>
+            <text x="175" y="118" fill="#94a3b8" text-anchor="middle" font-size="13">用户名 / 邮箱 / 密码哈希</text>
+            <text x="175" y="140" fill="#94a3b8" text-anchor="middle" font-size="13">user_type / is_active / timestamps</text>
+
+            <rect x="420" y="170" rx="18" ry="18" width="290" height="140" fill="#10213a" stroke="rgba(56,189,248,0.35)"/>
+            <text x="565" y="204" fill="#e5e7eb" text-anchor="middle" font-size="19" font-weight="700">clothing_items</text>
+            <text x="565" y="229" fill="#94a3b8" text-anchor="middle" font-size="13">PK: id</text>
+            <text x="565" y="252" fill="#94a3b8" text-anchor="middle" font-size="13">FK: user_id → users.id</text>
+            <text x="565" y="274" fill="#94a3b8" text-anchor="middle" font-size="13">source / predicted_tags / final_tags</text>
+            <text x="565" y="296" fill="#94a3b8" text-anchor="middle" font-size="13">name / description / custom_tags</text>
+
+            <rect x="40" y="330" rx="18" ry="18" width="260" height="110" fill="#0b1220" stroke="rgba(148,163,184,0.28)"/>
+            <text x="170" y="362" fill="#e5e7eb" text-anchor="middle" font-size="18" font-weight="700">images</text>
+            <text x="170" y="386" fill="#94a3b8" text-anchor="middle" font-size="13">FK: clothing_item_id → clothing_items.id</text>
+            <text x="170" y="408" fill="#94a3b8" text-anchor="middle" font-size="13">original / processed / angle view</text>
+            <text x="170" y="430" fill="#94a3b8" text-anchor="middle" font-size="13">storage_path + angle + mime_type</text>
+
+            <rect x="330" y="330" rx="18" ry="18" width="250" height="110" fill="#0b1220" stroke="rgba(148,163,184,0.28)"/>
+            <text x="455" y="362" fill="#e5e7eb" text-anchor="middle" font-size="18" font-weight="700">models_3d</text>
+            <text x="455" y="386" fill="#94a3b8" text-anchor="middle" font-size="13">FK/UNIQUE: clothing_item_id</text>
+            <text x="455" y="408" fill="#94a3b8" text-anchor="middle" font-size="13">一件衣物最多一个 3D 模型</text>
+            <text x="455" y="430" fill="#94a3b8" text-anchor="middle" font-size="13">storage_path / vertex_count / face_count</text>
+
+            <rect x="760" y="330" rx="18" ry="18" width="270" height="140" fill="#0b1220" stroke="rgba(251,191,36,0.35)"/>
+            <text x="895" y="362" fill="#e5e7eb" text-anchor="middle" font-size="18" font-weight="700">processing_tasks</text>
+            <text x="895" y="386" fill="#94a3b8" text-anchor="middle" font-size="13">FK: clothing_item_id → clothing_items.id</text>
+            <text x="895" y="408" fill="#94a3b8" text-anchor="middle" font-size="13">attempt_no / status / progress</text>
+            <text x="895" y="430" fill="#94a3b8" text-anchor="middle" font-size="13">worker_id / lease_expires_at / timestamps</text>
+            <text x="895" y="452" fill="#94a3b8" text-anchor="middle" font-size="13">retry_of_task_id → processing_tasks.id</text>
+
+            <rect x="60" y="560" rx="18" ry="18" width="230" height="110" fill="#0b1220" stroke="rgba(148,163,184,0.28)"/>
+            <text x="175" y="592" fill="#e5e7eb" text-anchor="middle" font-size="18" font-weight="700">wardrobes</text>
+            <text x="175" y="616" fill="#94a3b8" text-anchor="middle" font-size="13">FK: user_id → users.id</text>
+            <text x="175" y="638" fill="#94a3b8" text-anchor="middle" font-size="13">name / type / description</text>
+            <text x="175" y="660" fill="#94a3b8" text-anchor="middle" font-size="13">一个用户可拥有多个衣橱</text>
+
+            <rect x="410" y="560" rx="18" ry="18" width="280" height="120" fill="#0b1220" stroke="rgba(148,163,184,0.28)"/>
+            <text x="550" y="592" fill="#e5e7eb" text-anchor="middle" font-size="18" font-weight="700">wardrobe_items</text>
+            <text x="550" y="616" fill="#94a3b8" text-anchor="middle" font-size="13">FK: wardrobe_id → wardrobes.id</text>
+            <text x="550" y="638" fill="#94a3b8" text-anchor="middle" font-size="13">FK: clothing_item_id → clothing_items.id</text>
+            <text x="550" y="660" fill="#94a3b8" text-anchor="middle" font-size="13">display_order / added_at / UNIQUE(wardrobe_id, clothing_item_id)</text>
+          </g>
+        </svg>
+      </div>
+
+      <div class="pill-row">
+        <span class="pill">users 1 → N clothing_items</span>
+        <span class="pill">users 1 → N wardrobes</span>
+        <span class="pill">clothing_items 1 → N images</span>
+        <span class="pill">clothing_items 1 → 0..1 models_3d</span>
+        <span class="pill">clothing_items 1 → N processing_tasks</span>
+        <span class="pill">wardrobes N ↔ N clothing_items via wardrobe_items</span>
+        <span class="pill">processing_tasks self-reference: retry_of_task_id</span>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>3. 关系速览</h2>
+      <div class="table-grid">
+        <div class="table-card">
+          <h3>主链路 <span class="tag">已实现</span></h3>
+          <table>
+            <thead>
+              <tr>
+                <th>关系</th>
+                <th>外键 / 约束</th>
+                <th>删除行为</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>users → clothing_items</td>
+                <td>clothing_items.user_id</td>
+                <td>ON DELETE CASCADE</td>
+              </tr>
+              <tr>
+                <td>clothing_items → images</td>
+                <td>images.clothing_item_id</td>
+                <td>ON DELETE CASCADE</td>
+              </tr>
+              <tr>
+                <td>clothing_items → models_3d</td>
+                <td>models_3d.clothing_item_id UNIQUE</td>
+                <td>ON DELETE CASCADE</td>
+              </tr>
+              <tr>
+                <td>clothing_items → processing_tasks</td>
+                <td>processing_tasks.clothing_item_id</td>
+                <td>ON DELETE CASCADE</td>
+              </tr>
+              <tr>
+                <td>processing_tasks → processing_tasks</td>
+                <td>retry_of_task_id</td>
+                <td>ON DELETE SET NULL</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="table-card">
+          <h3>衣橱链路 <span class="tag">已实现</span></h3>
+          <table>
+            <thead>
+              <tr>
+                <th>关系</th>
+                <th>外键 / 约束</th>
+                <th>删除行为</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>users → wardrobes</td>
+                <td>wardrobes.user_id</td>
+                <td>ON DELETE CASCADE</td>
+              </tr>
+              <tr>
+                <td>wardrobes → wardrobe_items</td>
+                <td>wardrobe_items.wardrobe_id</td>
+                <td>ON DELETE CASCADE</td>
+              </tr>
+              <tr>
+                <td>clothing_items → wardrobe_items</td>
+                <td>wardrobe_items.clothing_item_id</td>
+                <td>ON DELETE CASCADE</td>
+              </tr>
+              <tr>
+                <td>wardrobe_items 唯一性</td>
+                <td>UNIQUE(wardrobe_id, clothing_item_id)</td>
+                <td>防止重复加入同一衣橱</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>4. 实体清单</h2>
+      <p class="lead">
+        下面是当前后端已落地表的“逻辑意义 + 物理字段 + 关键约束”摘要，便于你在做评审或对齐接口时直接查看。
+      </p>
+
+      <div class="entity-list">
+        <div class="entity">
+          <h4>users</h4>
+          <ul>
+            <li>用户根表，承载认证与归属关系。</li>
+            <li>字段：id、username、email、hashed_password、user_type、is_active、created_at、updated_at。</li>
+            <li>唯一约束：username、email。</li>
+          </ul>
+        </div>
+
+        <div class="entity">
+          <h4>clothing_items</h4>
+          <ul>
+            <li>项目的中心业务实体，所有媒体、模型、任务、衣橱挂载都围绕它展开。</li>
+            <li>字段包含 JSONB 标签、自由标签数组、确认状态和基础元信息。</li>
+            <li>source 区分 OWNED / IMPORTED，当前实现里是衣物主记录的入口。</li>
+          </ul>
+        </div>
+
+        <div class="entity">
+          <h4>images</h4>
+          <ul>
+            <li>保存衣物原图、背景移除后的图、角度图，数据库只存路径，文件本体放对象存储。</li>
+            <li>image_type 用于区分 ORIGINAL_FRONT、ORIGINAL_BACK、PROCESSED_FRONT、PROCESSED_BACK、ANGLE_VIEW。</li>
+            <li>角度图使用 0/45/90/135/180/225/270/315 八个固定角度。</li>
+          </ul>
+        </div>
+
+        <div class="entity">
+          <h4>models_3d</h4>
+          <ul>
+            <li>存储 3D 模型元数据与模型文件路径，当前模型格式固定为 glb。</li>
+            <li>对 clothing_item_id 做唯一约束，所以一件衣物只有一个 3D 模型记录。</li>
+            <li>用于承接三维重建流程的输出。</li>
+          </ul>
+        </div>
+
+        <div class="entity">
+          <h4>processing_tasks</h4>
+          <ul>
+            <li>异步流水线任务表，记录分类、背景移除、3D 生成、角度渲染和整条流水线的执行状态。</li>
+            <li>当前实现新增 attempt_no、retry_of_task_id、worker_id、lease_expires_at，用于重试和 worker 租约控制。</li>
+            <li>对 active task 做了 partial unique index，避免同一衣物同时存在多个 PENDING / PROCESSING 任务。</li>
+          </ul>
+        </div>
+
+        <div class="entity">
+          <h4>wardrobes</h4>
+          <ul>
+            <li>用户衣橱容器表，支持 REGULAR / VIRTUAL 两种类型。</li>
+            <li>删除衣橱不会删除衣物本体，只会删除关联行。</li>
+            <li>是衣物集合管理的组织层。</li>
+          </ul>
+        </div>
+
+        <div class="entity">
+          <h4>wardrobe_items</h4>
+          <ul>
+            <li>衣橱与衣物之间的多对多连接表。</li>
+            <li>display_order 允许前端控制排序，added_at 记录加入时间。</li>
+            <li>唯一组合键防止同一衣物重复出现在同一个衣橱内。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>5. 文档中出现但当前后端未落地的实体</h2>
+      <p class="lead">
+        这些实体在产品文档里出现得比较早，适合当作后续扩展方向，但它们并不属于当前仓库后端已经实现的物理 schema。
+      </p>
+
+      <div class="mini-grid">
+        <div class="table-card">
+          <h3>规划实体清单 <span class="tag">文档草案</span></h3>
+          <table>
+            <thead>
+              <tr>
+                <th>实体</th>
+                <th>来源文档</th>
+                <th>当前状态</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>user_profiles</td>
+                <td>BACKEND_ARCHITECTURE / DATA_MODEL</td>
+                <td>未在当前 ORM / migration / init_schema 中出现</td>
+              </tr>
+              <tr>
+                <td>outfits / outfit_items</td>
+                <td>DATA_MODEL / BACKEND_ARCHITECTURE / USER_STORIES</td>
+                <td>仅规划，未落地</td>
+              </tr>
+              <tr>
+                <td>creators / card_packs / card_pack_items / import_history</td>
+                <td>BACKEND_ARCHITECTURE / DATA_MODEL / API_CONTRACT</td>
+                <td>仅规划，未落地</td>
+              </tr>
+              <tr>
+                <td>provenance</td>
+                <td>DATA_MODEL / BACKEND_ARCHITECTURE</td>
+                <td>仅概念模型，未落地</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="note">
+          如果你后续希望把“产品规划版 ER 图”也整理出来，我建议把这些未落地实体单独画成第二张图，和当前物理 schema 分开展示。
+          这样既能照顾产品视角，也不会影响数据库实现的准确性。
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>6. 设计结论</h2>
+      <ul class="bullets">
+        <li><strong>clothing_items 是中心枢纽</strong>：衣物是所有媒体、任务和衣橱组织关系的根。</li>
+        <li><strong>images / models_3d / processing_tasks 属于衣物的派生域</strong>：它们都依附于衣物记录，且以衣物 ID 作为主外键。</li>
+        <li><strong>wardrobes 只是容器</strong>：它不复制衣物数据，而是通过 wardrobe_items 建立可排序的集合关系。</li>
+        <li><strong>processing_tasks 采用任务历史化设计</strong>：重试不是覆盖旧记录，而是生成新任务，并通过 retry_of_task_id 保留链路。</li>
+        <li><strong>当前实现与产品草案是分层的</strong>：文档里更大的用户/创作者/搭配体系还没有进入后端物理 schema。</li>
+      </ul>
+    </section>
+
+    <div class="footer">
+      生成依据：仓库中的 SQLAlchemy 模型、Alembic 迁移、init_schema.sql、以及数据库相关设计文档。
+    </div>
+  </div>
+</body>
+</html>
