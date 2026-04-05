@@ -5,6 +5,7 @@ import '../../models/wardrobe.dart';
 import '../../state/current_wardrobe_controller.dart';
 import '../../services/wardrobe_service.dart';
 import '../../theme/app_theme.dart';
+import '../widgets/clothing_metadata_art.dart';
 import 'wardrobe_management_screen.dart';
 
 /// Module 3: Wardrobe tab — multi-wardrobe selector, items grid, add/remove, category filter, virtual support.
@@ -46,7 +47,9 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
   void initState() {
     super.initState();
     _searchController.addListener(() {
-      setState(() => _searchQuery = _searchController.text.trim().toLowerCase());
+      setState(
+        () => _searchQuery = _searchController.text.trim().toLowerCase(),
+      );
     });
     _loadWardrobes();
   }
@@ -73,10 +76,12 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
           _loadItems();
         } else if (_currentWardrobe != null) {
           final id = _currentWardrobe!.id;
-          _currentWardrobe = list.cast<Wardrobe?>().firstWhere(
+          _currentWardrobe =
+              list.cast<Wardrobe?>().firstWhere(
                 (w) => w?.id == id,
                 orElse: () => null,
-              ) ?? list.first;
+              ) ??
+              list.first;
           CurrentWardrobeController.setCurrentWardrobeId(_currentWardrobe!.id);
           _loadItems();
         } else {
@@ -95,7 +100,9 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
     if (_currentWardrobe == null) return;
     setState(() => _loadingItems = true);
     try {
-      final list = await WardrobeService.fetchWardrobeItems(_currentWardrobe!.id);
+      final list = await WardrobeService.fetchWardrobeItems(
+        _currentWardrobe!.id,
+      );
       setState(() {
         _items = list;
         _loadingItems = false;
@@ -134,9 +141,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
 
   Future<void> _openManageWardrobes() async {
     await Navigator.of(context).push<void>(
-      MaterialPageRoute(
-        builder: (ctx) => const WardrobeManagementScreen(),
-      ),
+      MaterialPageRoute(builder: (ctx) => const WardrobeManagementScreen()),
     );
     _loadWardrobes();
   }
@@ -147,8 +152,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(s.removeFromWardrobe),
-        content: Text(
-            entry.clothingItem?.name ?? entry.clothingItemId),
+        content: Text(entry.clothingItem?.name ?? entry.clothingItemId),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
@@ -169,13 +173,15 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
       );
       _loadItems();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(s.removeFromWardrobe)));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(s.removeFromWardrobe)));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(e.toString())));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.toString())));
       }
     }
   }
@@ -198,33 +204,37 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
           children: [
             Row(
               children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      s.wardrobeTitle,
-                      style: TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.w800,
-                        color: _textPrimary,
-                        letterSpacing: 0.2,
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        s.wardrobeTitle,
+                        style: TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.w800,
+                          color: _textPrimary,
+                          letterSpacing: 0.2,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      s.wardrobeSubtitle,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: _textSecondary,
+                      const SizedBox(height: 4),
+                      Text(
+                        s.wardrobeSubtitle,
+                        style: TextStyle(fontSize: 12, color: _textSecondary),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-                const Spacer(),
+                const SizedBox(width: 8),
                 GestureDetector(
                   onTap: _openManageWardrobes,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
                     decoration: BoxDecoration(
                       color: Theme.of(context).cardColor,
                       borderRadius: BorderRadius.circular(999),
@@ -233,16 +243,24 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text(
-                          _currentWardrobe?.name ?? s.manageWardrobes,
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: _textPrimary,
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 120),
+                          child: Text(
+                            _currentWardrobe?.name ?? s.manageWardrobes,
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: _textPrimary,
+                            ),
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
                         const SizedBox(width: 4),
-                        Icon(Icons.arrow_drop_down, size: 20, color: _textPrimary),
+                        Icon(
+                          Icons.arrow_drop_down,
+                          size: 20,
+                          color: _textPrimary,
+                        ),
                       ],
                     ),
                   ),
@@ -318,16 +336,18 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                               style: Theme.of(ctx).textTheme.titleMedium,
                             ),
                           ),
-                          ..._wardrobes.map((w) => ListTile(
-                                title: Text(w.name),
-                                subtitle: w.isVirtual
-                                    ? Text(s.virtualWardrobeLabel)
-                                    : null,
-                                trailing: _currentWardrobe?.id == w.id
-                                    ? Icon(Icons.check, color: _accent)
-                                    : null,
-                                onTap: () => Navigator.of(ctx).pop(w),
-                              )),
+                          ..._wardrobes.map(
+                            (w) => ListTile(
+                              title: Text(w.name),
+                              subtitle: w.isVirtual
+                                  ? Text(s.virtualWardrobeLabel)
+                                  : null,
+                              trailing: _currentWardrobe?.id == w.id
+                                  ? Icon(Icons.check, color: _accent)
+                                  : null,
+                              onTap: () => Navigator.of(ctx).pop(w),
+                            ),
+                          ),
                           ListTile(
                             leading: const Icon(Icons.settings),
                             title: Text(s.manageWardrobes),
@@ -350,7 +370,10 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                   }
                 },
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
                   decoration: BoxDecoration(
                     color: Theme.of(context).cardColor,
                     borderRadius: BorderRadius.circular(999),
@@ -371,14 +394,15 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                         const SizedBox(width: 6),
                         Text(
                           s.virtualWardrobeLabel,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: _textSecondary,
-                          ),
+                          style: TextStyle(fontSize: 11, color: _textSecondary),
                         ),
                       ],
                       const SizedBox(width: 4),
-                      Icon(Icons.arrow_drop_down, size: 20, color: _textPrimary),
+                      Icon(
+                        Icons.arrow_drop_down,
+                        size: 20,
+                        color: _textPrimary,
+                      ),
                     ],
                   ),
                 ),
@@ -391,21 +415,29 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                 decoration: InputDecoration(
                   hintText: s.searchWardrobe,
                   hintStyle: TextStyle(fontSize: 13, color: _textSecondary),
-                  prefixIcon: Icon(Icons.search, size: 20, color: _textSecondary),
+                  prefixIcon: Icon(
+                    Icons.search,
+                    size: 20,
+                    color: _textSecondary,
+                  ),
                   isDense: true,
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
                   filled: true,
                   fillColor: _isDark ? AppColors.darkSurface : Colors.white,
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(999),
-                    borderSide:
-                        BorderSide(color: Theme.of(context).dividerColor),
+                    borderSide: BorderSide(
+                      color: Theme.of(context).dividerColor,
+                    ),
                   ),
                   enabledBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(999),
-                    borderSide:
-                        BorderSide(color: Theme.of(context).dividerColor),
+                    borderSide: BorderSide(
+                      color: Theme.of(context).dividerColor,
+                    ),
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(999),
@@ -423,7 +455,9 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                             Text(
                               _error!,
                               style: TextStyle(
-                                  fontSize: 13, color: _textSecondary),
+                                fontSize: 13,
+                                color: _textSecondary,
+                              ),
                               textAlign: TextAlign.center,
                             ),
                             const SizedBox(height: 8),
@@ -438,117 +472,116 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                         ),
                       )
                     : _loadingItems
-                        ? const Center(child: CircularProgressIndicator())
-                        : _filteredItems.isEmpty
-                            ? Center(
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(
-                                      Icons.checkroom_rounded,
-                                      size: 40,
-                                      color: _textSecondary,
-                                    ),
-                                    const SizedBox(height: 8),
-                                    Text(
-                                      s.noClothesYet,
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w600,
-                                        color: _textPrimary,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      s.useAddToStart,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: _textSecondary,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              )
-                            : GridView.builder(
-                                gridDelegate:
-                                    const SliverGridDelegateWithFixedCrossAxisCount(
-                                  crossAxisCount: 2,
-                                  childAspectRatio: 0.75,
-                                  crossAxisSpacing: 12,
-                                  mainAxisSpacing: 12,
-                                ),
-                                itemCount: _filteredItems.length,
-                                itemBuilder: (context, index) {
-                                  final entry = _filteredItems[index];
-                                  final ci = entry.clothingItem;
-                                  return GestureDetector(
-                                    onLongPress: () =>
-                                        _removeFromWardrobe(entry),
-                                    child: Card(
-                                      clipBehavior: Clip.antiAlias,
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.stretch,
-                                        children: [
-                                          Expanded(
-                                            child: Container(
-                                              color: _isDark
-                                                  ? AppColors.darkSurface
-                                                  : Colors.grey.shade200,
-                                              child: Center(
-                                                child: ci != null
-                                                    ? Text(
-                                                        ci.name ?? ci.id,
-                                                        style: TextStyle(
-                                                          fontSize: 12,
-                                                          color: _textSecondary,
-                                                        ),
-                                                        textAlign:
-                                                            TextAlign.center,
-                                                        maxLines: 2,
-                                                        overflow:
-                                                            TextOverflow.ellipsis,
-                                                      )
-                                                    : Icon(
-                                                        Icons.checkroom_rounded,
-                                                        size: 32,
-                                                        color: _textSecondary,
-                                                      ),
-                                              ),
-                                            ),
-                                          ),
-                                          Padding(
-                                            padding: const EdgeInsets.all(8),
-                                            child: Text(
-                                              ci?.name ?? entry.clothingItemId,
-                                              style: TextStyle(
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.w500,
-                                                color: _textPrimary,
-                                              ),
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                          ),
-                                          if (ci?.source == 'IMPORTED')
-                                            Padding(
-                                              padding: const EdgeInsets.only(
-                                                  left: 8, right: 8, bottom: 4),
-                                              child: Text(
-                                                s.virtualWardrobeLabel,
-                                                style: TextStyle(
-                                                  fontSize: 10,
-                                                  color: _textSecondary,
-                                                ),
-                                              ),
-                                            ),
-                                        ],
-                                      ),
-                                    ),
-                                  );
-                                },
+                    ? const Center(child: CircularProgressIndicator())
+                    : _filteredItems.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.checkroom_rounded,
+                              size: 40,
+                              color: _textSecondary,
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              s.noClothesYet,
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: _textPrimary,
                               ),
                             ),
+                            const SizedBox(height: 4),
+                            Text(
+                              s.useAddToStart,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: _textSecondary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : GridView.builder(
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: 2,
+                              childAspectRatio: 0.75,
+                              crossAxisSpacing: 12,
+                              mainAxisSpacing: 12,
+                            ),
+                        itemCount: _filteredItems.length,
+                        itemBuilder: (context, index) {
+                          final entry = _filteredItems[index];
+                          final ci = entry.clothingItem;
+                          return GestureDetector(
+                            onLongPress: () => _removeFromWardrobe(entry),
+                            child: Card(
+                              clipBehavior: Clip.antiAlias,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Expanded(
+                                    child: ci == null
+                                        ? Container(
+                                            color: _isDark
+                                                ? AppColors.darkSurface
+                                                : Colors.grey.shade200,
+                                            child: Center(
+                                              child: Icon(
+                                                Icons.checkroom_rounded,
+                                                size: 32,
+                                                color: _textSecondary,
+                                              ),
+                                            ),
+                                          )
+                                        : ClothingMetadataArt(
+                                            title: ci.name ?? ci.id,
+                                            categoryLabel: _categoryLabelFor(
+                                              ci,
+                                            ),
+                                            material: _materialLabelFor(ci),
+                                            sourceLabel: ci.source == 'IMPORTED'
+                                                ? 'Virtual item'
+                                                : 'Owned item',
+                                          ),
+                                  ),
+                                  Padding(
+                                    padding: const EdgeInsets.all(8),
+                                    child: Text(
+                                      ci?.name ?? entry.clothingItemId,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w500,
+                                        color: _textPrimary,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  if (ci?.source == 'IMPORTED')
+                                    Padding(
+                                      padding: const EdgeInsets.only(
+                                        left: 8,
+                                        right: 8,
+                                        bottom: 4,
+                                      ),
+                                      child: Text(
+                                        s.virtualWardrobeLabel,
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          color: _textSecondary,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+              ),
             ],
           ],
         ),
@@ -576,13 +609,11 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                 color: selected
                     ? (_isDark ? AppColors.darkSurface : Colors.white)
                     : (_isDark
-                        ? AppColors.darkBackground
-                        : AppColors.background),
+                          ? AppColors.darkBackground
+                          : AppColors.background),
                 borderRadius: BorderRadius.circular(999),
                 border: Border.all(
-                  color: selected
-                      ? _accent
-                      : Theme.of(context).dividerColor,
+                  color: selected ? _accent : Theme.of(context).dividerColor,
                   width: selected ? 1.4 : 1,
                 ),
               ),
@@ -600,5 +631,31 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
         },
       ),
     );
+  }
+
+  String _categoryLabelFor(ClothingItemBrief item) {
+    for (final tag in item.finalTags.whereType<Map>()) {
+      final key = tag['key']?.toString().trim().toLowerCase();
+      if (key == 'category' || key == 'type') {
+        final value = tag['value']?.toString().trim();
+        if (value != null && value.isNotEmpty) {
+          return value;
+        }
+      }
+    }
+    return 'Wardrobe item';
+  }
+
+  String _materialLabelFor(ClothingItemBrief item) {
+    for (final tag in item.finalTags.whereType<Map>()) {
+      final key = tag['key']?.toString().trim().toLowerCase();
+      if (key == 'material' || key == 'fabric' || key == 'textile') {
+        final value = tag['value']?.toString().trim();
+        if (value != null && value.isNotEmpty) {
+          return value;
+        }
+      }
+    }
+    return 'Material pending';
   }
 }

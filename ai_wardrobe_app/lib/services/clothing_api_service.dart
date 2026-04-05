@@ -1,9 +1,16 @@
 import 'dart:io';
 import 'package:dio/dio.dart';
 import 'api_config.dart';
+import 'auth_service.dart';
 
 class ClothingApiService {
   static final _dio = Dio(BaseOptions(baseUrl: apiBaseUrl));
+
+  static Future<Dio> _client() async {
+    await AuthService.ensureDemoSession();
+    _dio.options.headers['Authorization'] = 'Bearer ${AuthService.token}';
+    return _dio;
+  }
 
   static Future<Map<String, dynamic>> createClothingItem({
     required File frontImage,
@@ -25,26 +32,31 @@ class ClothingApiService {
       if (description != null) 'description': description,
     });
 
-    final resp = await _dio.post('/clothing-items', data: formData);
+    final dio = await _client();
+    final resp = await dio.post('/clothing-items', data: formData);
     return resp.data as Map<String, dynamic>;
   }
 
   static Future<Map<String, dynamic>> getProcessingStatus(String itemId) async {
-    final resp = await _dio.get('/clothing-items/$itemId/processing-status');
+    final dio = await _client();
+    final resp = await dio.get('/clothing-items/$itemId/processing-status');
     return resp.data as Map<String, dynamic>;
   }
 
   static Future<Map<String, dynamic>> getClothingItem(String itemId) async {
-    final resp = await _dio.get('/clothing-items/$itemId');
+    final dio = await _client();
+    final resp = await dio.get('/clothing-items/$itemId');
     return resp.data as Map<String, dynamic>;
   }
 
   static Future<Map<String, dynamic>> getAngleViews(String itemId) async {
-    final resp = await _dio.get('/clothing-items/$itemId/angle-views');
+    final dio = await _client();
+    final resp = await dio.get('/clothing-items/$itemId/angle-views');
     return resp.data as Map<String, dynamic>;
   }
 
   static Future<void> retryProcessing(String itemId) async {
-    await _dio.post('/clothing-items/$itemId/retry');
+    final dio = await _client();
+    await dio.post('/clothing-items/$itemId/retry');
   }
 }

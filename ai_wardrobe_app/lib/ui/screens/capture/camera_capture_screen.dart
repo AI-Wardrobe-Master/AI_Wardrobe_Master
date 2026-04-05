@@ -151,10 +151,7 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
   }
 
   void _finishCapture(File? backImage) {
-    Navigator.pop(context, {
-      'front': _frontImage,
-      'back': backImage,
-    });
+    Navigator.pop(context, {'front': _frontImage, 'back': backImage});
   }
 
   @override
@@ -165,7 +162,6 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
@@ -189,8 +185,10 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
                   _circleButton(Icons.close, () => Navigator.pop(context)),
                   const Spacer(),
                   Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 6,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.black54,
                       borderRadius: BorderRadius.circular(20),
@@ -205,7 +203,10 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
                     ),
                   ),
                   const Spacer(),
-                  _circleButton(Icons.photo_library_outlined, _showFallbackPicker),
+                  _circleButton(
+                    Icons.photo_library_outlined,
+                    _showFallbackPicker,
+                  ),
                 ],
               ),
             ),
@@ -238,7 +239,10 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
                   gradient: LinearGradient(
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
-                    colors: [Colors.transparent, Colors.black.withValues(alpha: 0.7)],
+                    colors: [
+                      Colors.transparent,
+                      Colors.black.withValues(alpha: 0.7),
+                    ],
                   ),
                 ),
                 child: Column(

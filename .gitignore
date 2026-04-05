@@ -6,3 +6,7 @@ QUICKSTART.md
 AGENTS.md
 *.pyc
 prompts.md
+prompt*.md
+*.prompt.md
+.codex/
+local-prompts/
