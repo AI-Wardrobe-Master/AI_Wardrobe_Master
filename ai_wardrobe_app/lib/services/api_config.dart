@@ -4,3 +4,6 @@
 // Use localhost for Chrome / iOS simulator; use 10.0.2.2:8000 for Android emulator
 const String apiBaseUrl = 'http://localhost:8000/api/v1';
 const String fileBaseUrl = 'http://localhost:8000';
+
+// Demo safeguard: keep the mobile build usable even when backend is unavailable.
+const bool localDemoOnly = true;

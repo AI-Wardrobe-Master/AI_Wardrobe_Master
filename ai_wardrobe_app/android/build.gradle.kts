@@ -5,10 +5,17 @@ allprojects {
     }
 }
 
+val customBuildRoot = System.getenv("AI_WARDROBE_BUILD_DIR")
 val newBuildDir: Directory =
-    rootProject.layout.buildDirectory
-        .dir("../../build")
-        .get()
+    if (customBuildRoot.isNullOrBlank()) {
+        rootProject.layout.buildDirectory
+            .dir("../../build")
+            .get()
+    } else {
+        rootProject.layout.dir(
+            providers.provider { file(customBuildRoot) },
+        ).get()
+    }
 rootProject.layout.buildDirectory.value(newBuildDir)
 
 subprojects {

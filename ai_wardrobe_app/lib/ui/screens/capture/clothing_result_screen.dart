@@ -7,6 +7,7 @@ import '../../../services/clothing_api_service.dart';
 import '../../../services/wardrobe_service.dart';
 import '../../../state/current_wardrobe_controller.dart';
 import '../../../theme/app_theme.dart';
+import '../../widgets/clothing_metadata_art.dart';
 
 class ClothingResultScreen extends StatefulWidget {
   final String itemId;
@@ -62,9 +63,9 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
         if (list.isEmpty) {
           if (mounted) {
             final s = AppStringsProvider.of(context);
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(s.createWardrobeFirst)),
-            );
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text(s.createWardrobeFirst)));
           }
           return;
         }
@@ -88,16 +89,16 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
           _addedToWardrobe = true;
         });
         final s = AppStringsProvider.of(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(s.addedToWardrobe)),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(s.addedToWardrobe)));
       }
     } catch (e) {
       if (mounted) {
         setState(() => _addingToWardrobe = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(e.toString())),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.toString())));
       }
     }
   }
@@ -106,12 +107,12 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final textP = isDark ? AppColors.darkTextPrimary : AppColors.textPrimary;
-    final textS = isDark ? AppColors.darkTextSecondary : AppColors.textSecondary;
+    final textS = isDark
+        ? AppColors.darkTextSecondary
+        : AppColors.textSecondary;
 
     if (_loading) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
     final name = _item?['name'] as String? ?? 'Clothing Item';
@@ -162,8 +163,7 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
                 child: Row(
                   children: [
-                    Icon(Icons.rotate_90_degrees_ccw,
-                        size: 18, color: textS),
+                    Icon(Icons.rotate_90_degrees_ccw, size: 18, color: textS),
                     const SizedBox(width: 6),
                     Text(
                       '${_selectedAngle * 45}°',
@@ -187,7 +187,7 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   scrollDirection: Axis.horizontal,
                   itemCount: _angleViews.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 8),
+                  separatorBuilder: (_, _) => const SizedBox(width: 8),
                   itemBuilder: (context, i) {
                     final view = _angleViews[i] as Map;
                     final url = _fullUrl(view['url'] as String?);
@@ -211,14 +211,21 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
                           child: CachedNetworkImage(
                             imageUrl: url,
                             fit: BoxFit.cover,
-                            placeholder: (_, __) => Container(
+                            placeholder: (_, _) => Container(
                               color: isDark
                                   ? Colors.white10
                                   : Colors.black.withValues(alpha: 0.05),
                             ),
-                            errorWidget: (_, __, ___) => const Icon(
-                              Icons.broken_image,
-                              size: 20,
+                            errorWidget: (_, _, _) => ClothingMetadataArt(
+                              title: name,
+                              categoryLabel:
+                                  _tagValue('category') ??
+                                  _tagValue('type') ??
+                                  'Wardrobe item',
+                              material:
+                                  _tagValue('material') ?? 'Material pending',
+                              sourceLabel: _item?['source'] as String?,
+                              compact: true,
                             ),
                           ),
                         ),
@@ -255,9 +262,7 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
                                   ? Icons.check_circle
                                   : Icons.add_to_photos_outlined,
                               size: 20,
-                              color: _addedToWardrobe
-                                  ? Colors.green
-                                  : textP,
+                              color: _addedToWardrobe ? Colors.green : textP,
                             ),
                       label: Text(
                         AppStringsProvider.of(context).addToCurrentWardrobe,
@@ -307,39 +312,114 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
         child: CachedNetworkImage(
           imageUrl: url,
           fit: BoxFit.contain,
-          placeholder: (_, __) =>
+          placeholder: (_, _) =>
               const Center(child: CircularProgressIndicator()),
-          errorWidget: (_, __, ___) =>
-              const Center(child: Icon(Icons.broken_image, size: 48)),
+          errorWidget: (_, _, _) => Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: ClothingMetadataArt(
+                title: _item?['name'] as String? ?? 'Clothing Item',
+                categoryLabel:
+                    _tagValue('category') ?? _tagValue('type') ?? 'Look',
+                material: _tagValue('material') ?? 'Material pending',
+                sourceLabel: _item?['source'] as String?,
+              ),
+            ),
+          ),
         ),
       ),
     );
   }
 
   Widget _buildOriginalImages() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final textS = isDark
+        ? AppColors.darkTextSecondary
+        : AppColors.textSecondary;
     final images = _item?['images'] as Map? ?? {};
     final front = _fullUrl(images['processedFrontUrl'] as String?);
     final back = _fullUrl(images['processedBackUrl'] as String?);
+    final originalFront = _fullUrl(images['originalFrontUrl'] as String?);
+    final originalBack = _fullUrl(images['originalBackUrl'] as String?);
+    final gallery = [
+      if (front.isNotEmpty) front,
+      if (back.isNotEmpty) back,
+      if (front.isEmpty && originalFront.isNotEmpty) originalFront,
+      if (back.isEmpty && originalBack.isNotEmpty) originalBack,
+    ];
+
+    if (gallery.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.image_not_supported_outlined, size: 48, color: textS),
+              const SizedBox(height: 12),
+              SizedBox(
+                height: 220,
+                width: double.infinity,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(22),
+                  child: ClothingMetadataArt(
+                    title: _item?['name'] as String? ?? 'Clothing Item',
+                    categoryLabel:
+                        _tagValue('category') ?? _tagValue('type') ?? 'Look',
+                    material: _tagValue('material') ?? 'Material pending',
+                    sourceLabel: _item?['source'] as String?,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'No processed images are available for this clothing item yet.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13, color: textS),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
 
     return PageView(
-      children: [
-        if (front.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: CachedNetworkImage(
-              imageUrl: front,
-              fit: BoxFit.contain,
+      children: gallery
+          .map(
+            (url) => Padding(
+              padding: const EdgeInsets.all(16),
+              child: CachedNetworkImage(
+                imageUrl: url,
+                fit: BoxFit.contain,
+                errorWidget: (_, _, _) => ClothingMetadataArt(
+                  title: _item?['name'] as String? ?? 'Clothing Item',
+                  categoryLabel:
+                      _tagValue('category') ?? _tagValue('type') ?? 'Look',
+                  material: _tagValue('material') ?? 'Material pending',
+                  sourceLabel: _item?['source'] as String?,
+                ),
+              ),
             ),
-          ),
-        if (back.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: CachedNetworkImage(
-              imageUrl: back,
-              fit: BoxFit.contain,
-            ),
-          ),
-      ],
+          )
+          .toList(),
     );
+  }
+
+  String? _tagValue(String key) {
+    final tags = _item?['finalTags'];
+    if (tags is! List) {
+      return null;
+    }
+
+    for (final entry in tags.whereType<Map>()) {
+      final entryKey = entry['key']?.toString().trim().toLowerCase();
+      if (entryKey == key) {
+        final value = entry['value']?.toString().trim();
+        if (value != null && value.isNotEmpty) {
+          return value;
+        }
+      }
+    }
+    return null;
   }
 }

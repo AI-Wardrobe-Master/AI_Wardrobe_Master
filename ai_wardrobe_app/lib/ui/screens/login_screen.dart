@@ -1,18 +1,73 @@
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_strings_provider.dart';
+import '../../services/auth_service.dart';
 import '../../theme/app_theme.dart';
 import '../root_shell.dart';
 
-class LoginScreen extends StatelessWidget {
+class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
+
+  @override
+  State<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends State<LoginScreen> {
+  bool _isSubmitting = false;
+
+  Future<void> _openApp() async {
+    if (!mounted) {
+      return;
+    }
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute<void>(builder: (_) => const RootShell()),
+    );
+  }
+
+  Future<void> _enterWithBackend() async {
+    if (_isSubmitting) {
+      return;
+    }
+
+    setState(() => _isSubmitting = true);
+    try {
+      await AuthService.ensureDemoSession();
+      await _openApp();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Unable to start the demo session. Please make sure the backend is running.',
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
+    }
+  }
+
+  Future<void> _enterOfflineDemo() async {
+    if (_isSubmitting) {
+      return;
+    }
+
+    AuthService.enterGuestMode();
+    await _openApp();
+  }
 
   @override
   Widget build(BuildContext context) {
     final s = AppStringsProvider.of(context);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final textP = isDark ? AppColors.darkTextPrimary : AppColors.textPrimary;
-    final textS = isDark ? AppColors.darkTextSecondary : AppColors.textSecondary;
+    final textS = isDark
+        ? AppColors.darkTextSecondary
+        : AppColors.textSecondary;
 
     return Scaffold(
       body: SafeArea(
@@ -33,10 +88,7 @@ class LoginScreen extends StatelessWidget {
               const SizedBox(height: 6),
               Text(
                 s.loginSubtitle,
-                style: TextStyle(
-                  fontSize: 13,
-                  color: textS,
-                ),
+                style: TextStyle(fontSize: 13, color: textS),
               ),
               const SizedBox(height: 32),
               Expanded(
@@ -66,9 +118,16 @@ class LoginScreen extends StatelessWidget {
                       Text(
                         s.loginDemoHint,
                         textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 13, color: textS),
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        'Offline demo is available without the backend.',
+                        textAlign: TextAlign.center,
                         style: TextStyle(
-                          fontSize: 13,
-                          color: textS,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.accentBlue,
                         ),
                       ),
                     ],
@@ -79,13 +138,7 @@ class LoginScreen extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   FilledButton(
-                    onPressed: () {
-                      Navigator.of(context).pushReplacement(
-                        MaterialPageRoute<void>(
-                          builder: (_) => const RootShell(),
-                        ),
-                      );
-                    },
+                    onPressed: _isSubmitting ? null : _enterOfflineDemo,
                     style: FilledButton.styleFrom(
                       backgroundColor: AppColors.accentBlue,
                       foregroundColor: Colors.white,
@@ -95,7 +148,7 @@ class LoginScreen extends StatelessWidget {
                       ),
                     ),
                     child: Text(
-                      s.continueButton,
+                      s.skipForNow,
                       style: const TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w600,
@@ -103,20 +156,19 @@ class LoginScreen extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 8),
-                  TextButton(
-                    onPressed: () {
-                      Navigator.of(context).pushReplacement(
-                        MaterialPageRoute<void>(
-                          builder: (_) => const RootShell(),
-                        ),
-                      );
-                    },
-                    child: Text(
-                      s.skipForNow,
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: textS,
+                  OutlinedButton(
+                    onPressed: _isSubmitting ? null : _enterWithBackend,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: textP,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
                       ),
+                      side: BorderSide(color: Theme.of(context).dividerColor),
+                    ),
+                    child: Text(
+                      _isSubmitting ? 'Connecting...' : 'Continue with Backend',
+                      style: TextStyle(fontSize: 13, color: textS),
                     ),
                   ),
                 ],
@@ -128,4 +180,3 @@ class LoginScreen extends StatelessWidget {
     );
   }
 }
-

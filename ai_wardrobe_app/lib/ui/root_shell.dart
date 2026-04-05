@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import '../l10n/app_strings_provider.dart';
+import '../services/api_config.dart';
 import '../theme/app_theme.dart';
 import 'screens/capture/camera_capture_screen.dart';
 import 'screens/capture/processing_screen.dart';
@@ -65,7 +66,9 @@ class _MobileRootShellState extends State<_MobileRootShell> {
     final s = AppStringsProvider.of(context);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final textP = isDark ? AppColors.darkTextPrimary : AppColors.textPrimary;
-    final textS = isDark ? AppColors.darkTextSecondary : AppColors.textSecondary;
+    final textS = isDark
+        ? AppColors.darkTextSecondary
+        : AppColors.textSecondary;
     final accent = isDark ? AppColors.darkAccentBlue : AppColors.accentBlue;
 
     showModalBottomSheet<void>(
@@ -113,14 +116,12 @@ class _MobileRootShellState extends State<_MobileRootShell> {
                     width: 40,
                     height: 40,
                     decoration: BoxDecoration(
-                      color:
-                          isDark ? AppColors.darkBackground : AppColors.background,
+                      color: isDark
+                          ? AppColors.darkBackground
+                          : AppColors.background,
                       borderRadius: BorderRadius.circular(14),
                     ),
-                    child: Icon(
-                      Icons.checkroom_rounded,
-                      color: textP,
-                    ),
+                    child: Icon(Icons.checkroom_rounded, color: textP),
                   ),
                   title: Text(
                     s.addClothes,
@@ -149,10 +150,7 @@ class _MobileRootShellState extends State<_MobileRootShell> {
                       color: AppColors.accentYellow.withOpacity(0.18),
                       borderRadius: BorderRadius.circular(14),
                     ),
-                    child: Icon(
-                      Icons.style_rounded,
-                      color: accent,
-                    ),
+                    child: Icon(Icons.style_rounded, color: accent),
                   ),
                   title: Text(
                     s.openOutfitCanvas,
@@ -183,6 +181,20 @@ class _MobileRootShellState extends State<_MobileRootShell> {
   }
 
   Future<void> _navigateToCapture() async {
+    if (localDemoOnly) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Add clothes is disabled in local demo mode because backend processing is turned off.',
+          ),
+        ),
+      );
+      return;
+    }
+
     final result = await Navigator.push<Map<String, File?>>(
       context,
       MaterialPageRoute(builder: (_) => const CameraCaptureScreen()),
@@ -193,10 +205,8 @@ class _MobileRootShellState extends State<_MobileRootShell> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => ProcessingScreen(
-          frontImage: front,
-          backImage: result['back'],
-        ),
+        builder: (_) =>
+            ProcessingScreen(frontImage: front, backImage: result['back']),
       ),
     );
   }
@@ -205,10 +215,7 @@ class _MobileRootShellState extends State<_MobileRootShell> {
   Widget build(BuildContext context) {
     final s = AppStringsProvider.of(context);
     return Scaffold(
-      body: IndexedStack(
-        index: _pageIndex,
-        children: _pages,
-      ),
+      body: IndexedStack(index: _pageIndex, children: _pages),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _navIndex,
         onTap: _onNavTap,
@@ -260,11 +267,7 @@ class _AddNavIcon extends StatelessWidget {
             : AppColors.accentYellow.withOpacity(0.9),
         borderRadius: BorderRadius.circular(16),
       ),
-      child: const Icon(
-        Icons.add,
-        size: 20,
-        color: AppColors.textPrimary,
-      ),
+      child: const Icon(Icons.add, size: 20, color: AppColors.textPrimary),
     );
   }
 }
@@ -292,7 +295,9 @@ class _WebRootShellState extends State<_WebRootShell> {
     final s = AppStringsProvider.of(context);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final textP = isDark ? AppColors.darkTextPrimary : AppColors.textPrimary;
-    final textS = isDark ? AppColors.darkTextSecondary : AppColors.textSecondary;
+    final textS = isDark
+        ? AppColors.darkTextSecondary
+        : AppColors.textSecondary;
     final accent = isDark ? AppColors.darkAccentBlue : AppColors.accentBlue;
 
     showModalBottomSheet<void>(
@@ -340,14 +345,12 @@ class _WebRootShellState extends State<_WebRootShell> {
                     width: 40,
                     height: 40,
                     decoration: BoxDecoration(
-                      color:
-                          isDark ? AppColors.darkBackground : AppColors.background,
+                      color: isDark
+                          ? AppColors.darkBackground
+                          : AppColors.background,
                       borderRadius: BorderRadius.circular(14),
                     ),
-                    child: Icon(
-                      Icons.checkroom_rounded,
-                      color: textP,
-                    ),
+                    child: Icon(Icons.checkroom_rounded, color: textP),
                   ),
                   title: Text(
                     s.addClothes,
@@ -376,10 +379,7 @@ class _WebRootShellState extends State<_WebRootShell> {
                       color: AppColors.accentYellow.withOpacity(0.18),
                       borderRadius: BorderRadius.circular(14),
                     ),
-                    child: Icon(
-                      Icons.style_rounded,
-                      color: accent,
-                    ),
+                    child: Icon(Icons.style_rounded, color: accent),
                   ),
                   title: Text(
                     s.openOutfitCanvas,
@@ -419,10 +419,8 @@ class _WebRootShellState extends State<_WebRootShell> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => ProcessingScreen(
-          frontImage: front,
-          backImage: result['back'],
-        ),
+        builder: (_) =>
+            ProcessingScreen(frontImage: front, backImage: result['back']),
       ),
     );
   }
@@ -504,10 +502,7 @@ class _WebRootShellState extends State<_WebRootShell> {
             color: Theme.of(context).dividerColor,
           ),
           Expanded(
-            child: IndexedStack(
-              index: _pageIndex,
-              children: _pages,
-            ),
+            child: IndexedStack(index: _pageIndex, children: _pages),
           ),
         ],
       ),
