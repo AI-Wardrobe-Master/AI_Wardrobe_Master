@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../../../services/clothing_api_service.dart';
+import '../../../services/local_clothing_service.dart';
 import '../../../theme/app_theme.dart';
 import 'clothing_result_screen.dart';
 
@@ -46,6 +47,7 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
         _status = 'Uploading images...';
         _progress = 0.05;
         _steps['upload'] = 'processing';
+        _error = null;
       });
 
       final result = await ClothingApiService.createClothingItem(
@@ -53,29 +55,44 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
         backImage: widget.backImage,
       );
 
-      _itemId = result['id'] as String;
+      final responseData = result['data'] as Map<String, dynamic>? ?? result;
+      final processingTaskId = responseData['processingTaskId'] as String?;
+      final itemId = responseData['id'] as String?;
+
+      if (itemId == null && processingTaskId == null) {
+        throw Exception('Invalid response: missing item ID or processing task ID');
+      }
+
+      _itemId = itemId ?? processingTaskId;
       setState(() {
         _steps['upload'] = 'completed';
-        _status = 'Processing...';
+        _progress = 0.1;
+        _status = 'Upload successful! Processing...';
       });
 
+      await Future.delayed(const Duration(milliseconds: 500));
       _startPolling();
     } catch (e) {
       setState(() {
-        _error = e.toString();
+        _error =
+            'Upload failed: $e\n\nPlease check:\n1. Backend is running\n2. Network connection\n3. Image file is valid';
         _status = 'Upload failed';
+        _steps['upload'] = 'failed';
       });
     }
   }
 
   void _startPolling() {
+    int consecutiveErrors = 0;
     _pollTimer = Timer.periodic(const Duration(seconds: 2), (_) async {
       if (_itemId == null) return;
       try {
-        final data = await ClothingApiService.getProcessingStatus(_itemId!);
+        final response = await ClothingApiService.getProcessingStatus(_itemId!);
+        final data = response['data'] as Map<String, dynamic>? ?? response;
         final status = data['status'] as String? ?? '';
         final progress = (data['progress'] as num?)?.toDouble() ?? 0;
         final steps = data['steps'] as Map<String, dynamic>? ?? {};
+        consecutiveErrors = 0;
 
         setState(() {
           _progress = progress / 100;
@@ -87,15 +104,33 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
 
         if (status == 'COMPLETED') {
           _pollTimer?.cancel();
-          _onCompleted();
+          setState(() {
+            _progress = 1.0;
+            _status = 'Processing completed!';
+          });
+          await Future.delayed(const Duration(milliseconds: 500));
+          if (mounted) {
+            _onCompleted();
+          }
         } else if (status == 'FAILED') {
           _pollTimer?.cancel();
           setState(() {
-            _error = data['errorMessage'] as String? ?? 'Processing failed';
-            _status = 'Failed';
+            _error =
+                data['errorMessage'] as String? ?? 'Processing failed. Please try again.';
+            _status = 'Processing failed';
           });
         }
-      } catch (_) {}
+      } catch (_) {
+        consecutiveErrors++;
+        if (consecutiveErrors >= 5) {
+          _pollTimer?.cancel();
+          setState(() {
+            _error =
+                'Failed to check processing status.\n\nPlease check:\n1. Backend is running\n2. Network connection\n3. Try refreshing the page';
+            _status = 'Connection error';
+          });
+        }
+      }
     });
   }
 
@@ -113,6 +148,40 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
         builder: (_) => ClothingResultScreen(itemId: _itemId!),
       ),
     );
+  }
+
+  Future<void> _saveAsSimplified() async {
+    try {
+      setState(() {
+        _status = 'Saving as simplified item...';
+      });
+
+      // This fallback keeps the upload flow usable for front-end testing even
+      // when 3D generation or the backend pipeline is unavailable.
+      await LocalClothingService.saveSimplifiedItem(
+        frontImageBytes: await widget.frontImage.readAsBytes(),
+        backImageBytes:
+            widget.backImage != null ? await widget.backImage!.readAsBytes() : null,
+        name: 'Imported Item',
+        description: 'Simplified item (3D processing skipped)',
+      );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Item saved as simplified version! You can now use it in card packs.',
+          ),
+          duration: Duration(seconds: 3),
+        ),
+      );
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to save: $e')),
+      );
+    }
   }
 
   @override
@@ -180,15 +249,69 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
               const Spacer(flex: 3),
               // Error retry
               if (_error != null) ...[
-                Text(
-                  _error!,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.redAccent, fontSize: 13),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.redAccent.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    _error!,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.redAccent, fontSize: 13),
+                  ),
                 ),
                 const SizedBox(height: 16),
-                FilledButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Go Back'),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: AppColors.accentYellow.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: AppColors.accentYellow.withValues(alpha: 0.3),
+                    ),
+                  ),
+                  child: Column(
+                    children: [
+                      Text(
+                        '3D processing failed, but you can save this as a simplified item for card packs',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: textP, fontSize: 13),
+                      ),
+                      const SizedBox(height: 12),
+                      FilledButton.icon(
+                        onPressed: _saveAsSimplified,
+                        icon: const Icon(Icons.save_outlined, size: 18),
+                        label: const Text('Save as Simplified Item'),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: AppColors.accentYellow,
+                          foregroundColor: Colors.black,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    OutlinedButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Go Back'),
+                    ),
+                    const SizedBox(width: 12),
+                    if (_itemId != null)
+                      FilledButton(
+                        onPressed: () {
+                          setState(() {
+                            _error = null;
+                            _status = 'Retrying...';
+                          });
+                          _startPolling();
+                        },
+                        child: const Text('Retry'),
+                      ),
+                  ],
                 ),
               ],
             ],

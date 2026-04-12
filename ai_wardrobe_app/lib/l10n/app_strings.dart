@@ -103,6 +103,13 @@ class AppStrings {
   String get generatePreview => _t('generatePreview');
   String selectItem(String slot) => _t('selectItem').replaceAll('{slot}', slot);
   String get selectItemHint => _t('selectItemHint');
+  String get createCardPack => _t('createCardPack');
+  String get cardPackName => _t('cardPackName');
+  String get cardPackDescription => _t('cardPackDescription');
+  String get selectItems => _t('selectItems');
+  String get addCoverImage => _t('addCoverImage');
+  String get publish => _t('publish');
+  String get saveAsDraft => _t('saveAsDraft');
 
   static const Map<String, String> _en = {
     'appTitle': 'AI Wardrobe Master',
@@ -177,6 +184,13 @@ class AppStrings {
     'generatePreview': 'Generate Preview',
     'selectItem': 'Select {slot} item',
     'selectItemHint': 'Here we will show hats, tops, pants, shoes, etc. connected to your wardrobe.',
+    'createCardPack': 'Create Card Pack',
+    'cardPackName': 'Card Pack Name',
+    'cardPackDescription': 'Card Pack Description',
+    'selectItems': 'Select Items',
+    'addCoverImage': 'Add Cover Image',
+    'publish': 'Publish',
+    'saveAsDraft': 'Save as Draft',
   };
 
   static const Map<String, String> _zh = {
@@ -252,5 +266,12 @@ class AppStrings {
     'generatePreview': '生成预览',
     'selectItem': '选择{slot}',
     'selectItemHint': '此处将展示与衣柜关联的帽子、上装、裤装、鞋等。',
+    'createCardPack': '创建搭配包',
+    'cardPackName': '搭配包名称',
+    'cardPackDescription': '搭配包描述',
+    'selectItems': '选择衣物',
+    'addCoverImage': '添加封面图',
+    'publish': '发布',
+    'saveAsDraft': '保存为草稿',
   };
 }

@@ -2,11 +2,87 @@ import 'package:flutter/material.dart';
 
 import '../../l10n/app_strings_provider.dart';
 import '../../l10n/locale_controller.dart';
+import '../../services/card_pack_api_service.dart';
+import '../../services/clothing_api_service.dart';
+import '../../services/local_card_pack_service.dart';
+import '../../services/local_clothing_service.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/theme_controller.dart';
+import 'imported_looks_screen.dart';
 
-class ProfileScreen extends StatelessWidget {
+class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
+
+  @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen>
+    with WidgetsBindingObserver {
+  int _clothesCount = 0;
+  int _packsCount = 0;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _loadStats();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed && mounted) {
+      _loadStats();
+    }
+  }
+
+  Future<void> _loadStats() async {
+    setState(() => _loading = true);
+
+    int clothesCount = 0;
+    try {
+      final apiItems = await ClothingApiService.listClothingItems(limit: 100);
+      clothesCount += apiItems.length;
+    } catch (_) {}
+    try {
+      final localItems = await LocalClothingService.listItems();
+      clothesCount += localItems.length;
+    } catch (_) {}
+
+    int packsCount = 0;
+    final packIds = <String>{};
+    try {
+      final apiPacks = await CardPackApiService.listCardPacks();
+      for (final pack in apiPacks) {
+        packIds.add(pack.id);
+      }
+      packsCount = packIds.length;
+    } catch (_) {}
+    try {
+      final localPacks = await LocalCardPackService.listCardPacks();
+      for (final pack in localPacks) {
+        if (!packIds.contains(pack.id)) {
+          packIds.add(pack.id);
+          packsCount++;
+        }
+      }
+    } catch (_) {}
+
+    if (!mounted) return;
+    setState(() {
+      _clothesCount = clothesCount;
+      _packsCount = packsCount;
+      _loading = false;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -86,11 +162,17 @@ class ProfileScreen extends StatelessWidget {
             const SizedBox(height: 24),
             Row(
               children: [
-                _ProfileStat(label: s.statClothes, value: '0'),
+                _ProfileStat(
+                  label: s.statClothes,
+                  value: _loading ? '...' : '$_clothesCount',
+                ),
                 const SizedBox(width: 14),
                 _ProfileStat(label: s.statOutfits, value: '0'),
                 const SizedBox(width: 14),
-                _ProfileStat(label: s.statPacks, value: '0'),
+                _ProfileStat(
+                  label: s.statPacks,
+                  value: _loading ? '...' : '$_packsCount',
+                ),
               ],
             ),
             const SizedBox(height: 24),
@@ -123,26 +205,36 @@ class ProfileScreen extends StatelessWidget {
                             : AppColors.background,
                         borderRadius: BorderRadius.circular(16),
                       ),
-                      child: Row(
-                        children: [
-                          Icon(Icons.inventory_2_rounded, color: accent),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              s.importedLooks,
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                                color: textP,
+                      child: GestureDetector(
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const ImportedLooksScreen(),
+                            ),
+                          );
+                        },
+                        child: Row(
+                          children: [
+                            Icon(Icons.inventory_2_rounded, color: accent),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                s.importedLooks,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: textP,
+                                ),
                               ),
                             ),
-                          ),
-                          Icon(
-                            Icons.arrow_forward_ios_rounded,
-                            size: 14,
-                            color: textS,
-                          ),
-                        ],
+                            Icon(
+                              Icons.arrow_forward_ios_rounded,
+                              size: 14,
+                              color: textS,
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ],

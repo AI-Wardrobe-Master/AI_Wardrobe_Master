@@ -7,6 +7,7 @@ import '../l10n/app_strings_provider.dart';
 import '../theme/app_theme.dart';
 import 'screens/capture/camera_capture_screen.dart';
 import 'screens/capture/processing_screen.dart';
+import 'screens/creator/card_pack_creator_screen.dart';
 import 'screens/discover_screen.dart';
 import 'screens/outfit_canvas_screen.dart';
 import 'screens/profile_screen.dart';
@@ -146,7 +147,7 @@ class _MobileRootShellState extends State<_MobileRootShell> {
                     width: 40,
                     height: 40,
                     decoration: BoxDecoration(
-                      color: AppColors.accentYellow.withOpacity(0.18),
+                      color: AppColors.accentYellow.withValues(alpha: 0.18),
                       borderRadius: BorderRadius.circular(14),
                     ),
                     child: Icon(
@@ -172,6 +173,43 @@ class _MobileRootShellState extends State<_MobileRootShell> {
                       _navIndex = 3;
                       _pageIndex = 2;
                     });
+                  },
+                ),
+                const SizedBox(height: 8),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: AppColors.accentBlue.withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Icon(
+                      Icons.collections_bookmark_rounded,
+                      color: accent,
+                    ),
+                  ),
+                  title: Text(
+                    s.createCardPack,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 15,
+                      color: textP,
+                    ),
+                  ),
+                  subtitle: Text(
+                    'Create and publish a card pack',
+                    style: TextStyle(fontSize: 12, color: textS),
+                  ),
+                  onTap: () async {
+                    Navigator.of(context).pop();
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const CardPackCreatorScreen(),
+                      ),
+                    );
                   },
                 ),
               ],
@@ -257,7 +295,7 @@ class _AddNavIcon extends StatelessWidget {
       decoration: BoxDecoration(
         color: highlight
             ? AppColors.accentYellow
-            : AppColors.accentYellow.withOpacity(0.9),
+            : AppColors.accentYellow.withValues(alpha: 0.9),
         borderRadius: BorderRadius.circular(16),
       ),
       child: const Icon(
@@ -373,7 +411,7 @@ class _WebRootShellState extends State<_WebRootShell> {
                     width: 40,
                     height: 40,
                     decoration: BoxDecoration(
-                      color: AppColors.accentYellow.withOpacity(0.18),
+                      color: AppColors.accentYellow.withValues(alpha: 0.18),
                       borderRadius: BorderRadius.circular(14),
                     ),
                     child: Icon(
@@ -398,6 +436,43 @@ class _WebRootShellState extends State<_WebRootShell> {
                     setState(() {
                       _pageIndex = 2;
                     });
+                  },
+                ),
+                const SizedBox(height: 8),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: AppColors.accentBlue.withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Icon(
+                      Icons.collections_bookmark_rounded,
+                      color: accent,
+                    ),
+                  ),
+                  title: Text(
+                    s.createCardPack,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 15,
+                      color: textP,
+                    ),
+                  ),
+                  subtitle: Text(
+                    'Create and publish a card pack',
+                    style: TextStyle(fontSize: 12, color: textS),
+                  ),
+                  onTap: () async {
+                    Navigator.of(context).pop();
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const CardPackCreatorScreen(),
+                      ),
+                    );
                   },
                 ),
               ],

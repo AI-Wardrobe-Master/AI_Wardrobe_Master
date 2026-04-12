@@ -1,7 +1,12 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_strings_provider.dart';
 import '../../models/wardrobe.dart';
+import '../../services/api_config.dart';
+import '../../services/clothing_api_service.dart';
+import '../../services/import_api_service.dart';
+import '../../services/local_clothing_service.dart';
 import '../../state/current_wardrobe_controller.dart';
 import '../../services/wardrobe_service.dart';
 import '../../theme/app_theme.dart';
@@ -19,6 +24,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
   List<Wardrobe> _wardrobes = [];
   Wardrobe? _currentWardrobe;
   List<WardrobeItemWithClothing> _items = [];
+  final Map<String, Map<String, dynamic>> _itemImages = {};
   bool _loadingWardrobes = true;
   bool _loadingItems = false;
   String? _error;
@@ -81,6 +87,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
           _loadItems();
         } else {
           CurrentWardrobeController.setCurrentWardrobeId(null);
+          _loadItems();
         }
       });
     } catch (e) {
@@ -88,24 +95,112 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
         _error = e.toString();
         _loadingWardrobes = false;
       });
+      _loadItems();
     }
   }
 
   Future<void> _loadItems() async {
-    if (_currentWardrobe == null) return;
     setState(() => _loadingItems = true);
-    try {
-      final list = await WardrobeService.fetchWardrobeItems(_currentWardrobe!.id);
-      setState(() {
-        _items = list;
-        _loadingItems = false;
-      });
-    } catch (e) {
-      setState(() {
-        _loadingItems = false;
+    final allItems = <WardrobeItemWithClothing>[];
+    _itemImages.clear();
+
+    if (_currentWardrobe != null) {
+      try {
+        final list =
+            await WardrobeService.fetchWardrobeItems(_currentWardrobe!.id);
+        allItems.addAll(list);
+        for (final entry in list) {
+          try {
+            final fullItem =
+                await ClothingApiService.getClothingItem(entry.clothingItemId);
+            final data = fullItem['data'] as Map<String, dynamic>? ?? fullItem;
+            if (data['images'] != null) {
+              _itemImages[entry.clothingItemId] =
+                  Map<String, dynamic>.from(data['images'] as Map);
+            }
+          } catch (_) {}
+        }
+      } catch (e) {
         _error = e.toString();
-      });
+      }
     }
+
+    // Regular wardrobes show owned/local items, while virtual wardrobes focus
+    // on imported content restored from card-pack imports.
+    final includeOwnedLocals =
+        _currentWardrobe == null || _currentWardrobe?.isVirtual != true;
+    final includeImported = _currentWardrobe?.isVirtual == true;
+
+    if (includeOwnedLocals) {
+      try {
+        final localItems = await LocalClothingService.listItems();
+        for (final item in localItems) {
+          final itemId = item['id'] as String;
+          if (allItems.any((entry) => entry.clothingItem?.id == itemId)) continue;
+
+          if (item['images'] != null) {
+            _itemImages[itemId] = Map<String, dynamic>.from(item['images'] as Map);
+          }
+          allItems.add(
+            WardrobeItemWithClothing(
+              id: 'local_$itemId',
+              wardrobeId: _currentWardrobe?.id ?? 'default',
+              clothingItemId: itemId,
+              addedAt: DateTime.tryParse(item['createdAt'] as String? ?? '') ??
+                  DateTime.now(),
+              displayOrder: allItems.length,
+              clothingItem: ClothingItemBrief(
+                id: itemId,
+                name: item['name'] as String?,
+                source: 'OWNED',
+                finalTags: item['finalTags'] as List<dynamic>? ?? [],
+                addedAt: DateTime.tryParse(item['createdAt'] as String? ?? ''),
+              ),
+            ),
+          );
+        }
+      } catch (_) {}
+    }
+
+    if (includeImported) {
+      try {
+        final importedItems = await ImportApiService.getImportedItems();
+        for (final item in importedItems) {
+          final itemId = item['id'] as String;
+          if (allItems.any((entry) => entry.clothingItem?.id == itemId)) continue;
+
+          if (item['images'] != null) {
+            _itemImages[itemId] = Map<String, dynamic>.from(item['images'] as Map);
+          }
+          allItems.add(
+            WardrobeItemWithClothing(
+              id: 'imported_$itemId',
+              wardrobeId: _currentWardrobe?.id ?? 'virtual',
+              clothingItemId: itemId,
+              addedAt: DateTime.tryParse(item['createdAt'] as String? ?? '') ??
+                  DateTime.now(),
+              displayOrder: allItems.length,
+              clothingItem: ClothingItemBrief(
+                id: itemId,
+                name: item['name'] as String?,
+                source: 'IMPORTED',
+                finalTags: item['finalTags'] as List<dynamic>? ?? [],
+                addedAt: DateTime.tryParse(item['createdAt'] as String? ?? ''),
+              ),
+            ),
+          );
+        }
+      } catch (_) {}
+    }
+
+    allItems.sort((a, b) =>
+        (b.addedAt ?? DateTime(1970)).compareTo(a.addedAt ?? DateTime(1970)));
+
+    if (!mounted) return;
+    setState(() {
+      _items = allItems;
+      _loadingItems = false;
+    });
   }
 
   List<WardrobeItemWithClothing> get _filteredItems {
@@ -178,6 +273,64 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
             SnackBar(content: Text(e.toString())));
       }
     }
+  }
+
+  Widget _buildItemImage(String itemId) {
+    final images = _itemImages[itemId];
+    final imageUrl =
+        images?['processedFrontUrl'] as String? ?? images?['originalFrontUrl'] as String?;
+
+    if (imageUrl == null || imageUrl.isEmpty) {
+      return Container(
+        color: _isDark ? AppColors.darkSurface : Colors.grey.shade200,
+        child: Center(
+          child: Icon(
+            Icons.checkroom_rounded,
+            size: 32,
+            color: _textSecondary,
+          ),
+        ),
+      );
+    }
+
+    if (imageUrl.startsWith('data:')) {
+      try {
+        final uri = Uri.parse(imageUrl);
+        final data = uri.data;
+        if (data != null) {
+          return Image.memory(
+            data.contentAsBytes(),
+            fit: BoxFit.cover,
+            errorBuilder: (context, error, stackTrace) => Container(
+              color: _isDark ? AppColors.darkSurface : Colors.grey.shade200,
+              child: Icon(Icons.image_outlined, color: _textSecondary),
+            ),
+          );
+        }
+      } catch (_) {}
+      return Container(
+        color: _isDark ? AppColors.darkSurface : Colors.grey.shade200,
+        child: Icon(Icons.image_outlined, color: _textSecondary),
+      );
+    }
+
+    return CachedNetworkImage(
+      imageUrl: imageUrl.startsWith('http') ? imageUrl : '$fileBaseUrl$imageUrl',
+      fit: BoxFit.cover,
+      placeholder: (context, url) => Container(
+        color: _isDark ? AppColors.darkSurface : Colors.grey.shade200,
+        child: Center(
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: _textSecondary,
+          ),
+        ),
+      ),
+      errorWidget: (context, url, error) => Container(
+        color: _isDark ? AppColors.darkSurface : Colors.grey.shade200,
+        child: Icon(Icons.image_outlined, color: _textSecondary),
+      ),
+    );
   }
 
   @override
@@ -491,30 +644,8 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                                             CrossAxisAlignment.stretch,
                                         children: [
                                           Expanded(
-                                            child: Container(
-                                              color: _isDark
-                                                  ? AppColors.darkSurface
-                                                  : Colors.grey.shade200,
-                                              child: Center(
-                                                child: ci != null
-                                                    ? Text(
-                                                        ci.name ?? ci.id,
-                                                        style: TextStyle(
-                                                          fontSize: 12,
-                                                          color: _textSecondary,
-                                                        ),
-                                                        textAlign:
-                                                            TextAlign.center,
-                                                        maxLines: 2,
-                                                        overflow:
-                                                            TextOverflow.ellipsis,
-                                                      )
-                                                    : Icon(
-                                                        Icons.checkroom_rounded,
-                                                        size: 32,
-                                                        color: _textSecondary,
-                                                      ),
-                                              ),
+                                            child: _buildItemImage(
+                                              entry.clothingItemId,
                                             ),
                                           ),
                                           Padding(
