@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import '../../models/card_pack.dart';
+import '../../services/api_config.dart';
 import '../../services/card_pack_api_service.dart';
 import '../../services/import_api_service.dart';
 import '../../services/local_card_pack_service.dart';
@@ -217,7 +218,7 @@ class _CardPackDetailScreenState extends State<CardPackDetailScreen> {
     return Image.network(
       coverImageUrl.startsWith('http')
           ? coverImageUrl
-          : 'http://localhost:8000$coverImageUrl',
+          : '$fileBaseUrl$coverImageUrl',
       width: double.infinity,
       height: 200,
       fit: BoxFit.cover,

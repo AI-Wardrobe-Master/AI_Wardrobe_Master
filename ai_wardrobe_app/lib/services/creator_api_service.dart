@@ -12,11 +12,19 @@ class CreatorApiService {
       final responseData = resp.data as Map<String, dynamic>;
       return Creator.fromJson(responseData['data'] as Map<String, dynamic>);
     } catch (_) {
-      final creator = _localCreators.firstWhere(
-        (item) => item.userId == id,
-        orElse: () => _localCreators.first,
+      for (final creator in _localCreators) {
+        if (creator.userId == id) return creator;
+      }
+
+      return Creator(
+        userId: id,
+        username: id,
+        displayName: 'Unknown Creator',
+        bio: 'Creator profile is unavailable while the platform API is offline.',
+        followerCount: 0,
+        packCount: 0,
+        isVerified: false,
       );
-      return creator;
     }
   }
 
