@@ -1,11 +1,20 @@
 # AI Wardrobe Master - Backend
 
-## Module 2 实现范围
+## 已实现的 API 模块
 
+### Module 2: 衣物数字化
+- `POST /api/v1/clothing-items` - 创建衣物（上传图片，异步处理）
 - `POST /api/v1/ai/classify` - AI 服装分类（Roboflow workflow）
 - `PATCH /api/v1/clothing-items/:id` - 标签确认/编辑
 - `GET /api/v1/clothing-items` - 列表（支持 tag 过滤）
 - `POST /api/v1/clothing-items/search` - 搜索（使用 finalTags）
+
+### Module 5: DreamO 个性化穿搭生成
+- `POST /api/v1/styled-generations` - 创建生成任务（上传自拍 + 选择衣物 + 场景描述）
+- `GET /api/v1/styled-generations/:id` - 查询生成详情
+- `GET /api/v1/styled-generations` - 分页列出历史生成记录
+- `POST /api/v1/styled-generations/:id/retry` - 重试失败的生成
+- `DELETE /api/v1/styled-generations/:id` - 删除生成记录
 
 ## 快速启动
 
@@ -34,6 +43,14 @@ uvicorn app.main:app --reload --port 8000
 
 # 5. 启动 Celery worker（处理衣物数字化长任务）
 celery -A app.core.celery_app.celery_app worker -Q clothing_pipeline --loglevel=info
+
+# 6. 启动 DreamO 专用 Celery worker（需要单独终端）
+celery -A app.core.celery_app.celery_app worker -Q styled_generation --loglevel=info
+
+# 7. 启动 DreamO 推理服务（需要 GPU，在 DreamO/ 目录下用独立虚拟环境）
+# cd ../DreamO && python -m venv venv && source venv/bin/activate
+# pip install -r requirements.txt
+# uvicorn server:app --port 9000
 ```
 
 API 文档：http://localhost:8000/docs
@@ -49,10 +66,14 @@ docker compose up --build
 这套 compose 会自动完成：
 
 - 启动 PostgreSQL 16
+- 启动 Redis（Celery broker）
 - 等待数据库 ready
 - 自动执行 `alembic upgrade head`
 - 自动准备一个可登录的开发 seed user
 - 启动 FastAPI 服务
+- 启动 Celery clothing_pipeline worker
+- 启动 Celery styled_generation worker
+- 启动 DreamO 推理服务（需要 NVIDIA GPU）
 
 启动后可直接访问：
 

@@ -1221,6 +1221,126 @@ PATCH /users/:id
 
 ---
 
+## 10. Styled Generations (DreamO)
+
+> **New module**: Personalized scene outfit generation using DreamO. Does NOT modify existing clothing-items endpoints.
+
+### 10.1 Create Styled Generation
+```
+POST /styled-generations
+```
+
+**Request Body (multipart/form-data):**
+```
+selfie_image: <file>                     (required, JPEG/PNG, max 10 MB)
+clothing_item_id: "item-uuid"            (required, must have PROCESSED_FRONT)
+scene_prompt: "standing in a cafe..."    (required)
+negative_prompt: "blurry, bad anatomy"   (optional)
+guidance_scale: 4.5                      (optional, default 4.5, range 1.0-10.0)
+seed: -1                                 (optional, -1 = random)
+width: 1024                              (optional, 768-1024)
+height: 1024                             (optional, 768-1024)
+```
+
+**Response (202 Accepted):**
+```json
+{
+  "id": "gen-uuid",
+  "status": "PENDING",
+  "estimatedTime": 120
+}
+```
+
+**Error responses:**
+- `404` - Clothing item not found
+- `409` - Clothing item has not finished processing (no PROCESSED_FRONT image)
+- `413` - Selfie image exceeds size limit
+- `422` - Validation error (invalid UUID, invalid dimensions, not an image)
+- `503` - Processing queue unavailable
+
+### 10.2 Get Styled Generation
+```
+GET /styled-generations/:id
+```
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "gen-uuid",
+    "userId": "user-uuid",
+    "sourceClothingItemId": "item-uuid",
+    "selfieOriginalUrl": "/files/.../selfie_original.jpg",
+    "selfieProcessedUrl": "/files/.../selfie_processed.png",
+    "scenePrompt": "standing in a coffee shop, warm light",
+    "negativePrompt": null,
+    "dreamoVersion": "v1.1",
+    "status": "SUCCEEDED",
+    "progress": 100,
+    "resultImageUrl": "/files/.../result.png",
+    "failureReason": null,
+    "guidanceScale": 4.5,
+    "seed": 42,
+    "width": 1024,
+    "height": 1024,
+    "createdAt": "2026-04-13T10:00:00Z",
+    "updatedAt": "2026-04-13T10:02:30Z"
+  }
+}
+```
+
+**Status values:** `PENDING` | `PROCESSING` | `SUCCEEDED` | `FAILED`
+
+### 10.3 List Styled Generations
+```
+GET /styled-generations?page=1&limit=20
+```
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "items": [ /* Array of StyledGeneration objects */ ],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 5,
+      "totalPages": 1
+    }
+  }
+}
+```
+
+### 10.4 Retry Failed Generation
+```
+POST /styled-generations/:id/retry
+```
+
+Only allowed when status is `FAILED`.
+
+**Response (202):**
+```json
+{
+  "id": "gen-uuid",
+  "status": "PENDING",
+  "estimatedTime": 120
+}
+```
+
+### 10.5 Delete Styled Generation
+```
+DELETE /styled-generations/:id
+```
+
+Cannot delete while status is `PENDING` or `PROCESSING` (returns 409).
+
+**Response (204):**
+No content.
+
+---
+
 ## Error Codes
 
 ### Authentication Errors

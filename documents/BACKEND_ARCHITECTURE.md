@@ -391,8 +391,53 @@ CREATE TRIGGER update_outfits_updated_at BEFORE UPDATE ON outfits
 
 ## Processing Pipeline Execution
 
+### Clothing Digitization Pipeline (Hunyuan3D)
+
 - API writes are short-lived: store original uploads, create `clothing_items`, create `processing_tasks(PENDING)`, then enqueue Celery.
 - Celery workers claim a task atomically before moving it to `PROCESSING`.
 - Worker failures mark the task `FAILED`, keep original uploads, and remove all derived database records and files.
 - Retry creates a new task row instead of mutating the failed task, preserving audit history.
+- Queue: `clothing_pipeline`
+
+### Styled Generation Pipeline (DreamO)
+
+A separate async pipeline for personalized fashion photo generation:
+
+- **Endpoint**: `POST /api/v1/styled-generations` creates a `StyledGeneration` record and enqueues to the `styled_generation` Celery queue.
+- **Queue**: `styled_generation` (separate from `clothing_pipeline`)
+- **Worker**: `celery-styled-gen` Docker service
+- **Pipeline steps**:
+  1. Validate garment has PROCESSED_FRONT image (from Hunyuan3D pipeline)
+  2. Download and preprocess selfie (face detection, background removal, white bg composite)
+  3. Build composite prompt from templates + user scene description
+  4. Call isolated DreamO HTTP service (port 9000) for inference
+  5. Store result image and update status to SUCCEEDED
+- **DreamO** runs as a separate Docker service with its own Python environment (torch, diffusers, transformers pinned to specific versions).
+- Retry resets the record to PENDING and re-dispatches.
+
+### StyledGeneration Entity
+
+```sql
+CREATE TABLE styled_generations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    source_clothing_item_id UUID REFERENCES clothing_items(id) ON DELETE SET NULL,
+    selfie_original_path TEXT NOT NULL,
+    selfie_processed_path TEXT,
+    scene_prompt TEXT NOT NULL,
+    negative_prompt TEXT,
+    dreamo_version VARCHAR(10) NOT NULL DEFAULT 'v1.1',
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING'
+        CHECK (status IN ('PENDING','PROCESSING','SUCCEEDED','FAILED')),
+    progress INTEGER NOT NULL DEFAULT 0 CHECK (progress BETWEEN 0 AND 100),
+    result_image_path TEXT,
+    failure_reason TEXT,
+    guidance_scale FLOAT NOT NULL DEFAULT 4.5,
+    seed INTEGER NOT NULL DEFAULT -1,
+    width INTEGER NOT NULL DEFAULT 1024,
+    height INTEGER NOT NULL DEFAULT 1024,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+);
+```
 

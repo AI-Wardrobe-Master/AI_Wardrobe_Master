@@ -16,4 +16,8 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
     task_acks_late=True,
     task_track_started=True,
+    task_routes={
+        "clothing.process_pipeline": {"queue": "clothing_pipeline"},
+        "styled_generation.run": {"queue": "styled_generation"},
+    },
 )

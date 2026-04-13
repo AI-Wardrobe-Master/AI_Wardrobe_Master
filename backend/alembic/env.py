@@ -8,6 +8,7 @@ from app.db.base import Base
 from app.models.user import User  # noqa: F401
 from app.models.clothing_item import ClothingItem, Image, Model3D, ProcessingTask  # noqa: F401
 from app.models.wardrobe import Wardrobe, WardrobeItem  # noqa: F401
+from app.models.styled_generation import StyledGeneration  # noqa: F401
 
 config = context.config
 

@@ -58,6 +58,19 @@ class Settings(BaseSettings):
     PROCESSING_TASK_LEASE_SECONDS: int = 900
     MAX_UPLOAD_SIZE_BYTES: int = 10 * 1024 * 1024
 
+    # DreamO Service
+    DREAMO_SERVICE_URL: str = "http://localhost:9000"
+    DREAMO_GENERATE_TIMEOUT_SECONDS: float = 300.0
+    DREAMO_DEFAULT_VERSION: str = "v1.1"
+    DREAMO_DEFAULT_GUIDANCE_SCALE: float = 4.5
+    DREAMO_DEFAULT_STEPS: int = 12
+    DREAMO_DEFAULT_WIDTH: int = 1024
+    DREAMO_DEFAULT_HEIGHT: int = 1024
+
+    # Selfie preprocessing
+    SELFIE_MAX_UPLOAD_SIZE_BYTES: int = 10 * 1024 * 1024
+    SELFIE_TARGET_RESOLUTION: int = 1024
+
     BACKEND_CORS_ORIGINS: List[str] = ["*"]
 
     class Config:
