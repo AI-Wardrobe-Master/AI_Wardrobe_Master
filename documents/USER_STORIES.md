@@ -183,6 +183,20 @@ Content creators who upload clothing assets, create outfit collections, and shar
 
 ## Module 4: Platform Content and Outfit Collections
 
+### US-4.0: Capability-Driven Unified Role Experience
+**As a** signed-in user  
+**I want** the app to expose creator capabilities based on my current status  
+**So that** the same shell can support consumers, creators under review, active creators, and restricted creators without splitting the product
+
+**Acceptance Criteria:**
+- App keeps a unified `Wardrobe / Discover / Outfit / Profile` shell for all users
+- User state is driven by capability and creator profile status, not only by a coarse `type`
+- Profile shows the correct creator state card: not enabled, pending, active, or suspended
+- Discover and Profile reveal or disable creator entry points based on capability
+- Frontend can derive display state from a lightweight user context endpoint
+
+---
+
 ### US-4.1: Creator Upload
 **As a** Creator  
 **I want to** upload clothing items to the platform  
@@ -238,42 +252,43 @@ Content creators who upload clothing assets, create outfit collections, and shar
 
 ## Module 5: Outfit Visualization
 
-### US-5.1: Select Items for Visualization
+### US-5.1: Start Outfit Preview Task
 **As a** Consumer  
-**I want to** select clothing items from both my owned and virtual wardrobes  
-**So that** I can create outfit combinations for preview
+**I want to** submit a selfie and selected clothing items for outfit preview  
+**So that** I can generate a preview before deciding whether to save the look
 
 **Acceptance Criteria:**
 - User can browse both owned and virtual wardrobes
-- User can select multiple items (top, bottom, shoes, accessories)
-- Selected items are added to visualization canvas
-- User can drag and drop items onto virtual model/canvas
+- User can submit one selfie plus one item or a supported full outfit combination
+- Frontend validates supported combinations before calling backend
+- Preview request is created as an asynchronous task
+- The task keeps references to the selected wardrobe items instead of detached uploads
 
 ---
 
-### US-5.2: 2.5D Outfit Preview
+### US-5.2: Track Outfit Preview Progress
 **As a** Consumer  
-**I want to** see a 2.5D preview of my outfit combination  
-**So that** I can visualize how items look together before wearing them
+**I want to** see the status of my preview generation request  
+**So that** I know whether the preview is pending, processing, completed, or failed
 
 **Acceptance Criteria:**
-- System renders selected items on virtual model/canvas
-- Items are layered appropriately (underwear < shirt < jacket)
-- User can adjust item positioning and layering
-- Preview updates in real-time as items are added/removed
+- System returns preview task status and timestamps
+- Completed tasks expose a generated preview image
+- Failed tasks expose a readable error message
+- User can review past preview tasks from the app
 
 ---
 
-### US-5.3: Save Outfit
+### US-5.3: Save Successful Preview as Outfit
 **As a** Consumer  
-**I want to** save my outfit combinations with custom names  
+**I want to** save a successful preview as an outfit  
 **So that** I can quickly access my favorite looks later
 
 **Acceptance Criteria:**
-- User can save current outfit with custom name
-- Saved outfit includes all selected items and their positions
-- User can view list of all saved outfits
-- User can load saved outfit to canvas for viewing/editing
+- Only completed preview tasks can be saved as outfits
+- Saved outfit keeps a reference to the source preview task
+- Saved outfit stores the final preview image and related clothing items
+- Saved outfit can optionally be named by the user
 
 ---
 
@@ -287,6 +302,7 @@ Content creators who upload clothing assets, create outfit collections, and shar
 - User can rename saved outfit
 - User can delete saved outfit
 - Deleting outfit doesn't delete the clothing items
+- Saved outfit management is separate from preview task execution
 
 ---
 

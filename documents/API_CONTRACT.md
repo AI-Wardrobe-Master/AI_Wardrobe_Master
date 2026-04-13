@@ -160,6 +160,13 @@ description: "Comfortable cotton t-shirt"
 
 **Current implementation note:** `customTags` / `tags` are not accepted during creation in the current backend implementation. User-defined tags are added later via `PATCH /clothing-items/:id`.
 
+**Validation Rules:**
+- `front_image` is required and must be `image/jpeg`, `image/png`, or `image/webp`
+- Empty files are rejected
+- Backend validates MIME type, extension consistency, and actual decodability
+- Image dimensions must stay within the backend-supported range
+- `name` and `description` are optional, but must satisfy backend length checks when present
+
 **Response (202 Accepted):**
 
 > Returns 202 because the request only stores the originals, creates a processing task, and enqueues background work. Client should poll the processing-status endpoint.
@@ -234,13 +241,33 @@ GET /clothing-items/:id
 ```json
 {
   "success": true,
-  "data": { /* ClothingItem object */ }
+  "data": {
+    "id": "item-002",
+    "userId": "user-123",
+    "source": "IMPORTED",
+    "provenance": {
+      "sourceType": "IMPORTED",
+      "originClothingItemId": "creator-item-456",
+      "importHistoryId": "import-001",
+      "creator": {
+        "id": "creator-456",
+        "displayName": "FashionGuru"
+      },
+      "cardPack": {
+        "id": "pack-789",
+        "name": "Summer Essentials 2024"
+      },
+      "importedAt": "2026-04-01T08:00:00Z"
+    }
+  }
 }
 ```
 
 **Current implementation notes:**
 - The detail response now includes `customTags`.
 - Automatic prediction currently only fills `category`. `season`, `style`, and `audience` are expected to be user-added later through `PATCH /clothing-items/:id`.
+- For owned items, `provenance` is `null`.
+- For imported items, `provenance` includes creator and pack summary data assembled from the imported item's stored origin fields.
 
 ### 2.3 Update Clothing Item (Including Tag Confirmation)
 ```
@@ -427,9 +454,22 @@ GET /wardrobes/:id
 ```json
 {
   "success": true,
-  "data": { /* Wardrobe object */ }
+  "data": {
+    "id": "wardrobe-virtual-001",
+    "userId": "user-123",
+    "name": "Virtual Wardrobe",
+    "type": "VIRTUAL",
+    "description": "Imported creator content",
+    "isSystemManaged": true,
+    "systemKey": "DEFAULT_VIRTUAL_IMPORTED",
+    "itemCount": 23,
+    "createdAt": "2026-04-01T08:00:00Z",
+    "updatedAt": "2026-04-01T08:00:00Z"
+  }
 }
 ```
+
+**Current implementation note:** `isSystemManaged` and `systemKey` are read-only system fields on virtual wardrobes. Regular wardrobes should return `false` and `null` respectively.
 
 ### 3.3 List User's Wardrobes
 ```
@@ -448,6 +488,8 @@ GET /wardrobes
   }
 }
 ```
+
+**Current implementation note:** every wardrobe object in list responses includes `isSystemManaged` and `systemKey`. Public and consumer-facing clients should treat those fields as read-only.
 
 ### 3.4 Update Wardrobe
 ```
@@ -531,36 +573,113 @@ GET /wardrobes/:id/items
 }
 ```
 
+### 3.9 Get System Virtual Wardrobe
+```
+GET /wardrobes/system/virtual
+```
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "wardrobe-virtual-001",
+    "userId": "user-123",
+    "name": "Virtual Wardrobe",
+    "type": "VIRTUAL",
+    "isSystemManaged": true,
+    "systemKey": "DEFAULT_VIRTUAL_IMPORTED",
+    "itemCount": 23,
+    "createdAt": "2026-04-01T08:00:00Z",
+    "updatedAt": "2026-04-01T08:00:00Z"
+  }
+}
+```
+
+**Behavior:**
+- Returns the current user's imported-content wardrobe
+- Creates the virtual wardrobe on first access if it does not already exist
+- Import flows must use the same backend service; frontend does not need to pre-create this resource
+
 ---
 
-## 4. Outfits
+## 4. Outfits And Outfit Preview
 
-### 4.1 Create Outfit
+### 4.1 Create Outfit Preview Task
 ```
-POST /outfits
+POST /outfit-preview-tasks
+```
+
+**Request Body (multipart/form-data):**
+```text
+person_image: <file>
+person_view_type: FULL_BODY | UPPER_BODY
+clothing_item_ids[]: item-001, item-002
+garment_categories[]: TOP, BOTTOM
+```
+
+**Rules:**
+- `person_image` is the only uploaded person photo
+- Clothing inputs must reference existing user-accessible clothing items
+- `clothing_item_ids[]` and `garment_categories[]` must be aligned one-to-one
+- Backend performs light validation only; complex category inference stays in frontend
+
+**Response (202):**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "preview-task-001",
+    "status": "PENDING",
+    "clothingItemIds": ["item-001", "item-002"],
+    "personViewType": "FULL_BODY",
+    "garmentCategories": ["TOP", "BOTTOM"],
+    "createdAt": "2026-04-02T12:00:00Z"
+  }
+}
+```
+
+### 4.2 Get Outfit Preview Task
+```
+GET /outfit-preview-tasks/:id
+```
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "preview-task-001",
+    "status": "COMPLETED",
+    "previewImageUrl": "/files/outfit-previews/user-123/preview-task-001/result.png",
+    "errorCode": null,
+    "errorMessage": null,
+    "createdAt": "2026-04-02T12:00:00Z",
+    "startedAt": "2026-04-02T12:00:03Z",
+    "completedAt": "2026-04-02T12:00:21Z"
+  }
+}
+```
+
+### 4.3 List My Outfit Preview Tasks
+```
+GET /outfit-preview-tasks
+```
+
+**Query Parameters:**
+- `page` (optional, default: 1)
+- `limit` (optional, default: 20)
+- `status` (optional): `PENDING` | `PROCESSING` | `COMPLETED` | `FAILED`
+
+### 4.4 Save Successful Preview As Outfit
+```
+POST /outfit-preview-tasks/:id/save
 ```
 
 **Request Body:**
 ```json
 {
-  "name": "Casual Friday",
-  "description": "Comfortable office look",
-  "items": [
-    {
-      "clothingItemId": "item-001",
-      "layer": 0,
-      "position": { "x": 0.5, "y": 0.3 },
-      "scale": 1.0,
-      "rotation": 0
-    },
-    {
-      "clothingItemId": "item-002",
-      "layer": 1,
-      "position": { "x": 0.5, "y": 0.6 },
-      "scale": 1.0,
-      "rotation": 0
-    }
-  ]
+  "name": "Casual Friday"
 }
 ```
 
@@ -571,30 +690,25 @@ POST /outfits
   "data": {
     "id": "outfit-001",
     "userId": "user-123",
+    "previewTaskId": "preview-task-001",
     "name": "Casual Friday",
-    "description": "Comfortable office look",
-    "thumbnailUrl": "/images/outfit-001-thumb.jpg",
-    "items": [ /* Array of OutfitItem objects */ ],
-    "createdAt": "2024-01-15T10:30:00Z",
-    "updatedAt": "2024-01-15T10:30:00Z"
+    "previewImageUrl": "/files/outfit-previews/user-123/preview-task-001/result.png",
+    "items": [
+      { "clothingItemId": "item-001" },
+      { "clothingItemId": "item-002" }
+    ],
+    "createdAt": "2026-04-02T12:01:00Z",
+    "updatedAt": "2026-04-02T12:01:00Z"
   }
 }
 ```
 
-### 4.2 Get Outfit
+### 4.5 Get Outfit
 ```
 GET /outfits/:id
 ```
 
-**Response (200):**
-```json
-{
-  "success": true,
-  "data": { /* Outfit object with populated ClothingItem details */ }
-}
-```
-
-### 4.3 List User's Outfits
+### 4.6 List User's Outfits
 ```
 GET /outfits
 ```
@@ -603,18 +717,7 @@ GET /outfits
 - `page` (optional, default: 1)
 - `limit` (optional, default: 20)
 
-**Response (200):**
-```json
-{
-  "success": true,
-  "data": {
-    "outfits": [ /* Array of Outfit objects */ ],
-    "pagination": { /* pagination info */ }
-  }
-}
-```
-
-### 4.4 Update Outfit
+### 4.7 Update Outfit Metadata
 ```
 PATCH /outfits/:id
 ```
@@ -622,41 +725,13 @@ PATCH /outfits/:id
 **Request Body:**
 ```json
 {
-  "name": "Updated Name",
-  "description": "Updated description",
-  "items": [ /* Updated OutfitItem array */ ]
+  "name": "Updated Name"
 }
 ```
 
-**Response (200):**
-```json
-{
-  "success": true,
-  "data": { /* Updated Outfit object */ }
-}
-```
-
-### 4.5 Delete Outfit
+### 4.8 Delete Outfit
 ```
 DELETE /outfits/:id
-```
-
-**Response (204):**
-No content
-
-### 4.6 Generate Outfit Thumbnail
-```
-POST /outfits/:id/thumbnail
-```
-
-**Response (200):**
-```json
-{
-  "success": true,
-  "data": {
-    "thumbnailUrl": "/images/outfit-001-thumb.jpg"
-  }
-}
 ```
 
 ---
@@ -899,9 +974,16 @@ POST /imports/card-pack
 **Request Body:**
 ```json
 {
-  "cardPackId": "pack-001"
+  "cardPackId": "pack-001",
+  "requestId": "import-user-123-pack-001-20260402"
 }
 ```
+
+**Idempotency behavior:**
+- The backend deduplicates by `(userId, requestId)`
+- Repeating the same `requestId` for the same `cardPackId` must return the original import record or current import status instead of creating a new import
+- Repeating the same `requestId` for a different `cardPackId` should be treated as a conflict
+- Clients should send `requestId` for every import call
 
 **Response (201):**
 ```json
@@ -910,6 +992,7 @@ POST /imports/card-pack
   "data": {
     "importId": "import-001",
     "cardPackId": "pack-001",
+    "status": "COMPLETED",
     "itemsImported": 3,
     "importedItems": [
       { /* ClothingItem object with provenance */ }
@@ -942,6 +1025,7 @@ GET /imports/history
         "cardPackName": "Summer Essentials 2024",
         "creatorId": "creator-456",
         "creatorName": "FashionGuru",
+        "status": "COMPLETED",
         "itemCount": 3,
         "importedAt": "2024-01-15T10:30:00Z"
       }
@@ -1006,7 +1090,31 @@ GET /creators
 }
 ```
 
-### 7.3 Update Creator Profile
+### 7.3 Get Creator Items
+```
+GET /creators/:creatorId/items
+```
+
+**Query Parameters:**
+- `page` (optional, default: 1)
+- `limit` (optional, default: 20)
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "items": [ /* Array of Creator Item objects */ ],
+    "pagination": { /* pagination info */ }
+  }
+}
+```
+
+**Visibility rules:**
+- Public callers only receive items where `catalogVisibility != PRIVATE`
+- The creator themselves can see their full catalog, including private items
+
+### 7.4 Update Creator Profile
 ```
 PATCH /creators/:id
 ```
@@ -1028,6 +1136,82 @@ PATCH /creators/:id
   "data": { /* Updated Creator object */ }
 }
 ```
+
+### 7.5 Get My Creator Profile
+```
+GET /creators/me/profile
+```
+
+**Purpose:**
+- Returns the authenticated creator's full editable profile
+- Used by `Profile -> Creator Center`
+
+### 7.6 Get My Creator Dashboard
+```
+GET /creators/me/dashboard
+```
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "packCount": 12,
+    "publishedPackCount": 7,
+    "importCount": 134,
+    "draftCount": 5
+  }
+}
+```
+
+### 7.7 Create Creator Item
+```
+POST /creator-items
+```
+
+**Request Body:**
+- Same multipart fields as `POST /clothing-items`
+- Optional `catalogVisibility`: `PRIVATE` | `PACK_ONLY` | `PUBLIC`
+
+**Response (202):**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "creator-item-001",
+    "processingTaskId": "task-001",
+    "status": "PENDING",
+    "catalogVisibility": "PACK_ONLY",
+    "createdAt": "2026-04-01T08:00:00Z"
+  }
+}
+```
+
+### 7.8 Get Creator Item
+```
+GET /creator-items/:id
+```
+
+### 7.9 Update Creator Item
+```
+PATCH /creator-items/:id
+```
+
+**Allowed Fields:**
+- `name`
+- `description`
+- `finalTags`
+- `customTags`
+- `catalogVisibility`
+
+### 7.10 Delete Creator Item
+```
+DELETE /creator-items/:id
+```
+
+**Conflict Note:**
+- If the item belongs to a published pack, backend returns `409`
+- Frontend should surface the backend message directly instead of collapsing it into a retry toast
 
 ---
 
@@ -1290,6 +1474,37 @@ PATCH /users/:id
 {
   "success": true,
   "data": { /* Updated User object */ }
+}
+```
+
+### 10.3 Get Current User Context
+```
+GET /me
+```
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "user-123",
+    "username": "alice",
+    "email": "alice@example.com",
+    "type": "CONSUMER",
+    "creatorProfile": {
+      "exists": true,
+      "status": "ACTIVE",
+      "displayName": "Alice Looks",
+      "brandName": "Alice Studio"
+    },
+    "capabilities": {
+      "canApplyForCreator": false,
+      "canPublishItems": true,
+      "canCreateCardPacks": true,
+      "canEditCreatorProfile": true,
+      "canViewCreatorCenter": true
+    }
+  }
 }
 ```
 
