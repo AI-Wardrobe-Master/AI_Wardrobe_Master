@@ -44,10 +44,13 @@ backend/
 │   │       ├── auth.py              # Authentication endpoints
 │   │       ├── clothing.py          # Clothing item endpoints
 │   │       ├── wardrobe.py          # Wardrobe endpoints
-│   │       ├── outfit.py            # Outfit endpoints
-│   │       ├── card_pack.py         # Card pack endpoints
-│   │       ├── creator.py           # Creator endpoints
-│   │       ├── import_ops.py        # Import operations
+│   │       ├── me.py                # Unified user context endpoint
+│   │       ├── creators.py          # Creator profile endpoints
+│   │       ├── creator_items.py     # Creator catalog item endpoints
+│   │       ├── card_packs.py        # Card pack endpoints
+│   │       ├── imports.py           # Import operations
+│   │       ├── outfits.py           # Saved outfit endpoints
+│   │       ├── outfit_preview.py    # Outfit preview task endpoints
 │   │       └── image.py             # Image processing endpoints
 │   │
 │   ├── models/                      # SQLAlchemy models
@@ -55,8 +58,11 @@ backend/
 │   │   ├── user.py
 │   │   ├── clothing_item.py
 │   │   ├── wardrobe.py
+│   │   ├── creator.py
 │   │   ├── outfit.py
 │   │   ├── card_pack.py
+│   │   ├── import_history.py
+│   │   ├── outfit_preview_task.py
 │   │   └── associations.py          # Many-to-many tables
 │   │
 │   ├── schemas/                     # Pydantic schemas
@@ -64,15 +70,23 @@ backend/
 │   │   ├── user.py
 │   │   ├── clothing_item.py
 │   │   ├── wardrobe.py
+│   │   ├── me.py
+│   │   ├── creator.py
 │   │   ├── outfit.py
-│   │   └── card_pack.py
+│   │   ├── card_pack.py
+│   │   ├── import_history.py
+│   │   └── outfit_preview.py
 │   │
 │   ├── crud/                        # CRUD operations
 │   │   ├── __init__.py
 │   │   ├── base.py                  # Base CRUD class
 │   │   ├── clothing.py
 │   │   ├── wardrobe.py
-│   │   └── outfit.py
+│   │   ├── creator.py
+│   │   ├── card_pack.py
+│   │   ├── import_history.py
+│   │   ├── outfit.py
+│   │   └── outfit_preview.py
 │   │
 │   ├── services/                    # Business logic services
 │   │   ├── __init__.py
@@ -80,7 +94,12 @@ backend/
 │   │   ├── storage_service.py       # S3/MinIO/Local storage
 │   │   ├── image_service.py         # Image processing
 │   │   ├── ai_service.py            # AI classification
-│   │   └── search_service.py        # Search functionality
+│   │   ├── search_service.py        # Search functionality
+│   │   ├── upload_validation_service.py
+│   │   ├── virtual_wardrobe_service.py
+│   │   ├── card_pack_import_service.py
+│   │   ├── outfit_service.py
+│   │   └── outfit_preview_service.py
 │   │
 │   ├── core/                        # Core utilities
 │   │   ├── __init__.py
@@ -116,6 +135,62 @@ backend/
 ```
 
 ---
+
+## Missing Feature Alignment
+
+The archived `backend_missing_feature_design` set has been absorbed into this document. When any older examples below conflict with this section, **this section is authoritative**.
+
+### Route and Module Boundaries
+
+- `me.py` returns unified user context plus creator capability flags for Flutter shell gating.
+- `creator_items.py` reuses the clothing pipeline but enforces creator ownership and catalog visibility.
+- `creators.py` handles public creator browse plus authenticated self-service profile and dashboard access.
+- `card_packs.py` owns draft/publish/archive/delete transitions and public share reads.
+- `imports.py` is a transactional route surface and must delegate write orchestration to a service.
+- `outfit_preview.py` is isolated from clothing processing and owns preview task creation, polling, and save-to-outfit.
+- `outfits.py` only manages saved outfit metadata and retrieval. It does not behave like a generation task controller.
+
+### Data Model Overrides
+
+- Imported-item provenance is stored on `clothing_items` via origin fields, not in a standalone `provenance` table.
+- `wardrobes` must support `is_system_managed` and `system_key`, with `DEFAULT_VIRTUAL_IMPORTED` reserved for the auto-created imported-content wardrobe.
+- Creator business data should live in `creator_profiles` keyed by `user_id`, with explicit `PENDING / ACTIVE / SUSPENDED` lifecycle state.
+- Import flow requires `import_histories` plus `import_history_items` so that cloned imported items can be traced back to both pack and source item.
+- Outfit preview is a separate domain modeled by `outfit_preview_tasks` and `outfit_preview_task_items`.
+- `outfits` represent confirmed saved results and may reference `preview_task_id`; they should not also serve as asynchronous processing records.
+
+### Service Boundaries
+
+- `upload_validation_service.py` performs MIME, extension, decodability, and dimension checks before accepting uploads.
+- `virtual_wardrobe_service.py` exposes `get_or_create_virtual_wardrobe(user_id)` and is used both by API convenience endpoints and import orchestration.
+- `card_pack_import_service.py` owns clone creation, provenance population, virtual wardrobe insertion, and import history writes in a single transaction.
+- `outfit_service.py` manages saved outfit reads and metadata updates.
+- `outfit_preview_service.py` owns prompt selection, provider invocation, result persistence, and task state updates.
+
+### Ownership And Transaction Rules
+
+- Public visibility filters such as `PUBLISHED` and `catalog_visibility != PRIVATE` must be enforced in the query layer, not trimmed after object loading.
+- Write paths must query by both resource id and owner id, for example `get_owned_card_pack`, `get_owned_creator_item`, and `get_owned_outfit`.
+- CRUD helpers may continue to serve simple reads, but transactional writes for imports, publish/archive transitions, and preview save flows must commit at the service layer.
+- State-changing endpoints should prefer row-level locking or equivalent transactional guards and return `409` for domain conflicts.
+
+### User Id And Ownership Dependencies
+
+- `get_current_creator_user_id` should build on `get_current_user_id` and then verify that a creator profile exists and is `ACTIVE`.
+- Creator-only routes must depend on `get_current_creator_user_id`, not on a loose `user_type == CREATOR` check.
+- Ownership-safe helpers should exist for every mutating resource boundary:
+  - `get_owned_creator_profile(db, *, creator_id, current_user_id)`
+  - `get_owned_creator_item(db, *, item_id, creator_id)`
+  - `get_owned_card_pack(db, *, pack_id, creator_id)`
+  - `get_owned_outfit(db, *, outfit_id, user_id)`
+- These helpers should return `None` when ownership fails so routes can map the result to `404` without leaking resource existence.
+- Transactional flows must load resources through ownership-safe helpers before any state transition, then commit in the service layer after all validations pass.
+
+### Async Execution Split
+
+- `processing_tasks` remains the async pipeline for clothing asset preparation.
+- `outfit_preview_tasks` is a distinct queue / worker domain for generated try-on previews.
+- Provider-specific prompt selection and image ordering belong in backend services; frontend submits structured metadata and referenced clothing item ids only.
 
 ## Database Schema (PostgreSQL)
 
@@ -197,17 +272,8 @@ CREATE TABLE images (
 
 CREATE INDEX idx_images_clothing ON images(clothing_item_id);
 
--- provenance table
-CREATE TABLE provenance (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    clothing_item_id UUID UNIQUE NOT NULL REFERENCES clothing_items(id) ON DELETE CASCADE,
-    creator_id UUID NOT NULL REFERENCES users(id),
-    creator_name VARCHAR(100) NOT NULL,
-    card_pack_id UUID,
-    card_pack_name VARCHAR(200),
-    imported_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    import_source TEXT
-);
+-- provenance is no longer modeled as a standalone table.
+-- Imported-item origin fields now live on clothing_items and import history tables.
 
 -- wardrobes table
 CREATE TABLE wardrobes (

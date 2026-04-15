@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     ROBOFLOW_IMAGE_INPUT_NAME: str = "image"
     ROBOFLOW_TIMEOUT_SECONDS: float = 30.0
 
+    # DashScope outfit preview
+    DASHSCOPE_API_KEY: Optional[str] = None
+
     # S3 / MinIO
     S3_ENDPOINT: Optional[str] = None
     S3_ACCESS_KEY: Optional[str] = None

@@ -14,12 +14,34 @@ documents/
 ├── BACKEND_ARCHITECTURE.md      # 后端架构设计 (FastAPI + PostgreSQL)
 ├── FLUTTER_ARCHITECTURE.md      # Flutter 架构设计
 ├── FLUTTER_GUIDE_ZH.md          # Flutter 使用手册（中文）
-└── FLUTTER_GUIDE_EN.md          # Flutter Quick Guide (English)
+├── FLUTTER_GUIDE_EN.md          # Flutter Quick Guide (English)
+└── archive/
+    └── backend_missing_feature_design/ # 已吸收的专项草稿与流程图归档
 ```
 
 ---
 
 ## 文档说明
+
+### 0.1 archive/backend_missing_feature_design/ - 专项设计归档
+
+**用途：** 保留缺失能力专项设计、流程图和历史草稿，供追溯决策使用
+
+**当前规则：**
+- 顶层文档是唯一持续维护的规范入口
+- `archive/backend_missing_feature_design/` 中的文件不再作为主规范维护
+- 已吸收内容按五个维度分流到以下文档：
+  - 需求：`USER_STORIES.md`
+  - 数据：`DATA_MODEL.md`
+  - API：`API_CONTRACT.md`
+  - 后端实现：`BACKEND_ARCHITECTURE.md`
+  - Flutter IA：`FLUTTER_ARCHITECTURE.md`
+
+**归档内容：**
+- 平台内容缺失能力专题设计
+- Outfit Preview 专项后端设计
+- Unified Role 前端 IA 草稿
+- 相关 HTML 流程图和实现草案
 
 ### 0. TECH_STACK.md - 技术栈总览 ⭐ 新增
 
@@ -75,7 +97,7 @@ documents/
 **用途：** 定义数据结构和关系
 
 **内容：**
-- 8 个核心实体的完整定义
+- 8 个核心实体 + 3 个支持性实体/关联表的完整定义
 - 使用 Freezed 的 Dart 类定义
 - 实体关系图（ERD）
 - SQLite 数据库表结构
@@ -96,11 +118,15 @@ documents/
 6. `Creator` - 创作者信息
 7. `CardPack` - 内容包
 8. `ImportHistory` - 导入历史
+9. `OutfitPreviewTask` - 搭配预览任务
+10. `CardPackItem` - 内容包明细关联
+11. `ImportHistoryItem` - 导入历史明细关联
 
 **关键特性：**
 - 来源隔离（Owned vs Imported）
 - 溯源追踪（Provenance）
 - 多对多关系（衣柜-衣物）
+- 预览任务与最终搭配分离
 - 引用完整性保护
 
 ---
@@ -129,10 +155,11 @@ documents/
 4. 搭配管理
 5. 内容包管理
 6. 导入操作
-7. 创作者管理
-8. 图像处理
-9. AI 分类
-10. 用户资料
+7. 创作者管理与创作者内容
+8. 搭配预览任务
+9. 图像处理
+10. AI 分类
+11. 用户资料与当前用户上下文
 
 **示例端点：**
 ```
@@ -141,6 +168,8 @@ GET    /api/v1/clothing-items          # 列表查询
 POST   /api/v1/clothing-items/search   # 搜索
 POST   /api/v1/wardrobes/:id/items     # 添加到衣柜
 POST   /api/v1/imports/card-pack       # 导入内容包
+GET    /api/v1/creators/:creatorId/items  # 公开创作者内容
+GET    /api/v1/me                        # 当前用户上下文
 ```
 
 ---

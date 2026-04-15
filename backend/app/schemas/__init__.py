@@ -4,6 +4,16 @@ from app.schemas.styled_generation import (
     StyledGenerationCreateResponse,
     StyledGenerationResponse,
 )
+from app.schemas.outfit_preview import (
+    OutfitDetail,
+    OutfitItemSummary,
+    OutfitPreviewSaveResponse,
+    OutfitPreviewTaskCreateResponse,
+    OutfitPreviewTaskCreateResponseData,
+    OutfitPreviewTaskDetail,
+    OutfitPreviewTaskListItem,
+    OutfitPreviewTaskListResponse,
+)
 
 __all__ = [
     "Tag",
@@ -13,4 +23,12 @@ __all__ = [
     "ClassifyResponse",
     "StyledGenerationCreateResponse",
     "StyledGenerationResponse",
+    "OutfitPreviewTaskCreateResponseData",
+    "OutfitPreviewTaskCreateResponse",
+    "OutfitPreviewTaskDetail",
+    "OutfitPreviewTaskListItem",
+    "OutfitPreviewTaskListResponse",
+    "OutfitPreviewSaveResponse",
+    "OutfitDetail",
+    "OutfitItemSummary",
 ]

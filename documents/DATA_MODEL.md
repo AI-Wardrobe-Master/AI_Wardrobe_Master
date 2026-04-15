@@ -159,16 +159,38 @@ class ImageSet with _$ImageSet {
 @freezed
 class Provenance with _$Provenance {
   const factory Provenance({
-    required String creatorId,
-    required String creatorName,
-    String? cardPackId,
-    String? cardPackName,
+    required String sourceType,
+    required String originClothingItemId,
+    required String importHistoryId,
+    required ProvenanceCreator creator,
+    ProvenanceCardPack? cardPack,
     required DateTime importedAt,
-    String? importSource,
   }) = _Provenance;
 
   factory Provenance.fromJson(Map<String, dynamic> json) =>
       _$ProvenanceFromJson(json);
+}
+
+@freezed
+class ProvenanceCreator with _$ProvenanceCreator {
+  const factory ProvenanceCreator({
+    required String id,
+    required String displayName,
+  }) = _ProvenanceCreator;
+
+  factory ProvenanceCreator.fromJson(Map<String, dynamic> json) =>
+      _$ProvenanceCreatorFromJson(json);
+}
+
+@freezed
+class ProvenanceCardPack with _$ProvenanceCardPack {
+  const factory ProvenanceCardPack({
+    required String id,
+    required String name,
+  }) = _ProvenanceCardPack;
+
+  factory ProvenanceCardPack.fromJson(Map<String, dynamic> json) =>
+      _$ProvenanceCardPackFromJson(json);
 }
 
 enum ItemSource {
@@ -339,6 +361,14 @@ enum TargetAudience {
 - JSONB GIN Index: `final_tags` for fast tag-based search
 - JSONB GIN Index: `predicted_tags` for analytics
 
+**Backend persistence fields for `clothing_items`:**
+- `catalog_visibility`: `PRIVATE` / `PACK_ONLY` / `PUBLIC` for creator catalog exposure
+- `origin_clothing_item_id`: source creator item for imported copies
+- `origin_creator_id`: source creator for imported copies
+- `origin_card_pack_id`: source pack for imported copies
+- `origin_import_history_id`: import batch reference for imported copies
+- `imported_at`: import completion timestamp for imported copies
+
 ---
 
 ### 3. Wardrobe
@@ -352,6 +382,8 @@ class Wardrobe {
   String name;                  // Wardrobe name (e.g., "Summer", "Work")
   WardrobeType type;            // REGULAR | VIRTUAL
   String? description;          // Optional description
+  bool isSystemManaged;         // Virtual wardrobe is system-managed
+  String? systemKey;            // DEFAULT_VIRTUAL_IMPORTED for system wardrobe
   int itemCount;                // Cached count of items
   DateTime createdAt;
   DateTime updatedAt;
@@ -367,6 +399,7 @@ enum WardrobeType {
 - Primary: `id`
 - Foreign Key: `userId`
 - Composite: `(userId, type)` for separating regular/virtual
+- Unique: `(userId, systemKey)` when `systemKey` is not null
 
 ---
 
@@ -394,38 +427,31 @@ class WardrobeItem {
 
 ### 5. Outfit
 
-Saved outfit combination with positioning information.
+Saved outfit result confirmed by the user after preview generation.
 
 ```dart
 class Outfit {
   String id;                    // UUID
   String userId;                // Owner user ID
-  String name;                  // Outfit name
-  String? description;          // Optional description
-  String? thumbnailUrl;         // Preview image URL
-  List<OutfitItem> items;       // Items in this outfit
+  String previewTaskId;         // Source outfit preview task
+  String? name;                 // Optional user-defined name
+  String previewImageUrl;       // Final confirmed preview image
+  List<OutfitItem> items;       // Referenced clothing items
   DateTime createdAt;
   DateTime updatedAt;
 }
 
 class OutfitItem {
   String clothingItemId;        // Reference to ClothingItem
-  int layer;                    // Z-index for layering (0 = bottom)
-  Position position;            // X, Y coordinates on canvas
-  double scale;                 // Scale factor (0.5 - 2.0)
-  int rotation;                 // Rotation angle (0-359)
-}
-
-class Position {
-  double x;                     // X coordinate (0.0 - 1.0, normalized)
-  double y;                     // Y coordinate (0.0 - 1.0, normalized)
+  DateTime createdAt;
 }
 ```
 
 **Indexes:**
 - Primary: `id`
 - Foreign Key: `userId`
-- Index: `userId` for user's outfit list
+- Foreign Key: `previewTaskId`
+- Unique: `(previewTaskId)` if each successful preview can only be saved once
 
 ---
 
@@ -436,7 +462,11 @@ Additional information for creator accounts.
 ```dart
 class Creator {
   String userId;                // Reference to User.id
+  String status;                // PENDING | ACTIVE | SUSPENDED
+  String displayName;           // Public display name
   String? brandName;            // Brand/channel name
+  String? bio;                  // Creator introduction
+  String? avatarUrl;            // Avatar asset URL
   String? websiteUrl;           // External website
   String? socialLinks;          // JSON: {platform: url}
   int followerCount;            // Number of followers
@@ -448,6 +478,7 @@ class Creator {
 
 **Indexes:**
 - Primary: `userId`
+- Index: `status`
 - Index: `isVerified` for featured creators
 
 ---
@@ -461,16 +492,17 @@ class CardPack {
   String id;                    // UUID
   String creatorId;             // Creator user ID
   String name;                  // Pack name
-  String description;           // Pack description
+  String? description;          // Pack description
   String? coverImageUrl;        // Cover image
   PackType type;                // CLOTHING_COLLECTION | OUTFIT
   List<String> itemIds;         // ClothingItem IDs in this pack
   int itemCount;                // Cached count
-  String shareLink;             // Shareable URL
+  String? shareId;              // Shareable ID exposed in public links
   PackStatus status;            // DRAFT | PUBLISHED | ARCHIVED
   int importCount;              // Number of times imported
   DateTime createdAt;
-  DateTime publishedAt;
+  DateTime? publishedAt;
+  DateTime? archivedAt;
   DateTime updatedAt;
 }
 
@@ -490,7 +522,28 @@ enum PackStatus {
 - Primary: `id`
 - Foreign Key: `creatorId`
 - Index: `status` for published packs
-- Index: `shareLink` for import lookups
+- Index: `shareId` for import lookups
+
+### 7.1 CardPackItem
+
+Junction table for creator pack contents.
+
+```dart
+class CardPackItem {
+  String id;                    // UUID
+  String cardPackId;            // Pack reference
+  String clothingItemId;        // Creator item reference
+  int displayOrder;             // Stable order inside the pack
+  String? notes;                // Optional pack-specific note
+  DateTime createdAt;
+}
+```
+
+**Indexes:**
+- Primary: `id`
+- Foreign Keys: `cardPackId`, `clothingItemId`
+- Unique: `(cardPackId, clothingItemId)`
+- Index: `(cardPackId, displayOrder)` for ordered rendering
 
 ---
 
@@ -504,19 +557,86 @@ class ImportHistory {
   String userId;                // Importing user ID
   String cardPackId;            // Imported pack ID
   String creatorId;             // Creator ID
+  String virtualWardrobeId;     // Target system wardrobe
+  String? requestId;            // Idempotency key
+  String status;                // PENDING | PROCESSING | COMPLETED | FAILED
   int itemCount;                // Number of items imported
-  DateTime importedAt;          // Import timestamp
+  DateTime? importedAt;         // Import completion time
+  String? failureReason;        // Failure details when status = FAILED
 }
 ```
 
 **Indexes:**
 - Primary: `id`
-- Foreign Keys: `userId`, `cardPackId`, `creatorId`
-- Composite: `(userId, cardPackId)` for duplicate detection
+- Foreign Keys: `userId`, `cardPackId`, `creatorId`, `virtualWardrobeId`
+- Composite: `(userId, createdAt)` for recent history
+- Unique: `(userId, requestId)` when request id is provided
+
+### 8.1 ImportHistoryItem
+
+Junction table for imported item provenance.
+
+```dart
+class ImportHistoryItem {
+  String id;                    // UUID
+  String importHistoryId;       // Import batch reference
+  String clothingItemId;        // Imported copy created for the user
+  String originClothingItemId;  // Source creator item
+  DateTime createdAt;
+}
+```
+
+**Indexes:**
+- Primary: `id`
+- Foreign Keys: `importHistoryId`, `clothingItemId`, `originClothingItemId`
+- Unique: `(importHistoryId, clothingItemId)`
 
 ---
 
-### 9. Model3D
+### 9. OutfitPreviewTask
+
+Asynchronous try-on / preview generation request.
+
+```dart
+class OutfitPreviewTask {
+  String id;                    // UUID
+  String userId;                // Request owner
+  String personImageUrl;        // Uploaded selfie asset
+  String personViewType;        // FULL_BODY | UPPER_BODY
+  List<String> garmentCategories; // TOP | BOTTOM | SHOES
+  int inputCount;               // Number of selected clothing items
+  String promptTemplateKey;     // Selected backend prompt template
+  String providerName;          // DashScope
+  String providerModel;         // wan2.7-image-pro
+  String? providerJobId;        // External provider task id if any
+  String status;                // PENDING | PROCESSING | COMPLETED | FAILED
+  String? previewImageUrl;      // Generated result image
+  String? errorCode;            // Provider or domain error code
+  String? errorMessage;         // Human-readable failure message
+  DateTime? startedAt;
+  DateTime? completedAt;
+  DateTime createdAt;
+  List<OutfitPreviewTaskItem> items;
+}
+
+class OutfitPreviewTaskItem {
+  String clothingItemId;        // Referenced clothing item
+  String garmentCategory;       // TOP | BOTTOM | SHOES
+  int sortOrder;                // Stable provider input order
+  String garmentImageUrl;       // Concrete image used for generation
+  DateTime createdAt;
+}
+```
+
+**Indexes:**
+- Primary: `id`
+- Foreign Key: `userId`
+- Index: `(userId, createdAt)` for history
+- Index: `(status, createdAt)` for worker polling
+
+---
+
+### 10. Model3D
 
 Stores 3D model reference for a clothing item (generated by Hunyuan3D-2).
 
@@ -539,7 +659,7 @@ class Model3D {
 
 ---
 
-### 10. ProcessingTask
+### 11. ProcessingTask
 
 Tracks asynchronous processing tasks (background removal, 3D generation, angle rendering).
 
@@ -588,13 +708,16 @@ enum ProcessingStatus {
 - `User` → `ClothingItem` (user owns/creates many items)
 - `User` → `Wardrobe` (user has many wardrobes)
 - `User` → `Outfit` (user has many outfits)
+- `User` → `OutfitPreviewTask` (user submits many preview tasks)
 - `Creator` → `CardPack` (creator publishes many packs)
 - `ClothingItem` → `ProcessingTask` (one item can have multiple task records)
 
 ### Many-to-Many
 - `Wardrobe` ↔ `ClothingItem` (via `WardrobeItem`)
-- `CardPack` ↔ `ClothingItem` (via item IDs array)
-- `Outfit` ↔ `ClothingItem` (via `OutfitItem` embedded)
+- `CardPack` ↔ `ClothingItem` (via `CardPackItem`)
+- `ImportHistory` ↔ `ClothingItem` (via `ImportHistoryItem`)
+- `Outfit` ↔ `ClothingItem` (via `OutfitItem`)
+- `OutfitPreviewTask` ↔ `ClothingItem` (via `OutfitPreviewTaskItem`)
 
 ### One-to-One
 - `User` → `Creator` (optional, only for creator accounts)
@@ -617,20 +740,27 @@ enum ProcessingStatus {
    - `source = OWNED`: Must have `provenance = null`
    - `source = IMPORTED`: Must have valid `provenance` object
    - Virtual wardrobe only contains items with `source = IMPORTED`
+   - Imported copies keep `originClothingItemId`, `importHistoryId`, creator summary, and optional card pack summary
 
 3. **Wardrobe Rules**
    - Each user has exactly one virtual wardrobe (auto-created)
    - User can have unlimited regular wardrobes
    - Same ClothingItem can be in multiple wardrobes
+   - System-managed wardrobes cannot be renamed or deleted by end users
 
 4. **Outfit Rules**
    - Outfit can reference both owned and imported items
+   - Outfit is created from a successful `OutfitPreviewTask`
    - Deleting ClothingItem invalidates outfit (mark as incomplete)
-   - OutfitItem positions are normalized (0.0-1.0) for responsive layout
 
-5. **Card Pack Rules**
+5. **Outfit Preview Rules**
+   - Preview task accepts one selfie plus one or more referenced clothing items
+   - Same preview task cannot repeat the same garment category
+   - Preview task and processing task are separate async domains
+
+6. **Card Pack Rules**
    - Only users with `type = CREATOR` can create CardPacks
-   - Published packs cannot be deleted (only archived)
+   - Published packs may be deleted only if backend explicitly allows the transition
    - Pack items must belong to the creator
 
 ### Data Validation
@@ -854,12 +984,18 @@ finalTags.any((tag) => tag.key == "season" && tag.value == "SUMMER")
   "userId": "user-123",
   "source": "IMPORTED",
   "provenance": {
-    "creatorId": "creator-456",
-    "creatorName": "FashionGuru",
-    "cardPackId": "pack-789",
-    "cardPackName": "Summer Essentials 2024",
+    "sourceType": "IMPORTED",
+    "originClothingItemId": "creator-item-456",
+    "importHistoryId": "import-789",
+    "creator": {
+      "id": "creator-456",
+      "displayName": "FashionGuru"
+    },
+    "cardPack": {
+      "id": "pack-789",
+      "name": "Summer Essentials 2024"
+    },
     "importedAt": "2024-01-20T14:00:00Z",
-    "importSource": "https://app.com/pack/pack-789"
   },
   "images": { /* ... */ },
   "predictedTags": [
