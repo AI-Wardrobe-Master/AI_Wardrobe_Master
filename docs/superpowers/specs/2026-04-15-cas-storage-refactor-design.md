@@ -355,10 +355,16 @@ db.add(Image(
 
 ### 6.2 Read path (URL delivery)
 
-Drop `app.mount("/files", StaticFiles(...))`. Replace with a business router:
+Drop `app.mount("/files", StaticFiles(...))`. Replace with a business router **mounted at the same top-level `/files` prefix** (not under `/api/v1`) so the URL shape returned in existing API responses stays compatible with the Flutter client's image-base-URL convention:
 
 ```python
-# backend/app/api/v1/files.py
+# backend/app/main.py
+from app.api.v1 import files
+app.include_router(files.router, prefix="/files", tags=["Files"])
+```
+
+```python
+# backend/app/api/v1/files.py  (no top-level prefix; routes start with /clothing-items/...)
 
 IMAGE_KIND_MAP = {
     "original-front": ("ORIGINAL_FRONT", None),
@@ -408,22 +414,23 @@ async def get_clothing_image(
     )
 ```
 
-Additional routes:
+Additional routes (all mounted under the top-level `/files` prefix):
 - `GET /files/styled-generations/{gen_id}/{kind}` — for selfie-original / selfie-processed / result
-- `GET /files/outfits/{outfit_id}/preview` — for outfit preview
-- `GET /files/card-packs/{pack_id}/cover` — for pack covers (public if pack is PUBLISHED)
-- `GET /files/creator-items/{item_id}/{kind}` — creator-side (creator-auth)
+- `GET /files/outfit-preview-tasks/{task_id}/{kind}` — for person image and preview result
+- `GET /files/outfits/{outfit_id}/preview` — for saved outfits
+- `GET /files/card-packs/{pack_id}/cover` — for pack covers (readable by anyone while status is PUBLISHED)
+- `GET /files/creator-items/{item_id}/{kind}` — creator-side (creator-auth required)
 
 For S3 backend, these routes return `RedirectResponse(...presigned_url...)` instead of streaming. The presigned URL expires in one hour.
 
 Existing response schemas (`ClothingItemResponse`, etc.) gain an updated `_to_response` helper that builds these business URLs:
 
 ```python
-def clothing_image_url(item_id, kind) -> str:
-    return f"{settings.API_V1_STR}/files/clothing-items/{item_id}/{kind}"
+def clothing_image_url(item_id: UUID, kind: str) -> str:
+    return f"/files/clothing-items/{item_id}/{kind}"
 ```
 
-The frontend sees URLs like `/api/v1/files/clothing-items/abc-123/processed-front`. It does not see hashes.
+The frontend sees URLs like `/files/clothing-items/abc-123/processed-front`. It does not see hashes. The URL prefix matches the existing `/files/...` convention so no frontend change is required beyond re-fetching (old session URLs containing raw `{user_id}/{item_id}/filename.jpg` paths will 404 until the frontend re-fetches; this is a transient glitch after migration, not a persistent break since the frontend does not persist URLs across sessions).
 
 ### 6.3 Delete path — `clothing_item`
 
@@ -463,6 +470,8 @@ def delete_clothing_item(
 ```
 
 This path handles both OWNED and IMPORTED clothing_items uniformly. The difference between them is only in metadata origin; the delete semantics are identical.
+
+The deletion body (collect blob hashes, `db.delete(item)`, flush, release each blob) is extracted into a private helper `_delete_clothing_item_internal(db, item: ClothingItem) -> None` so the un-import flow (§6.7) can reuse it inside a loop without re-running ownership checks. The top-level `DELETE /clothing-items/:id` handler performs ownership + processing-task guards and then calls the helper.
 
 Wardrobe_items, outfit_items, outfit_preview_task_items that reference this clothing_item will be cascade-deleted by existing FK constraints. No new coupling introduced.
 
@@ -640,7 +649,7 @@ async def import_card_pack(
     }
 ```
 
-The imported clothing_items end up in the user's default wardrobe via the same mechanism as OWNED items (or, if a "virtual wardrobe" convention exists, into that one — to be confirmed during implementation).
+Imported clothing_items land in the user's top-level `clothing_items` collection with `source='IMPORTED'`, matching the behavior of OWNED items: they appear in the user's "all my clothes" list but are not auto-added to any `wardrobes` row. The existing `wardrobes.type = 'VIRTUAL'` enum value is not used by this flow. Users can manually organize imported items into wardrobes via `POST /wardrobes/:id/items` just like owned items. Rationale: auto-creating a wardrobe per import would either pollute the wardrobe list (one per pack) or require a special single "Imported" wardrobe, both of which are product decisions outside this spec's scope.
 
 ### 6.7 Un-import path
 
@@ -748,7 +757,96 @@ celery-beat:
 
 Only one `celery-beat` instance should run across the cluster. For local dev this is trivially satisfied.
 
-### 7.3 Reconciliation script
+### 7.3 Concurrency correctness
+
+Naive ordering ("GC physical_delete → row delete" or "GC row delete → physical_delete") races against concurrent `ingest_upload` of the same content. Example failure mode:
+
+1. T=0: Blob has `ref_count=0`, `pending_delete_at` past cutoff. GC picks it.
+2. T=1: New upload arrives with identical content. `ingest_upload` sees the blob row, bumps `ref_count=1`, clears `pending_delete_at`, commits.
+3. T=2: GC still holds a stale reference from T=0; calls `physical_delete(hash)`; file is removed.
+4. Aftermath: row says `ref_count=1`, but the physical bytes are gone. Every subsequent read 404s.
+
+**Mitigation**: both `BlobService.ingest_upload` and `gc_sweep` must hold a PostgreSQL **transaction-level advisory lock** keyed on the blob hash during the critical section that touches both the DB row and the filesystem:
+
+```python
+# Common helper
+def _lock_hash(db: Session, blob_hash: str) -> None:
+    db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:h))"),
+        {"h": blob_hash},
+    )
+```
+
+`ingest_upload` sequence (pseudocode):
+```python
+async def ingest_upload(db, stream, ...):
+    # 1. Write temp file and compute hash (no DB touching yet)
+    temp_path, blob_hash, size, mime = await blob_storage.put_to_temp(stream, ...)
+
+    try:
+        # 2. Acquire advisory lock in a transaction
+        _lock_hash(db, blob_hash)
+
+        # 3. Upsert blob row atomically, inside the same transaction
+        row = db.query(Blob).filter_by(blob_hash=blob_hash).first()
+        if row is not None:
+            row.ref_count += 1
+            row.last_referenced_at = now()
+            row.pending_delete_at = None
+            os.unlink(temp_path)  # discard duplicate
+        else:
+            final_path = blob_storage.path_for(blob_hash)
+            os.makedirs(os.path.dirname(final_path), exist_ok=True)
+            os.replace(temp_path, final_path)  # atomic rename into place
+            db.add(Blob(blob_hash=blob_hash, ...))
+        # caller commits (advisory lock released on commit)
+    except Exception:
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
+        raise
+```
+
+`gc_sweep` sequence (pseudocode):
+```python
+for candidate in candidates:
+    try:
+        # Fresh transaction per blob for bounded lock duration
+        _lock_hash(db, candidate.blob_hash)
+
+        # Re-check eligibility under lock
+        row = db.query(Blob).filter(
+            Blob.blob_hash == candidate.blob_hash,
+            Blob.ref_count == 0,
+            Blob.pending_delete_at < cutoff,
+        ).with_for_update().first()
+        if row is None:
+            db.commit()
+            continue  # resurrected between select and lock
+
+        db.delete(row)
+        db.flush()  # row gone inside transaction
+
+        # Physical delete inside the same transaction's lock window
+        try:
+            await blob_storage.physical_delete(candidate.blob_hash)
+        except FileNotFoundError:
+            pass  # already gone is fine
+
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("GC failed for %s", candidate.blob_hash)
+```
+
+Key properties:
+- The advisory lock serializes ingest and GC per hash. No two operations can touch the same blob concurrently.
+- Locks are transaction-scoped, so `commit()` or `rollback()` releases them automatically.
+- `hashtext()` collapses SHA-256 hex into a 32-bit Postgres lock key space. Collisions are possible but benign — they only cause extra serialization, not incorrectness.
+- GC's re-check under lock catches the case where a blob was resurrected between the initial SELECT and acquiring the lock.
+
+Consequence for upload performance: every ingest takes one advisory lock per blob, which is cheap (microseconds). Duplicate uploads still benefit from dedup because the `put_to_temp` stage hashes the content and the subsequent "row exists" branch simply discards the temp file.
+
+### 7.4 Reconciliation script
 
 A defensive operational tool at `backend/scripts/verify_blob_refcount.py`:
 
@@ -875,31 +973,30 @@ The new migration is `20260415_000010`, chaining onto `20260413_000005`. This co
 | `backend/scripts/verify_blob_refcount.py` | Reconciliation tool |
 | `docs/superpowers/specs/2026-04-15-cas-storage-refactor-design.md` | This spec |
 
-### 9.2 Modified files (estimated 12)
+### 9.2 Modified files (approximately 20)
 
 | Path | Change |
 |---|---|
-| `backend/app/services/storage_service.py` | Deprecated; kept as thin compatibility shim during transition or removed entirely |
+| `backend/app/services/storage_service.py` | Deleted (superseded by `blob_storage.py` + `blob_service.py`) |
 | `backend/app/services/clothing_pipeline.py` | All `storage.upload()` → `blob_service.ingest_upload()`; reads via `blob_storage.get_bytes()` |
 | `backend/app/services/styled_generation_pipeline.py` | Same pattern |
-| `backend/app/services/background_removal_service.py` | No change (already takes/returns bytes) |
-| `backend/app/main.py` | Remove `/files` static mount |
-| `backend/app/api/v1/router.py` | Include `files`, `imports` routers |
+| `backend/app/main.py` | Remove `/files` static mount; include new `files` router at top-level `/files` prefix |
+| `backend/app/api/v1/router.py` | Include `imports` router under `/api/v1` |
 | `backend/app/api/v1/clothing.py` | `POST` uses `blob_service`; new `DELETE /clothing-items/:id`; URL construction uses business paths |
-| `backend/app/api/v1/creator_items.py` | Same pattern; existing delete check retained |
-| `backend/app/api/v1/card_packs.py` | New `POST /archive` endpoint; `DELETE` logic updated per §6.5 |
+| `backend/app/api/v1/creator_items.py` | Same pattern; existing delete check retained; existing storage paths migrated |
+| `backend/app/api/v1/card_packs.py` | New `POST /:id/archive` endpoint; `DELETE` logic updated per §6.5 |
 | `backend/app/api/v1/styled_generation.py` | `blob_service` for uploads; URL construction |
 | `backend/app/models/clothing_item.py` | `Image`, `Model3D` field rename; add `imported_from_*` to `ClothingItem` |
 | `backend/app/models/creator.py` | `CreatorItemImage`, `CreatorItemModel3D`, `CardPack` field rename |
-| `backend/app/models/styled_generation.py` | Field rename |
-| `backend/app/models/outfit_preview.py` | Field rename |
-| `backend/app/core/celery_app.py` | Add `beat_schedule` |
+| `backend/app/models/styled_generation.py` | Three path fields → blob_hash |
+| `backend/app/models/outfit_preview.py` | Five path fields → blob_hash |
+| `backend/app/core/celery_app.py` | Add `beat_schedule` for GC |
 | `backend/app/tasks.py` | Add `gc_sweep` task |
 | `docker-compose.yml` | Add `celery-beat` service |
-| `backend/app/models/__init__.py` | Export new models |
-| `backend/alembic/env.py` | Import new models for metadata |
-| `documents/BACKEND_ARCHITECTURE.md` | Describe CAS layer |
-| `documents/API_CONTRACT.md` | Add import/unimport/delete endpoints |
+| `backend/app/models/__init__.py` | Export `Blob`, `CardPackImport` |
+| `backend/alembic/env.py` | Import new models for autogenerate metadata |
+| `documents/BACKEND_ARCHITECTURE.md` | Describe CAS layer, import flow, new tables |
+| `documents/API_CONTRACT.md` | Add import / un-import / delete-clothing-item / archive-pack endpoints; note URL format change |
 
 ---
 
@@ -937,9 +1034,10 @@ An implementation of this spec is considered complete when all of the following 
 
 - **No backfill for existing deployments.** If this spec is shipped after any real user data exists, it will destroy that data. The nuke-and-rebuild assumption is only valid for pre-production.
 - **S3 physical delete is not strongly consistent.** After `physical_delete`, S3 may still serve the object for a few seconds (read-after-delete eventual consistency on some configurations). Impact is negligible because any live consumer would be blocked by refcount > 0 anyway.
-- **Concurrent ingest of the same hash has a small race window.** If two workers simultaneously upload identical bytes and both check existence before either writes, both may write. The `os.replace` is atomic so only the second write wins, but the first writer's temporary file stays until cleanup in the `finally` block. Minor disk churn, no correctness issue.
+- **`hashtext()` collision space is 32-bit.** Postgres advisory locks only accept a bigint key, so SHA-256 hex is folded via `hashtext()`. Two distinct hashes may share a lock key (~1 in 4 billion) and cause spurious serialization. This is a performance concern only, never a correctness one.
 - **The clothing_item delete endpoint does not check outfit_preview_tasks.** If an item is referenced by an in-flight outfit preview job, deleting it will cascade the `outfit_preview_task_items` row and the worker will see it disappear. Documented in §6.3 as acceptable.
 - **No undo for user deletes.** Once `DELETE /clothing-items/:id` commits and GC eventually runs, the content is gone. No soft-delete tier.
+- **Advisory lock requires a live DB connection during upload.** If the DB is unreachable mid-upload, the operation fails after the bytes are already streamed. Caller must handle and retry. Temp files are cleaned up in the `finally` branch.
 
 ---
 
