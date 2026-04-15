@@ -1,7 +1,7 @@
 """add styled_generations table
 
 Revision ID: 20260413_000005
-Revises: 20260401_000004
+Revises: 20260402_000007
 Create Date: 2026-04-13
 """
 
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 revision: str = "20260413_000005"
-down_revision: Union[str, None] = "20260401_000004"
+down_revision: Union[str, None] = "20260402_000007"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
