@@ -1385,45 +1385,13 @@ Returns the GLB file as binary with `Content-Type: model/gltf-binary`.
 ## 9. AI Classification
 
 ### 9.1 Classify Clothing Item
-```
-POST /ai/classify
-```
+AI classification is included in `POST /clothing-items`; there is no standalone `POST /ai/classify` endpoint in the current backend.
 
-**Request Body:**
-```json
-{
-  "imageUrl": "/images/img-001.jpg"
-}
-```
-
-**Response (200):**
-```json
-{
-  "success": true,
-  "data": {
-    "predictedTags": [
-      { "key": "category", "value": "T_SHIRT" },
-      { "key": "color", "value": "blue" },
-      { "key": "color", "value": "white" },
-      { "key": "pattern", "value": "striped" },
-      { "key": "style", "value": "casual" },
-      { "key": "season", "value": "summer" },
-      { "key": "audience", "value": "unisex" }
-    ]
-  }
-}
-```
-
-**Note:** The response returns an array of Tag objects. Each tag has a `key` (attribute type) and `value` (attribute value). No confidence scores are included.
-
-**Tag Confirmation Flow:**
-1. Frontend receives `predictedTags` from this endpoint
-2. User reviews the predicted tags in the UI
-3. User can accept or modify the tags
-4. Frontend calls `PATCH /clothing-items/:id` with `finalTags` and `isConfirmed: true`
-5. Backend stores the confirmed tags in `final_tags` column
-
-See section **2.3 Update Clothing Item** for the tag confirmation API.
+**Behavior:**
+- `POST /clothing-items` synchronously runs classification on the uploaded front image before the async 3D pipeline is dispatched
+- The created clothing item immediately stores `predictedTags`, copies them into initial `finalTags`, and sets `isConfirmed` to `false`
+- `GET /clothing-items/{id}/processing-status` includes a `classification` step. When it is `completed`, the frontend can call `GET /clothing-items/{id}` to read tags before 3D generation finishes
+- User tag edits are submitted through `PATCH /clothing-items/{id}` and must not be overwritten by later 3D processing
 
 ---
 

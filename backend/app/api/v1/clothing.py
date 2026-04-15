@@ -20,6 +20,7 @@ from app.schemas.clothing_item import (
     ProcessingStatusResponse,
 )
 from app.schemas.search import SearchRequest
+from app.services.ai_service import AIService
 from app.services.clothing_pipeline import cleanup_pipeline_artifacts
 from app.services.processing_task_service import (
     ACTIVE_TASK_STATUSES,
@@ -68,6 +69,8 @@ async def create_clothing_item(
         await _read_upload_bytes(back_image, "back_image")
         if back_image else None
     )
+    predicted_tags = AIService().classify_bytes(front_bytes)
+    predicted_tag_dicts = [_tag_to_dict(tag) for tag in predicted_tags]
     storage = _storage()
     item = ClothingItem(
         id=uuid4(),
@@ -75,8 +78,8 @@ async def create_clothing_item(
         source="OWNED",
         name=name,
         description=description,
-        predicted_tags=[],
-        final_tags=[],
+        predicted_tags=predicted_tag_dicts,
+        final_tags=list(predicted_tag_dicts),
         is_confirmed=False,
     )
     front_path = _storage_path(user_id, item.id, "original_front.jpg")
@@ -423,6 +426,7 @@ def _progress_to_steps(progress: int, status: str) -> dict[str, str]:
     if status == "FAILED":
         return {
             "upload": "completed",
+            "classification": "completed",
             "backgroundRemoval": "failed",
             "modelGeneration": "pending",
             "angleRendering": "pending",
@@ -437,7 +441,14 @@ def _progress_to_steps(progress: int, status: str) -> dict[str, str]:
 
     return {
         "upload": "completed" if progress >= 5 else "processing",
+        "classification": "completed",
         "backgroundRemoval": _s(15),
         "modelGeneration": _s(30),
         "angleRendering": _s(70),
     }
+
+
+def _tag_to_dict(tag) -> dict[str, str]:
+    if isinstance(tag, dict):
+        return tag
+    return {"key": tag.key, "value": tag.value}

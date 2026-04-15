@@ -835,28 +835,25 @@ Standard tag keys used in the system:
 
 The system follows this workflow for tag management:
 
-1. **AI Classification** (POST /ai/classify)
+1. **Create Clothing Item** (POST /clothing-items)
    - User uploads clothing images
-   - AI returns `predictedTags: Tag[]`
-   - No confidence scores included
-
-2. **Initial Storage** (POST /clothing-items)
+   - Backend synchronously runs AI classification on the front image
    - Backend stores `predictedTags` (immutable)
    - Backend copies `predictedTags` to `finalTags` (mutable)
    - Sets `isConfirmed: false`
 
-3. **User Review** (Frontend UI)
+2. **User Review** (Frontend UI)
    - User sees both `predictedTags` and `finalTags`
    - User can accept or modify tags
    - User can add additional tags
 
-4. **Tag Confirmation** (PATCH /clothing-items/:id)
+3. **Tag Confirmation** (PATCH /clothing-items/:id)
    - User submits modified `finalTags: Tag[]`
    - Backend updates `final_tags` column
    - Backend sets `isConfirmed: true`
    - `predictedTags` remain unchanged for analytics
 
-5. **Search** (POST /clothing-items/search)
+4. **Search** (POST /clothing-items/search)
    - Search uses `finalTags` only
    - `predictedTags` are never used for search
    - Ensures search reflects user-confirmed data

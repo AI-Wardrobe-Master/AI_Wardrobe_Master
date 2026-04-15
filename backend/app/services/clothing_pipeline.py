@@ -14,7 +14,6 @@ from app.models.clothing_item import ClothingItem, Image, Model3D, ProcessingTas
 from app.services import background_removal_service as bg
 from app.services import model_3d_service as m3d
 from app.services import angle_renderer_service as renderer
-from app.services.ai_service import AIService
 from app.services.processing_task_service import claim_processing_task
 from app.services.storage_service import StorageService
 from app.services.storage_service import get_storage_service
@@ -44,7 +43,6 @@ async def run_pipeline_task(task_id: UUID, worker_id: str | None = None) -> bool
             raise RuntimeError(f"Clothing item {task.clothing_item_id} not found")
 
         front_bytes, back_bytes = await _load_original_images(db, storage, item.id)
-        ai_service = AIService()
 
         await cleanup_pipeline_artifacts(db, storage, item.id)
         _update(db, task, 5)
@@ -61,12 +59,6 @@ async def run_pipeline_task(task_id: UUID, worker_id: str | None = None) -> bool
             await storage.upload(io.BytesIO(back_proc), proc_back_path)
             _upsert_image(db, item.id, "PROCESSED_BACK", proc_back_path)
         _update(db, task, 25)
-
-        predicted_tags = ai_service.classify_bytes(front_proc)
-        item.predicted_tags = [_tag_to_dict(tag) for tag in predicted_tags]
-        item.final_tags = list(item.predicted_tags)
-        item.is_confirmed = False
-        db.commit()
 
         _update(db, task, 30)
         mesh = await m3d.generate_3d_model(front_proc, back_proc)
@@ -256,9 +248,3 @@ def _derived_paths(user_id: UUID, clothing_id: UUID) -> set[str]:
         for angle in (0, 45, 90, 135, 180, 225, 270, 315)
     )
     return paths
-
-
-def _tag_to_dict(tag) -> dict[str, str]:
-    if isinstance(tag, dict):
-        return tag
-    return {"key": tag.key, "value": tag.value}

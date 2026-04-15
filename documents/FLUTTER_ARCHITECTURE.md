@@ -131,7 +131,7 @@ ai_wardrobe_app/
 │   └── services/                          # Services
 │       ├── camera_service.dart            # Camera integration
 │       ├── image_processing_service.dart  # Image processing
-│       ├── ai_classification_service.dart # AI classification
+│       ├── clothing_api_service.dart      # Upload, processing status, tag/detail retrieval
 │       ├── storage_service.dart           # File storage
 │       └── notification_service.dart      # Notifications
 │

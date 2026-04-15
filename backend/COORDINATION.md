@@ -20,10 +20,10 @@
 
 | 问题 | 当前状态 | 待确认 |
 |------|----------|--------|
-| POST /clothing-items 由谁实现？ | 未实现 | Module 1 是否负责？创建时需调用 AI 分类并写入 `predicted_tags`、`final_tags` |
-| 创建时是否同步调用分类？ | 文档建议：创建后自动分类 | 流程是「先存图 → 调 classify → 再写库」还是「创建接口内部调用 classify」？ |
+| POST /clothing-items 由谁实现？ | 已实现 | 创建时会同步调用 `AIService.classify_bytes()`，并在建 item 时写入 `predicted_tags`、`final_tags` |
+| 创建时是否同步调用分类？ | 已明确 | 分类包含在 `POST /clothing-items` 内部；后续异步 pipeline 只处理背景移除、3D 与角度图 |
 
-**影响**：若 Module 1 实现 POST，需在创建流程中集成 `AIService.classify()`。
+**影响**：标签现在在创建阶段就可用，前端可在 `processing-status.classification == completed` 后读取 `GET /clothing-items/{id}`。
 
 ### 1.3 数据库与迁移
 
@@ -85,7 +85,6 @@
 
 以下接口在「有数据库 + 临时 user_id」前提下可测：
 
-- `POST /api/v1/ai/classify`：需图片存在且路径正确
 - `PATCH /api/v1/clothing-items/:id`：需 clothing_items 有数据
 - `GET /api/v1/clothing-items`：同上
 - `POST /api/v1/clothing-items/search`：同上

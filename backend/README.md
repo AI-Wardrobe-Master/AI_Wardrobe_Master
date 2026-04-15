@@ -4,7 +4,6 @@
 
 ### Module 2: 衣物数字化
 - `POST /api/v1/clothing-items` - 创建衣物（上传图片，异步处理）
-- `POST /api/v1/ai/classify` - AI 服装分类（Roboflow workflow）
 - `PATCH /api/v1/clothing-items/:id` - 标签确认/编辑
 - `GET /api/v1/clothing-items` - 列表（支持 tag 过滤）
 - `POST /api/v1/clothing-items/search` - 搜索（使用 finalTags）

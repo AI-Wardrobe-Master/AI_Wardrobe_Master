@@ -10,10 +10,13 @@ from starlette.datastructures import Headers
 
 from app.api.v1.clothing import (
     _read_upload_bytes,
+    _progress_to_steps,
     create_clothing_item,
     retry_processing,
 )
-from app.models.clothing_item import ClothingItem, Image, ProcessingTask
+from app.models.clothing_item import ClothingItem, Image, Model3D, ProcessingTask
+from app.schemas.clothing_item import Tag
+from app.services.clothing_pipeline import run_pipeline_task
 from app.tasks import process_pipeline
 
 
@@ -78,6 +81,7 @@ class FakeSession:
         self._data = {
             ClothingItem: list(items or []),
             Image: list(images or []),
+            Model3D: [],
             ProcessingTask: list(tasks or []),
         }
 
@@ -96,6 +100,9 @@ class FakeSession:
     def refresh(self, instance):
         return instance
 
+    def close(self):
+        return None
+
     def query(self, model):
         return FakeQuery(self, model, self._data.setdefault(model, []))
 
@@ -109,6 +116,36 @@ def make_upload(filename: str, payload: bytes, content_type: str) -> UploadFile:
 
 
 class ClothingProcessingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_create_clothing_item_populates_predicted_tags_before_processing(self):
+        user_id = uuid4()
+        db = FakeSession()
+        storage = AsyncMock()
+        storage.upload = AsyncMock()
+        storage.delete = AsyncMock()
+
+        with patch("app.api.v1.clothing._storage", return_value=storage), patch(
+            "app.api.v1.clothing.process_pipeline.delay",
+            new=Mock(),
+        ), patch(
+            "app.api.v1.clothing.AIService"
+        ) as ai_service_cls:
+            ai_service_cls.return_value.classify_bytes.return_value = [
+                Tag(key="category", value="shirt")
+            ]
+            await create_clothing_item(
+                front_image=make_upload("front.jpg", b"front", "image/jpeg"),
+                back_image=None,
+                name="Blue Tee",
+                description="cotton",
+                db=db,
+                user_id=user_id,
+            )
+
+        item = db._data[ClothingItem][0]
+        self.assertEqual(item.predicted_tags, [{"key": "category", "value": "shirt"}])
+        self.assertEqual(item.final_tags, [{"key": "category", "value": "shirt"}])
+        self.assertFalse(item.is_confirmed)
+
     async def test_create_clothing_item_enqueues_pending_task(self):
         user_id = uuid4()
         db = FakeSession()
@@ -119,7 +156,12 @@ class ClothingProcessingTests(unittest.IsolatedAsyncioTestCase):
         with patch("app.api.v1.clothing._storage", return_value=storage), patch(
             "app.api.v1.clothing.process_pipeline.delay",
             new=Mock(),
-        ) as delay:
+        ) as delay, patch(
+            "app.api.v1.clothing.AIService"
+        ) as ai_service_cls:
+            ai_service_cls.return_value.classify_bytes.return_value = [
+                Tag(key="category", value="shirt")
+            ]
             response = await create_clothing_item(
                 front_image=make_upload("front.jpg", b"front", "image/jpeg"),
                 back_image=make_upload("back.jpg", b"back", "image/jpeg"),
@@ -216,7 +258,12 @@ class ClothingProcessingTests(unittest.IsolatedAsyncioTestCase):
         with patch("app.api.v1.clothing._storage", return_value=storage), patch(
             "app.api.v1.clothing.process_pipeline.delay",
             side_effect=RuntimeError("redis down"),
-        ):
+        ), patch(
+            "app.api.v1.clothing.AIService"
+        ) as ai_service_cls:
+            ai_service_cls.return_value.classify_bytes.return_value = [
+                Tag(key="category", value="shirt")
+            ]
             with self.assertRaises(HTTPException) as ctx:
                 await create_clothing_item(
                     front_image=make_upload("front.jpg", b"front", "image/jpeg"),
@@ -234,6 +281,12 @@ class ClothingProcessingTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ProcessPipelineTaskTests(unittest.TestCase):
+    def test_progress_to_steps_marks_classification_complete(self):
+        steps = _progress_to_steps(0, "PENDING")
+
+        self.assertEqual(steps["classification"], "completed")
+        self.assertEqual(steps["upload"], "processing")
+
     def test_eager_task_works_from_running_event_loop(self):
         async def _run():
             with patch(
@@ -244,6 +297,71 @@ class ProcessPipelineTaskTests(unittest.TestCase):
                 run_pipeline.assert_awaited_once()
 
         asyncio.run(_run())
+
+
+class ClothingPipelineBehaviorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_pipeline_does_not_overwrite_existing_tags(self):
+        user_id = uuid4()
+        item_id = uuid4()
+        task_id = uuid4()
+        item = ClothingItem(
+            id=item_id,
+            user_id=user_id,
+            source="OWNED",
+            predicted_tags=[{"key": "category", "value": "shirt"}],
+            final_tags=[{"key": "category", "value": "jacket"}],
+            is_confirmed=True,
+        )
+        task = ProcessingTask(
+            id=task_id,
+            clothing_item_id=item_id,
+            task_type="FULL_PIPELINE",
+            status="PENDING",
+            progress=0,
+            created_at=datetime.now(timezone.utc),
+        )
+        front = Image(
+            clothing_item_id=item_id,
+            image_type="ORIGINAL_FRONT",
+            storage_path="front.jpg",
+        )
+        db = FakeSession(items=[item], images=[front], tasks=[task])
+        storage = AsyncMock()
+        storage.download = AsyncMock(return_value=b"front")
+        storage.upload = AsyncMock()
+        storage.delete = AsyncMock()
+
+        mesh = Mock()
+        mesh.vertices = [1, 2, 3]
+        mesh.faces = [1]
+
+        with patch("app.services.clothing_pipeline.SessionLocal", return_value=db), patch(
+            "app.services.clothing_pipeline.get_storage_service",
+            return_value=storage,
+        ), patch(
+            "app.services.clothing_pipeline.claim_processing_task",
+            return_value=task,
+        ), patch(
+            "app.services.clothing_pipeline.cleanup_pipeline_artifacts",
+            new=AsyncMock(),
+        ), patch(
+            "app.services.clothing_pipeline.bg.remove_background",
+            new=AsyncMock(return_value=b"processed-front"),
+        ), patch(
+            "app.services.clothing_pipeline.m3d.generate_3d_model",
+            new=AsyncMock(return_value=mesh),
+        ), patch(
+            "app.services.clothing_pipeline.m3d.export_mesh",
+            return_value=b"glb",
+        ), patch(
+            "app.services.clothing_pipeline.renderer.render_all_angles",
+            return_value={0: b"png"},
+        ):
+            await run_pipeline_task(task_id)
+
+        self.assertEqual(item.predicted_tags, [{"key": "category", "value": "shirt"}])
+        self.assertEqual(item.final_tags, [{"key": "category", "value": "jacket"}])
+        self.assertTrue(item.is_confirmed)
 
 
 if __name__ == "__main__":
