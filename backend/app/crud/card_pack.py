@@ -169,7 +169,7 @@ def create_card_pack(
     name: str,
     description: str | None = None,
     pack_type: str = "CLOTHING_COLLECTION",
-    cover_image_storage_path: str | None = None,
+    cover_image_blob_hash: str | None = None,
     item_ids: list[UUID],
 ):
     now = datetime.now(timezone.utc)
@@ -181,7 +181,7 @@ def create_card_pack(
         description=description,
         pack_type=pack_type,
         status="DRAFT",
-        cover_image_storage_path=cover_image_storage_path,
+        cover_image_blob_hash=cover_image_blob_hash,
         import_count=0,
         created_at=now,
         updated_at=now,
@@ -207,7 +207,7 @@ def update_card_pack(
     name: str | None = None,
     description: str | None = None,
     item_ids: list[UUID] | None = None,
-    cover_image_storage_path: str | None = None,
+    cover_image_blob_hash: str | None = None,
 ):
     if pack.status == "ARCHIVED":
         raise HTTPException(status_code=409, detail="Archived packs cannot be updated")
@@ -217,8 +217,8 @@ def update_card_pack(
         pack.name = name
     if description is not None:
         pack.description = description
-    if cover_image_storage_path is not None:
-        pack.cover_image_storage_path = cover_image_storage_path
+    if cover_image_blob_hash is not None:
+        pack.cover_image_blob_hash = cover_image_blob_hash
     if item_ids is not None:
         if pack.status != "DRAFT":
             raise HTTPException(

@@ -18,7 +18,8 @@ from app.core.config import settings
 from app.crud import outfit_preview as crud_outfit_preview
 from app.models.clothing_item import ClothingItem
 from app.models.outfit_preview import OutfitPreviewTask
-from app.services.storage_service import LocalStorageService, StorageService, get_storage_service
+from app.services.blob_service import get_blob_service
+from app.services.blob_storage import get_blob_storage
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ RETRYABLE_STATUSES = {500, 502, 503, 504}
 class ResolvedPreviewItem:
     clothing_item_id: UUID
     garment_category: str
-    garment_image_path: str
+    garment_image_blob_hash: str
     sort_order: int
 
 
@@ -55,23 +56,13 @@ class OutfitPreviewProviderError(RuntimeError):
         self.retryable = retryable
 
 
-def _storage() -> StorageService:
-    return get_storage_service()
+def _absolute_blob_url(blob_storage, blob_hash: str) -> str:
+    """Build an absolute file:// URL for a CAS blob (for DashScope API)."""
+    path = blob_storage.path_for(blob_hash)
+    return Path(path).resolve().as_uri()
 
 
-def _absolute_storage_url(storage: StorageService, path: str) -> str:
-    if isinstance(storage, LocalStorageService):
-        return Path(settings.LOCAL_STORAGE_PATH, path).resolve().as_uri()
-
-    url = storage.get_url(path)
-    if url.startswith("file://"):
-        return url
-    if url.startswith("http://") or url.startswith("https://"):
-        return url
-    return f"{settings.API_BASE_URL.rstrip('/')}{url}"
-
-
-def _select_preview_image_path(item: ClothingItem) -> str | None:
+def _select_preview_image_blob_hash(item: ClothingItem) -> str | None:
     preferred_types = (
         "PROCESSED_FRONT",
         "ORIGINAL_FRONT",
@@ -81,8 +72,8 @@ def _select_preview_image_path(item: ClothingItem) -> str | None:
     by_type = {image.image_type: image for image in item.images}
     for image_type in preferred_types:
         image = by_type.get(image_type)
-        if image and image.storage_path:
-            return image.storage_path
+        if image and image.blob_hash:
+            return image.blob_hash
     return None
 
 
@@ -173,8 +164,8 @@ def resolve_garment_images_for_preview(
     resolved: list[ResolvedPreviewItem] = []
     for sort_order, (item_id, category) in enumerate(zip(clothing_item_ids, normalized_categories)):
         clothing_item = items_by_id[item_id]
-        image_path = _select_preview_image_path(clothing_item)
-        if image_path is None:
+        blob_hash = _select_preview_image_blob_hash(clothing_item)
+        if blob_hash is None:
             raise HTTPException(
                 status_code=422,
                 detail=f"Clothing item {clothing_item.id} has no usable image",
@@ -183,7 +174,7 @@ def resolve_garment_images_for_preview(
             ResolvedPreviewItem(
                 clothing_item_id=clothing_item.id,
                 garment_category=category,
-                garment_image_path=image_path,
+                garment_image_blob_hash=blob_hash,
                 sort_order=sort_order,
             )
         )
@@ -202,20 +193,6 @@ async def _read_upload_bytes(file) -> bytes:
     except Exception as exc:  # pragma: no cover - PIL raises several exception types
         raise HTTPException(status_code=422, detail="person_image must be a valid image") from exc
     return payload
-
-
-def _guess_extension(filename: str | None, content_type: str | None) -> str:
-    if content_type == "image/png":
-        return "png"
-    if content_type == "image/webp":
-        return "webp"
-    if content_type in {"image/jpeg", "image/jpg"}:
-        return "jpg"
-    if filename:
-        suffix = Path(filename).suffix.lower().lstrip(".")
-        if suffix in {"png", "webp", "jpg", "jpeg"}:
-            return "jpg" if suffix == "jpeg" else suffix
-    return "jpg"
 
 
 def _prompt_text(template_key: str) -> str:
@@ -377,7 +354,7 @@ async def create_preview_task(
     clothing_item_ids: list[UUID],
     garment_categories: list[str],
 ) -> OutfitPreviewTask:
-    storage = _storage()
+    blob_service = get_blob_service()
     resolved_items = resolve_garment_images_for_preview(
         db,
         user_id=user_id,
@@ -390,12 +367,11 @@ async def create_preview_task(
     )
 
     person_bytes = await _read_upload_bytes(person_image)
-    person_extension = _guess_extension(person_image.filename, person_image.content_type)
 
     task = crud_outfit_preview.create_outfit_preview_task(
         db,
         user_id=user_id,
-        person_image_path="",
+        person_image_blob_hash="",
         person_view_type=person_view_type.strip().upper(),
         garment_categories=[item.garment_category for item in resolved_items],
         prompt_template_key=prompt_template_key,
@@ -403,10 +379,13 @@ async def create_preview_task(
         provider_model=DASHSCOPE_MODEL,
     )
 
-    person_image_path = f"outfit-previews/{user_id}/{task.id}/person.{person_extension}"
     try:
-        await storage.upload(io.BytesIO(person_bytes), person_image_path)
-        task.person_image_path = person_image_path
+        person_blob = await blob_service.ingest_upload(
+            db, io.BytesIO(person_bytes),
+            claimed_mime_type=person_image.content_type or "image/jpeg",
+            max_size=settings.MAX_UPLOAD_SIZE_BYTES,
+        )
+        task.person_image_blob_hash = person_blob.blob_hash
         crud_outfit_preview.replace_outfit_preview_task_items(
             db,
             task=task,
@@ -415,7 +394,7 @@ async def create_preview_task(
                     "clothing_item_id": item.clothing_item_id,
                     "garment_category": item.garment_category,
                     "sort_order": item.sort_order,
-                    "garment_image_path": item.garment_image_path,
+                    "garment_image_blob_hash": item.garment_image_blob_hash,
                 }
                 for item in resolved_items
             ],
@@ -425,9 +404,10 @@ async def create_preview_task(
     except Exception:
         db.rollback()
         try:
-            await storage.delete(person_image_path)
+            blob_service.release(db, person_blob.blob_hash)
+            db.commit()
         except Exception:
-            logger.warning("Failed to cleanup preview upload %s", person_image_path, exc_info=True)
+            logger.warning("Failed to release person image blob", exc_info=True)
         raise
 
     return task
@@ -445,7 +425,7 @@ def save_outfit_from_preview_task(
     task: OutfitPreviewTask,
     name: str | None = None,
 ):
-    if task.status != "COMPLETED" or not task.preview_image_path:
+    if task.status != "COMPLETED" or not task.preview_image_blob_hash:
         raise HTTPException(
             status_code=409,
             detail="Preview task must be completed before saving",
@@ -472,7 +452,8 @@ async def run_outfit_preview_task(
     from app.db.session import SessionLocal
 
     db = SessionLocal()
-    storage = _storage()
+    blob_storage = get_blob_storage()
+    blob_service = get_blob_service()
     try:
         task = crud_outfit_preview.get_outfit_preview_task(db, task_id)
         if task is None:
@@ -492,9 +473,9 @@ async def run_outfit_preview_task(
             task.prompt_template_key,
         )
 
-        person_image_url = _absolute_storage_url(storage, task.person_image_path)
+        person_image_url = _absolute_blob_url(blob_storage, task.person_image_blob_hash)
         garment_image_urls = [
-            _absolute_storage_url(storage, item.garment_image_path)
+            _absolute_blob_url(blob_storage, item.garment_image_blob_hash)
             for item in task.items
         ]
 
@@ -543,12 +524,15 @@ async def run_outfit_preview_task(
             return
 
         result_bytes = await _download_bytes(result_image_url)
-        result_path = f"outfit-previews/{task.user_id}/{task.id}/result.png"
-        await storage.upload(io.BytesIO(result_bytes), result_path)
+        result_blob = await blob_service.ingest_upload(
+            db, io.BytesIO(result_bytes),
+            claimed_mime_type="image/png",
+            max_size=settings.MAX_UPLOAD_SIZE_BYTES * 4,
+        )
         crud_outfit_preview.mark_outfit_preview_completed(
             db,
             task=task,
-            preview_image_path=result_path,
+            preview_image_blob_hash=result_blob.blob_hash,
             provider_job_id=request_id,
         )
     except Exception as exc:

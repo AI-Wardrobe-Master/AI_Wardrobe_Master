@@ -48,8 +48,8 @@ def update_status(
     *,
     status: str,
     progress: int = 0,
-    result_image_path: Optional[str] = None,
-    selfie_processed_path: Optional[str] = None,
+    result_image_blob_hash: Optional[str] = None,
+    selfie_processed_blob_hash: Optional[str] = None,
     failure_reason: Optional[str] = None,
     seed: Optional[int] = None,
 ) -> Optional[StyledGeneration]:
@@ -62,10 +62,10 @@ def update_status(
         return None
     gen.status = status
     gen.progress = progress
-    if result_image_path is not None:
-        gen.result_image_path = result_image_path
-    if selfie_processed_path is not None:
-        gen.selfie_processed_path = selfie_processed_path
+    if result_image_blob_hash is not None:
+        gen.result_image_blob_hash = result_image_blob_hash
+    if selfie_processed_blob_hash is not None:
+        gen.selfie_processed_blob_hash = selfie_processed_blob_hash
     if failure_reason is not None:
         gen.failure_reason = failure_reason
     if seed is not None:

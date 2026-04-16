@@ -15,7 +15,7 @@ def create_outfit_preview_task(
     db: Session,
     *,
     user_id: UUID,
-    person_image_path: str,
+    person_image_blob_hash: str,
     person_view_type: str,
     garment_categories: list[str],
     prompt_template_key: str,
@@ -26,7 +26,7 @@ def create_outfit_preview_task(
     task = OutfitPreviewTask(
         id=uuid4(),
         user_id=user_id,
-        person_image_path=person_image_path,
+        person_image_blob_hash=person_image_blob_hash,
         person_view_type=person_view_type,
         garment_categories=garment_categories,
         input_count=len(garment_categories),
@@ -56,7 +56,7 @@ def replace_outfit_preview_task_items(
                 clothing_item_id=item["clothing_item_id"],
                 garment_category=item["garment_category"],
                 sort_order=item["sort_order"],
-                garment_image_path=item["garment_image_path"],
+                garment_image_blob_hash=item["garment_image_blob_hash"],
                 created_at=item.get("created_at", datetime.now(timezone.utc)),
             )
         )
@@ -131,12 +131,12 @@ def mark_outfit_preview_completed(
     db: Session,
     *,
     task: OutfitPreviewTask,
-    preview_image_path: str,
+    preview_image_blob_hash: str,
     provider_job_id: str | None = None,
 ) -> OutfitPreviewTask:
     now = datetime.now(timezone.utc)
     task.status = "COMPLETED"
-    task.preview_image_path = preview_image_path
+    task.preview_image_blob_hash = preview_image_blob_hash
     task.provider_job_id = provider_job_id
     task.error_code = None
     task.error_message = None
@@ -200,7 +200,7 @@ def create_outfit_from_preview_task(
         user_id=task.user_id,
         preview_task_id=task.id,
         name=name,
-        preview_image_path=task.preview_image_path or "",
+        preview_image_blob_hash=task.preview_image_blob_hash or "",
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
     )
