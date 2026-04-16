@@ -28,7 +28,7 @@ class OutfitPreviewTask(Base):
         nullable=False,
         index=True,
     )
-    person_image_path = Column(Text, nullable=False)
+    person_image_blob_hash = Column(String(64), ForeignKey("blobs.blob_hash"), nullable=False)
     person_view_type = Column(String(20), nullable=False)
     garment_categories = Column(JSONB, nullable=False, default=list)
     input_count = Column(Integer, nullable=False, default=0)
@@ -37,7 +37,7 @@ class OutfitPreviewTask(Base):
     provider_model = Column(String(100), nullable=False, default="wan2.7-image-pro")
     provider_job_id = Column(String(255), nullable=True)
     status = Column(String(20), nullable=False, default="PENDING")
-    preview_image_path = Column(Text, nullable=True)
+    preview_image_blob_hash = Column(String(64), ForeignKey("blobs.blob_hash"), nullable=True)
     error_code = Column(String(100), nullable=True)
     error_message = Column(Text, nullable=True)
     started_at = Column(DateTime(timezone=True), nullable=True)
@@ -99,7 +99,7 @@ class OutfitPreviewTaskItem(Base):
     )
     garment_category = Column(String(20), nullable=False)
     sort_order = Column(Integer, nullable=False, default=0)
-    garment_image_path = Column(Text, nullable=False)
+    garment_image_blob_hash = Column(String(64), ForeignKey("blobs.blob_hash"), nullable=False)
     created_at = Column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -140,7 +140,7 @@ class Outfit(Base):
         unique=True,
     )
     name = Column(String(120), nullable=True)
-    preview_image_path = Column(Text, nullable=False)
+    preview_image_blob_hash = Column(String(64), ForeignKey("blobs.blob_hash"), nullable=False)
     created_at = Column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
