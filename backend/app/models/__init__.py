@@ -4,6 +4,8 @@ from app.models.creator import CardPack, CardPackItem, CreatorItem, CreatorProfi
 from app.models.outfit_preview import Outfit, OutfitItem, OutfitPreviewTask, OutfitPreviewTaskItem
 from app.models.wardrobe import Wardrobe, WardrobeItem
 from app.models.styled_generation import StyledGeneration
+from app.models.blob import Blob
+from app.models.card_pack_import import CardPackImport
 
 __all__ = [
     "User",
@@ -19,4 +21,6 @@ __all__ = [
     "Wardrobe",
     "WardrobeItem",
     "StyledGeneration",
+    "Blob",
+    "CardPackImport",
 ]
