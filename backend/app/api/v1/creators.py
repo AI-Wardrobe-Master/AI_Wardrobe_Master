@@ -25,7 +25,6 @@ from app.schemas.creator import (
     CreatorProfileUpdate,
     Pagination,
 )
-from app.services.storage_service import get_storage_service
 
 router = APIRouter(prefix="/creators", tags=["creators"])
 
@@ -45,16 +44,14 @@ def list_creators(
         page=page,
         limit=limit,
     )
-    storage = get_storage_service()
     items = [
         CreatorListItem(
             id=profile.user_id,
             username=user.username,
             displayName=profile.display_name,
             brandName=profile.brand_name,
-            avatarUrl=storage.get_url(profile.avatar_storage_path)
-            if profile.avatar_storage_path
-            else None,
+            # TODO: migrate avatar_storage_path to blob_hash
+            avatarUrl=None,
             bioSummary=_bio_summary(profile.bio),
             packCount=crud_card_pack.count_published_card_packs_by_creator(
                 db,
@@ -127,23 +124,27 @@ def list_creator_items(
         page=page,
         limit=limit,
     )
-    storage = get_storage_service()
     response_items = []
     for item in items:
-        cover_path = next(
+        cover_hash = next(
             (
-                image.storage_path
+                image.blob_hash
                 for image in item.images
                 if image.image_type == "PROCESSED_FRONT"
             ),
             None,
         ) or next(
             (
-                image.storage_path
+                image.blob_hash
                 for image in item.images
                 if image.image_type == "ORIGINAL_FRONT"
             ),
             None,
+        )
+        cover_url = (
+            f"/files/creator-items/{item.id}/PROCESSED_FRONT"
+            if cover_hash
+            else None
         )
         response_items.append(
             {
@@ -153,7 +154,7 @@ def list_creator_items(
                 "processingStatus": item.processing_status,
                 "name": item.name,
                 "description": item.description,
-                "coverUrl": storage.get_url(cover_path) if cover_path else None,
+                "coverUrl": cover_url,
                 "finalTags": item.final_tags or [],
                 "createdAt": item.created_at,
             }
@@ -209,7 +210,6 @@ def _bio_summary(bio: str | None) -> str | None:
 
 
 def _to_creator_detail(profile, username: str) -> CreatorDetail:
-    storage = get_storage_service()
     return CreatorDetail(
         id=profile.user_id,
         username=username,
@@ -217,9 +217,8 @@ def _to_creator_detail(profile, username: str) -> CreatorDetail:
         displayName=profile.display_name,
         brandName=profile.brand_name,
         bio=profile.bio,
-        avatarUrl=storage.get_url(profile.avatar_storage_path)
-        if profile.avatar_storage_path
-        else None,
+        # TODO: migrate avatar_storage_path to blob_hash
+        avatarUrl=None,
         websiteUrl=profile.website_url,
         socialLinks=profile.social_links or {},
         isVerified=profile.is_verified,
@@ -238,7 +237,9 @@ def _to_card_pack_list_item(pack) -> CardPackListItem:
         description=pack.description,
         type=pack.pack_type,
         status=pack.status,
-        coverImage=pack.cover_image_storage_path,
+        coverImage=f"/files/card-packs/{pack.id}/cover"
+        if pack.cover_image_blob_hash
+        else None,
         shareId=pack.share_id,
         importCount=pack.import_count,
         publishedAt=pack.published_at,
