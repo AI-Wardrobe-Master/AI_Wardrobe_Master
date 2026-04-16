@@ -3,7 +3,6 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.router import api_router
 from app.core.config import settings
@@ -27,6 +26,12 @@ app.add_middleware(
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
 
+from app.api.v1 import files as files_router
+app.include_router(files_router.router, prefix="/files", tags=["Files"])
+
+blobs_dir = Path(settings.LOCAL_STORAGE_PATH) / "blobs"
+blobs_dir.mkdir(parents=True, exist_ok=True)
+
 
 @app.get("/")
 def root():
@@ -36,11 +41,6 @@ def root():
         "health": "/health",
         "api": settings.API_V1_STR,
     }
-
-
-storage_dir = Path(settings.LOCAL_STORAGE_PATH)
-storage_dir.mkdir(parents=True, exist_ok=True)
-app.mount("/files", StaticFiles(directory=str(storage_dir)), name="files")
 
 
 @app.on_event("startup")

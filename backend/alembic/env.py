@@ -24,6 +24,8 @@ from app.models.outfit_preview import (  # noqa: F401
 )
 from app.models.wardrobe import Wardrobe, WardrobeItem  # noqa: F401
 from app.models.styled_generation import StyledGeneration  # noqa: F401
+from app.models.blob import Blob  # noqa: F401
+from app.models.card_pack_import import CardPackImport  # noqa: F401
 
 config = context.config
 

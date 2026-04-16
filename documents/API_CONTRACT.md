@@ -1598,6 +1598,74 @@ No content.
 
 ---
 
+## 11. Card Pack Import / Un-import
+
+### 11.1 Import Card Pack
+```
+POST /imports/card-pack
+```
+
+**Request Body:**
+```json
+{
+  "card_pack_id": "pack-uuid"
+}
+```
+
+**Response (201):**
+```json
+{
+  "cardPackId": "pack-uuid",
+  "importedItemIds": ["item-1", "item-2", "item-3"]
+}
+```
+
+**Error responses:**
+- `404` — Pack not found or not published
+- `409` — Pack already imported by this user
+
+### 11.2 Un-import Card Pack
+```
+DELETE /imports/card-pack/{pack_id}
+```
+
+Removes the import record and all clothing_items that originated from this pack for the current user.
+
+**Response (204):** No content
+
+### 11.3 Delete Clothing Item
+```
+DELETE /clothing-items/{id}
+```
+
+Permanently deletes a clothing item (OWNED or IMPORTED) and releases blob storage references.
+
+**Response (204):** No content
+
+**Error responses:**
+- `404` — Item not found
+- `409` — Cannot delete while processing (active PENDING/PROCESSING task)
+
+### 11.4 Archive Card Pack
+```
+POST /card-packs/{id}/archive
+```
+
+Archives a published card pack (hides from discovery). Existing imports are unaffected.
+
+**Response (200):** Updated card pack object
+
+### 11.5 URL Format Change
+
+All file URLs now use business paths instead of raw storage paths:
+- Clothing images: `/files/clothing-items/{id}/{kind}` where kind is `original-front`, `processed-front`, `angle-0`..`angle-315`, `model`
+- Creator items: `/files/creator-items/{id}/{kind}`
+- Styled generations: `/files/styled-generations/{id}/{kind}` where kind is `selfie-original`, `selfie-processed`, `result`
+- Card pack covers: `/files/card-packs/{id}/cover`
+- Outfit previews: `/files/outfit-preview-tasks/{id}/preview` or `/files/outfits/{id}/preview`
+
+---
+
 ## Error Codes
 
 ### Authentication Errors

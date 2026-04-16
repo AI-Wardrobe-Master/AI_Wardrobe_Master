@@ -3,7 +3,6 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     ARRAY,
-    BigInteger,
     Boolean,
     CheckConstraint,
     Column,
@@ -41,6 +40,17 @@ class ClothingItem(Base):
     description = Column(Text)
     custom_tags = Column(ARRAY(String), default=[])
 
+    imported_from_card_pack_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("card_packs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    imported_from_creator_item_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("creator_items.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     created_at = Column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -56,6 +66,7 @@ class ClothingItem(Base):
         Index("idx_clothing_user_created", "user_id", "created_at"),
         Index("idx_clothing_final_tags", "final_tags", postgresql_using="gin"),
         Index("idx_clothing_custom_tags", "custom_tags", postgresql_using="gin"),
+        Index("idx_clothing_items_imported_from_pack", "imported_from_card_pack_id"),
     )
 
     images = relationship(
@@ -83,10 +94,8 @@ class Image(Base):
         index=True,
     )
     image_type = Column(String(20), nullable=False)
-    storage_path = Column(Text, nullable=False)
+    blob_hash = Column(String(64), ForeignKey("blobs.blob_hash"), nullable=False)
     angle = Column(Integer, nullable=True)
-    file_size = Column(BigInteger, nullable=True)
-    mime_type = Column(String(50), nullable=True)
     created_at = Column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -132,10 +141,9 @@ class Model3D(Base):
         nullable=False,
     )
     model_format = Column(String(10), nullable=False, default="glb")
-    storage_path = Column(Text, nullable=False)
+    blob_hash = Column(String(64), ForeignKey("blobs.blob_hash"), nullable=False)
     vertex_count = Column(Integer, nullable=True)
     face_count = Column(Integer, nullable=True)
-    file_size = Column(BigInteger, nullable=True)
     created_at = Column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

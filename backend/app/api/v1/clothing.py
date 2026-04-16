@@ -1,3 +1,4 @@
+import io
 import logging
 from typing import Optional
 from uuid import UUID, uuid4
@@ -28,15 +29,16 @@ from app.services.processing_task_service import (
     get_latest_task,
 )
 from app.services.search_service import SearchService
-from app.services.storage_service import StorageService, get_storage_service
+from app.services.blob_service import get_blob_service
+from app.services.blob_storage import get_blob_storage
 from app.tasks import process_pipeline
 
 router = APIRouter(prefix="/clothing-items", tags=["clothing"])
 logger = logging.getLogger(__name__)
 
 
-def _storage() -> StorageService:
-    return get_storage_service()
+def _build_image_url(item_id: UUID, kind: str) -> str:
+    return f"/files/clothing-items/{item_id}/{kind}"
 
 
 def _item_to_response(item) -> dict:
@@ -71,7 +73,7 @@ async def create_clothing_item(
     )
     predicted_tags = AIService().classify_bytes(front_bytes)
     predicted_tag_dicts = [_tag_to_dict(tag) for tag in predicted_tags]
-    storage = _storage()
+    blob_service = get_blob_service()
     item = ClothingItem(
         id=uuid4(),
         user_id=user_id,
@@ -82,31 +84,39 @@ async def create_clothing_item(
         final_tags=list(predicted_tag_dicts),
         is_confirmed=False,
     )
-    front_path = _storage_path(user_id, item.id, "original_front.jpg")
-    back_path = _storage_path(user_id, item.id, "original_back.jpg") if back_bytes else None
-    uploaded_paths: list[str] = []
 
     try:
-        await storage.upload(_to_buffer(front_bytes), front_path)
-        uploaded_paths.append(front_path)
-        if back_bytes and back_path:
-            await storage.upload(_to_buffer(back_bytes), back_path)
-            uploaded_paths.append(back_path)
+        front_blob = await blob_service.ingest_upload(
+            db, io.BytesIO(front_bytes),
+            claimed_mime_type=front_image.content_type or "image/jpeg",
+            max_size=settings.MAX_UPLOAD_SIZE_BYTES,
+        )
+
+        back_blob = None
+        if back_bytes:
+            back_blob = await blob_service.ingest_upload(
+                db, io.BytesIO(back_bytes),
+                claimed_mime_type=back_image.content_type or "image/jpeg",
+                max_size=settings.MAX_UPLOAD_SIZE_BYTES,
+            )
 
         db.add(item)
         db.flush()
-        db.add(Image(clothing_item_id=item.id, image_type="ORIGINAL_FRONT", storage_path=front_path))
-        if back_path:
-            db.add(Image(clothing_item_id=item.id, image_type="ORIGINAL_BACK", storage_path=back_path))
+        db.add(Image(
+            clothing_item_id=item.id,
+            image_type="ORIGINAL_FRONT",
+            blob_hash=front_blob.blob_hash,
+        ))
+        if back_blob:
+            db.add(Image(
+                clothing_item_id=item.id,
+                image_type="ORIGINAL_BACK",
+                blob_hash=back_blob.blob_hash,
+            ))
         task = create_processing_task(db, item.id, attempt_no=1)
         db.commit()
     except Exception:
         db.rollback()
-        for path in uploaded_paths:
-            try:
-                await storage.delete(path)
-            except Exception:
-                logger.warning("Failed to cleanup original upload %s", path, exc_info=True)
         raise
 
     _dispatch_processing_task(db, task.id)
@@ -128,17 +138,16 @@ def get_clothing_item(
     if not item:
         raise HTTPException(404, "Clothing item not found")
 
-    storage = _storage()
     images = db.query(Image).filter(Image.clothing_item_id == item_id).all()
     model = db.query(Model3D).filter(Model3D.clothing_item_id == item_id).first()
 
-    image_set = _build_image_set(images, storage)
+    image_set = _build_image_set(item_id, images)
     return ClothingItemResponse(
         id=item.id,
         userId=item.user_id,
         source=item.source,
         images=image_set,
-        model3dUrl=storage.get_url(model.storage_path) if model else None,
+        model3dUrl=_build_image_url(item_id, "model") if model else None,
         predictedTags=item.predicted_tags or [],
         finalTags=item.final_tags or [],
         isConfirmed=item.is_confirmed,
@@ -170,6 +179,29 @@ def update_clothing_item(
     if not item:
         raise HTTPException(status_code=404, detail="Clothing item not found")
     return {"success": True, "data": _item_to_response(item)}
+
+
+@router.delete("/{item_id}", status_code=204)
+def delete_clothing_item(
+    item_id: UUID,
+    db: Session = Depends(get_db),
+    user_id: UUID = Depends(get_current_user_id),
+):
+    from app.api.v1.imports import _delete_clothing_item_internal
+
+    item = crud_clothing.get(db, item_id, user_id)
+    if not item:
+        raise HTTPException(404, "Clothing item not found")
+
+    active = db.query(ProcessingTask).filter(
+        ProcessingTask.clothing_item_id == item_id,
+        ProcessingTask.status.in_(["PENDING", "PROCESSING"]),
+    ).first()
+    if active:
+        raise HTTPException(409, "Cannot delete while processing")
+
+    _delete_clothing_item_internal(db, item)
+    db.commit()
 
 
 @router.get("")
@@ -288,8 +320,7 @@ async def retry_processing(
     if last_task.status != "FAILED":
         raise HTTPException(400, "Only failed tasks can be retried")
 
-    storage = _storage()
-    await cleanup_pipeline_artifacts(db, storage, item.id, commit=False)
+    await cleanup_pipeline_artifacts(db, item.id, commit=False)
     try:
         task = create_processing_task(
             db,
@@ -327,9 +358,8 @@ def get_angle_views(
         .order_by(Image.angle)
         .all()
     )
-    storage = _storage()
     views = {
-        img.angle: storage.get_url(img.storage_path)
+        img.angle: _build_image_url(item_id, f"angle-{img.angle}")
         for img in images
         if img.angle is not None
     }
@@ -350,8 +380,8 @@ async def download_model(
     if not model:
         raise HTTPException(404, "3D model not found")
 
-    storage = _storage()
-    data = await storage.download(model.storage_path)
+    blob_storage = get_blob_storage()
+    data = await blob_storage.get_bytes(model.blob_hash)
 
     from fastapi.responses import Response
 
@@ -362,23 +392,22 @@ async def download_model(
     )
 
 
-def _build_image_set(images: list[Image], storage: StorageService) -> ImageSetResponse:
+def _build_image_set(item_id: UUID, images: list[Image]) -> ImageSetResponse:
     result = ImageSetResponse(originalFrontUrl="")
     angle_views: dict[int, str] = {}
 
     for img in images:
-        url = storage.get_url(img.storage_path)
         match img.image_type:
             case "ORIGINAL_FRONT":
-                result.originalFrontUrl = url
+                result.originalFrontUrl = _build_image_url(item_id, "original-front")
             case "ORIGINAL_BACK":
-                result.originalBackUrl = url
+                result.originalBackUrl = _build_image_url(item_id, "original-back")
             case "PROCESSED_FRONT":
-                result.processedFrontUrl = url
+                result.processedFrontUrl = _build_image_url(item_id, "processed-front")
             case "PROCESSED_BACK":
-                result.processedBackUrl = url
+                result.processedBackUrl = _build_image_url(item_id, "processed-back")
             case "ANGLE_VIEW" if img.angle is not None:
-                angle_views[img.angle] = url
+                angle_views[img.angle] = _build_image_url(item_id, f"angle-{img.angle}")
 
     result.angleViews = angle_views
     return result
@@ -397,16 +426,6 @@ async def _read_upload_bytes(file: UploadFile, field_name: str) -> bytes:
             f"{field_name} exceeds the {settings.MAX_UPLOAD_SIZE_BYTES} byte limit",
         )
     return payload
-
-
-def _storage_path(user_id: UUID, item_id: UUID, filename: str) -> str:
-    return f"{user_id}/{item_id}/{filename}"
-
-
-def _to_buffer(payload: bytes):
-    import io
-
-    return io.BytesIO(payload)
 
 
 def _dispatch_processing_task(db: Session, task_id: UUID) -> None:

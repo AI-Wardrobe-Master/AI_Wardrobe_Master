@@ -507,3 +507,39 @@ CREATE TABLE styled_generations (
 );
 ```
 
+### Content-Addressed Storage (CAS)
+
+All binary assets (images, GLB models) are stored using content-addressed storage. Files are identified by their SHA-256 hash, not by user/item paths.
+
+**Architecture:**
+- `blobs` table: central registry with `blob_hash CHAR(64)` PK, `byte_size`, `mime_type`, `ref_count`, `pending_delete_at`
+- `BlobStorage` (byte layer): `LocalBlobStorage` or `S3BlobStorage`, stores files at `blobs/{hash[:2]}/{hash[2:4]}/{hash}`
+- `BlobService` (DB layer): manages ref_count via `ingest_upload()`, `addref()`, `release()`
+- Concurrency safety: PostgreSQL advisory locks (`pg_advisory_xact_lock`) serialize per-hash operations
+- GC: Celery Beat sweeps blobs with `ref_count=0` after 24h grace period
+
+**Business tables reference blobs via `blob_hash CHAR(64) FK`:**
+- `images.blob_hash`, `models_3d.blob_hash` (consumer clothing)
+- `creator_item_images.blob_hash`, `creator_models_3d.blob_hash` (creator clothing)
+- `styled_generations.selfie_original_blob_hash`, `.selfie_processed_blob_hash`, `.result_image_blob_hash`
+- `outfit_preview_tasks.person_image_blob_hash`, `.preview_image_blob_hash`
+- `outfit_preview_task_items.garment_image_blob_hash`
+- `outfits.preview_image_blob_hash`
+- `card_packs.cover_image_blob_hash`
+
+**URL delivery:** All file URLs use business paths (`/files/clothing-items/{id}/{kind}`), never expose hashes. The `/files` router resolves `blob_hash` internally and streams bytes.
+
+### Card Pack Import Flow
+
+When a consumer imports a published card pack:
+1. `card_pack_imports` record created (tracks import binding)
+2. For each `creator_item` in the pack: a snapshot `clothing_items` row is created with `source='IMPORTED'`, copying metadata (tags, name, description) but sharing blob references via `addref()`
+3. `import_count` on the card pack is incremented
+4. Consumer can delete individual imported items or un-import the entire pack
+
+**Deletion rules:**
+- Consumer clothing_item (OWNED or IMPORTED): always deletable (releases blob refs)
+- Creator item in published pack: blocked (new imports need it)
+- Card pack ARCHIVE: always allowed (hides from discovery, doesn't affect imports)
+- Card pack HARD DELETE: blocked while `card_pack_imports` count > 0
+

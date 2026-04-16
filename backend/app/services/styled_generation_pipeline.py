@@ -28,7 +28,9 @@ from app.services.selfie_preprocessing_service import (
     SelfiePreprocessingError,
     preprocess_selfie,
 )
-from app.services.storage_service import get_storage_service
+from app.core.config import settings
+from app.services.blob_service import get_blob_service
+from app.services.blob_storage import get_blob_storage
 
 logger = logging.getLogger(__name__)
 
@@ -39,10 +41,6 @@ def _update_progress(db: Session, gen: StyledGeneration, progress: int):
     db.commit()
 
 
-def _gen_path(user_id: UUID, gen_id: UUID, filename: str) -> str:
-    return f"{user_id}/styled-generations/{gen_id}/{filename}"
-
-
 async def run_styled_generation_task(generation_id: UUID) -> bool:
     """
     Main pipeline entry point, called from Celery task.
@@ -50,7 +48,8 @@ async def run_styled_generation_task(generation_id: UUID) -> bool:
     Returns True on success, raises on failure (Celery will record the error).
     """
     db = SessionLocal()
-    storage = get_storage_service()
+    blob_storage = get_blob_storage()
+    blob_service = get_blob_service()
     try:
         gen = (
             db.query(StyledGeneration)
@@ -93,14 +92,14 @@ async def run_styled_generation_task(generation_id: UUID) -> bool:
                     "Garment asset not ready: no processed front image. "
                     "Please wait for clothing processing to complete."
                 )
-            garment_bytes = await storage.download(
-                processed_img.storage_path
+            garment_bytes = await blob_storage.get_bytes(
+                processed_img.blob_hash
             )
         _update_progress(db, gen, 15)
 
         # Step 2: Download and preprocess selfie
-        selfie_original_bytes = await storage.download(
-            gen.selfie_original_path
+        selfie_original_bytes = await blob_storage.get_bytes(
+            gen.selfie_original_blob_hash
         )
         try:
             selfie_processed_bytes = await preprocess_selfie(
@@ -109,13 +108,12 @@ async def run_styled_generation_task(generation_id: UUID) -> bool:
         except SelfiePreprocessingError as e:
             raise RuntimeError(f"Selfie validation failed: {e}")
 
-        processed_path = _gen_path(
-            gen.user_id, gen.id, "selfie_processed.png"
+        proc_blob = await blob_service.ingest_upload(
+            db, io.BytesIO(selfie_processed_bytes),
+            claimed_mime_type="image/png",
+            max_size=settings.SELFIE_MAX_UPLOAD_SIZE_BYTES * 2,
         )
-        await storage.upload(
-            io.BytesIO(selfie_processed_bytes), processed_path
-        )
-        gen.selfie_processed_path = processed_path
+        gen.selfie_processed_blob_hash = proc_blob.blob_hash
         db.commit()
         _update_progress(db, gen, 30)
 
@@ -138,10 +136,13 @@ async def run_styled_generation_task(generation_id: UUID) -> bool:
         _update_progress(db, gen, 90)
 
         # Step 5: Store result
-        result_path = _gen_path(gen.user_id, gen.id, "result.png")
-        await storage.upload(io.BytesIO(result_bytes), result_path)
+        result_blob = await blob_service.ingest_upload(
+            db, io.BytesIO(result_bytes),
+            claimed_mime_type="image/png",
+            max_size=settings.SELFIE_MAX_UPLOAD_SIZE_BYTES * 4,
+        )
 
-        gen.result_image_path = result_path
+        gen.result_image_blob_hash = result_blob.blob_hash
         gen.seed = seed_used
         gen.status = "SUCCEEDED"
         gen.progress = 100

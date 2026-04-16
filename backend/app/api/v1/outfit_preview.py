@@ -24,7 +24,6 @@ from app.services.outfit_preview_service import (
     enqueue_preview_generation,
     save_outfit_from_preview_task,
 )
-from app.services.storage_service import get_storage_service
 
 router = APIRouter(prefix="/outfit-preview-tasks", tags=["outfit-preview"])
 ALLOWED_STATUSES = {"PENDING", "PROCESSING", "COMPLETED", "FAILED"}
@@ -133,15 +132,14 @@ def save_outfit_from_preview_task_route(
 
 
 def _to_task_detail(task) -> OutfitPreviewTaskDetail:
-    storage = get_storage_service()
     return OutfitPreviewTaskDetail(
         id=task.id,
         status=task.status,
         clothingItemIds=[item.clothing_item_id for item in task.items],
         personViewType=task.person_view_type,
         garmentCategories=[item.garment_category for item in task.items],
-        previewImageUrl=storage.get_url(task.preview_image_path)
-        if task.preview_image_path
+        previewImageUrl=f"/files/outfit-preview-tasks/{task.id}/preview"
+        if task.preview_image_blob_hash
         else None,
         errorCode=task.error_code,
         errorMessage=task.error_message,
@@ -166,13 +164,12 @@ def _to_task_list_item(task) -> OutfitPreviewTaskListItem:
 
 
 def _to_outfit_detail(outfit) -> OutfitDetail:
-    storage = get_storage_service()
     return OutfitDetail(
         id=outfit.id,
         userId=outfit.user_id,
         previewTaskId=outfit.preview_task_id,
         name=outfit.name,
-        previewImageUrl=storage.get_url(outfit.preview_image_path),
+        previewImageUrl=f"/files/outfits/{outfit.id}/preview",
         clothingItemIds=[item.clothing_item_id for item in outfit.items],
         createdAt=outfit.created_at,
         updatedAt=outfit.updated_at,

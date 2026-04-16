@@ -109,6 +109,30 @@ services:
     volumes:
       - backend_storage:/app/storage
 
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      POSTGRES_SERVER: db
+      POSTGRES_USER: wardrobe_user
+      POSTGRES_PASSWORD: wardrobe_pass
+      POSTGRES_DB: wardrobe_db
+      POSTGRES_PORT: 5432
+      REDIS_URL: redis://redis:6379/0
+      LOCAL_STORAGE_PATH: /app/storage
+      PYTHONPATH: /app
+    command: >
+      celery -A app.core.celery_app beat
+      --loglevel=info
+    volumes:
+      - backend_storage:/app/storage
+
   dreamo:
     build:
       context: ./DreamO

@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.crud import card_pack as crud_card_pack
 from app.crud import creator as crud_creator
 from app.db.session import get_db
+from app.models.card_pack_import import CardPackImport
 from app.models.creator import CardPackItem
 from app.schemas.card_pack import (
     CardPackCreate,
@@ -18,7 +19,7 @@ from app.schemas.card_pack import (
     CardPackPublishResponse,
     CardPackUpdate,
 )
-from app.services.storage_service import StorageService, get_storage_service
+from app.services.blob_service import get_blob_service
 
 router = APIRouter(prefix="/card-packs", tags=["card-packs"])
 
@@ -35,10 +36,10 @@ def create_card_pack(
         name=body.name,
         description=body.description,
         pack_type=body.pack_type,
-        cover_image_storage_path=body.cover_image,
+        cover_image_blob_hash=body.cover_image,
         item_ids=body.item_ids,
     )
-    return CardPackDetailResponse(data=_to_card_pack_detail(pack, get_storage_service()))
+    return CardPackDetailResponse(data=_to_card_pack_detail(pack))
 
 
 @router.get("/{pack_id}", response_model=CardPackDetailResponse)
@@ -58,7 +59,7 @@ def get_card_pack(
         pack = crud_card_pack.get_public_card_pack(db, pack_id=pack_id)
     if pack is None:
         raise HTTPException(404, "Card pack not found")
-    return CardPackDetailResponse(data=_to_card_pack_detail(pack, get_storage_service()))
+    return CardPackDetailResponse(data=_to_card_pack_detail(pack))
 
 
 @router.get("/share/{share_id}", response_model=CardPackDetailResponse)
@@ -69,7 +70,7 @@ def get_card_pack_by_share_id(
     pack = crud_card_pack.get_public_card_pack(db, share_id=share_id)
     if pack is None:
         raise HTTPException(404, "Card pack not found")
-    return CardPackDetailResponse(data=_to_card_pack_detail(pack, get_storage_service()))
+    return CardPackDetailResponse(data=_to_card_pack_detail(pack))
 
 
 @router.patch("/{pack_id}", response_model=CardPackDetailResponse)
@@ -93,10 +94,10 @@ def update_card_pack(
         name=body.name,
         description=body.description,
         item_ids=body.item_ids,
-        cover_image_storage_path=body.cover_image,
+        cover_image_blob_hash=body.cover_image,
     )
     return CardPackDetailResponse(
-        data=_to_card_pack_detail(updated, get_storage_service())
+        data=_to_card_pack_detail(updated)
     )
 
 
@@ -115,7 +116,7 @@ def publish_card_pack(
     if pack is None:
         raise HTTPException(404, "Card pack not found")
     published = crud_card_pack.publish_card_pack(db, pack)
-    detail = _to_card_pack_detail(published, get_storage_service())
+    detail = _to_card_pack_detail(published)
     return CardPackPublishResponse(
         data=CardPackPublishData(
             **detail.model_dump(by_alias=True),
@@ -140,7 +141,7 @@ def archive_card_pack(
         raise HTTPException(404, "Card pack not found")
     archived = crud_card_pack.archive_card_pack(db, pack)
     return CardPackDetailResponse(
-        data=_to_card_pack_detail(archived, get_storage_service())
+        data=_to_card_pack_detail(archived)
     )
 
 
@@ -158,13 +159,21 @@ def delete_card_pack(
     )
     if pack is None:
         raise HTTPException(404, "Card pack not found")
+    import_count = db.query(CardPackImport).filter_by(card_pack_id=pack_id).count()
+    if import_count > 0:
+        raise HTTPException(409, f"{import_count} user(s) have imported this pack")
+    cover_blob_hash = pack.cover_image_blob_hash
     crud_card_pack.delete_card_pack(db, pack)
+    if cover_blob_hash:
+        blob_service = get_blob_service()
+        blob_service.release(db, cover_blob_hash)
+        db.commit()
     return None
 
 
-def _to_card_pack_detail(pack, storage: StorageService) -> CardPackDetail:
+def _to_card_pack_detail(pack) -> CardPackDetail:
     items = [
-        _to_card_pack_item_summary(pack_item, storage)
+        _to_card_pack_item_summary(pack_item)
         for pack_item in pack.items
     ]
     return CardPackDetail(
@@ -174,7 +183,7 @@ def _to_card_pack_detail(pack, storage: StorageService) -> CardPackDetail:
         description=pack.description,
         type=pack.pack_type,
         status=pack.status,
-        coverImage=pack.cover_image_storage_path,
+        coverImage=f"/files/card-packs/{pack.id}/cover" if pack.cover_image_blob_hash else None,
         shareId=pack.share_id,
         importCount=pack.import_count,
         publishedAt=pack.published_at,
@@ -188,26 +197,18 @@ def _to_card_pack_detail(pack, storage: StorageService) -> CardPackDetail:
 
 def _to_card_pack_item_summary(
     pack_item: CardPackItem,
-    storage: StorageService,
 ) -> CardPackItemSummary:
     creator_item = pack_item.creator_item
-    cover_path = None
+    cover_url = None
     if creator_item is not None:
-        cover_path = next(
-            (
-                image.storage_path
-                for image in creator_item.images
-                if image.image_type == "PROCESSED_FRONT"
-            ),
-            None,
-        ) or next(
-            (
-                image.storage_path
-                for image in creator_item.images
-                if image.image_type == "ORIGINAL_FRONT"
-            ),
-            None,
+        has_processed = any(
+            image.image_type == "PROCESSED_FRONT"
+            for image in creator_item.images
         )
+        if has_processed:
+            cover_url = f"/files/creator-items/{creator_item.id}/processed-front"
+        elif any(image.image_type == "ORIGINAL_FRONT" for image in creator_item.images):
+            cover_url = f"/files/creator-items/{creator_item.id}/original-front"
     return CardPackItemSummary(
         id=pack_item.id,
         creatorItemId=pack_item.creator_item_id,
@@ -216,7 +217,7 @@ def _to_card_pack_item_summary(
         description=creator_item.description if creator_item else None,
         catalogVisibility=creator_item.catalog_visibility if creator_item else "PACK_ONLY",
         processingStatus=creator_item.processing_status if creator_item else "PENDING",
-        coverUrl=storage.get_url(cover_path) if cover_path else None,
+        coverUrl=cover_url,
         finalTags=(creator_item.final_tags or []) if creator_item else [],
         createdAt=pack_item.created_at,
     )

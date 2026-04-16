@@ -3,7 +3,6 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     ARRAY,
-    BigInteger,
     Boolean,
     CheckConstraint,
     Column,
@@ -138,10 +137,8 @@ class CreatorItemImage(Base):
         index=True,
     )
     image_type = Column(String(20), nullable=False)
-    storage_path = Column(Text, nullable=False)
+    blob_hash = Column(String(64), ForeignKey("blobs.blob_hash"), nullable=False)
     angle = Column(Integer, nullable=True)
-    file_size = Column(BigInteger, nullable=True)
-    mime_type = Column(String(50), nullable=True)
     created_at = Column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -187,10 +184,9 @@ class CreatorItemModel3D(Base):
         nullable=False,
     )
     model_format = Column(String(10), nullable=False, default="glb")
-    storage_path = Column(Text, nullable=False)
+    blob_hash = Column(String(64), ForeignKey("blobs.blob_hash"), nullable=False)
     vertex_count = Column(Integer, nullable=True)
     face_count = Column(Integer, nullable=True)
-    file_size = Column(BigInteger, nullable=True)
     created_at = Column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -273,7 +269,7 @@ class CardPack(Base):
     description = Column(Text, nullable=True)
     pack_type = Column(String(40), nullable=False, default="CLOTHING_COLLECTION")
     status = Column(String(20), nullable=False, default="DRAFT")
-    cover_image_storage_path = Column(Text, nullable=True)
+    cover_image_blob_hash = Column(String(64), ForeignKey("blobs.blob_hash"), nullable=True)
     share_id = Column(String(64), nullable=True, unique=True)
     import_count = Column(Integer, nullable=False, default=0)
     published_at = Column(DateTime(timezone=True), nullable=True)

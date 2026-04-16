@@ -35,7 +35,7 @@ from app.schemas.styled_generation import (
     StyledGenerationCreateResponse,
     StyledGenerationResponse,
 )
-from app.services.storage_service import get_storage_service
+from app.services.blob_service import get_blob_service
 from app.tasks import run_styled_generation
 
 router = APIRouter(prefix="/styled-generations", tags=["Styled Generation"])
@@ -46,15 +46,14 @@ logger = logging.getLogger(__name__)
 
 
 def _to_response(gen: StyledGeneration) -> dict:
-    storage = get_storage_service()
     return StyledGenerationResponse(
         id=gen.id,
         userId=gen.user_id,
         sourceClothingItemId=gen.source_clothing_item_id,
-        selfieOriginalUrl=storage.get_url(gen.selfie_original_path),
+        selfieOriginalUrl=f"/files/styled-generations/{gen.id}/selfie-original",
         selfieProcessedUrl=(
-            storage.get_url(gen.selfie_processed_path)
-            if gen.selfie_processed_path
+            f"/files/styled-generations/{gen.id}/selfie-processed"
+            if gen.selfie_processed_blob_hash
             else None
         ),
         scenePrompt=gen.scene_prompt,
@@ -63,8 +62,8 @@ def _to_response(gen: StyledGeneration) -> dict:
         status=gen.status,
         progress=gen.progress,
         resultImageUrl=(
-            storage.get_url(gen.result_image_path)
-            if gen.result_image_path
+            f"/files/styled-generations/{gen.id}/result"
+            if gen.result_image_blob_hash
             else None
         ),
         failureReason=gen.failure_reason,
@@ -148,18 +147,21 @@ async def create_styled_generation(
             422, "width and height must be between 768 and 1024"
         )
 
-    # Store selfie original
-    storage = get_storage_service()
+    # Store selfie original via CAS blob service
+    blob_service = get_blob_service()
     gen_id = uuid4()
-    selfie_path = f"{user_id}/styled-generations/{gen_id}/selfie_original.jpg"
-    await storage.upload(io.BytesIO(selfie_bytes), selfie_path)
+    selfie_blob = await blob_service.ingest_upload(
+        db, io.BytesIO(selfie_bytes),
+        claimed_mime_type=selfie_image.content_type or "image/jpeg",
+        max_size=settings.SELFIE_MAX_UPLOAD_SIZE_BYTES,
+    )
 
     # Create DB record
     gen = StyledGeneration(
         id=gen_id,
         user_id=user_id,
         source_clothing_item_id=item_uuid,
-        selfie_original_path=selfie_path,
+        selfie_original_blob_hash=selfie_blob.blob_hash,
         scene_prompt=scene_prompt,
         negative_prompt=negative_prompt,
         dreamo_version=settings.DREAMO_DEFAULT_VERSION,
@@ -245,8 +247,8 @@ def retry_styled_generation(
     gen.status = "PENDING"
     gen.progress = 0
     gen.failure_reason = None
-    gen.result_image_path = None
-    gen.selfie_processed_path = None
+    gen.result_image_blob_hash = None
+    gen.selfie_processed_blob_hash = None
     db.commit()
 
     try:
@@ -278,18 +280,18 @@ async def delete_styled_generation(
             409, "Cannot delete a generation that is still processing"
         )
 
-    # Clean up storage
-    storage = get_storage_service()
-    for path in [
-        gen.selfie_original_path,
-        gen.selfie_processed_path,
-        gen.result_image_path,
+    # Release blob references (GC will clean up physical bytes)
+    blob_service = get_blob_service()
+    for blob_hash in [
+        gen.selfie_original_blob_hash,
+        gen.selfie_processed_blob_hash,
+        gen.result_image_blob_hash,
     ]:
-        if path:
+        if blob_hash:
             try:
-                await storage.delete(path)
+                blob_service.release(db, blob_hash)
             except Exception:
-                logger.warning("Failed to delete storage path: %s", path)
+                logger.warning("Failed to release blob: %s", blob_hash)
 
     db.delete(gen)
     db.commit()

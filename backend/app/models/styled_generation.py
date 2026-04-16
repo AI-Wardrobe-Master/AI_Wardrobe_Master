@@ -35,8 +35,8 @@ class StyledGeneration(Base):
         index=True,
     )
 
-    selfie_original_path = Column(Text, nullable=False)
-    selfie_processed_path = Column(Text, nullable=True)
+    selfie_original_blob_hash = Column(String(64), ForeignKey("blobs.blob_hash"), nullable=False)
+    selfie_processed_blob_hash = Column(String(64), ForeignKey("blobs.blob_hash"), nullable=True)
 
     scene_prompt = Column(Text, nullable=False)
     negative_prompt = Column(Text, nullable=True)
@@ -44,7 +44,7 @@ class StyledGeneration(Base):
 
     status = Column(String(20), nullable=False, default="PENDING")
     progress = Column(Integer, nullable=False, default=0)
-    result_image_path = Column(Text, nullable=True)
+    result_image_blob_hash = Column(String(64), ForeignKey("blobs.blob_hash"), nullable=True)
     failure_reason = Column(Text, nullable=True)
 
     guidance_scale = Column(Float, nullable=False, default=4.5)

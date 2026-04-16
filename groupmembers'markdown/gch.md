@@ -109,3 +109,41 @@
   - 更新 documents/API_CONTRACT.md — 新增第 10 节 Styled Generations
   - 更新 documents/BACKEND_ARCHITECTURE.md — 新增 StyledGeneration 实体和 DreamO 流水线说明
   - 更新 backend/README.md — 新增模块说明、Celery worker 启动命令、DreamO 服务说明
+
+### 2026.4.15-16
+#### 内容寻址存储（CAS）重构 + 卡包导入/删除流程
+
+##### 1. 内容寻址存储（CAS）
+  - 新增 `blobs` 表：所有二进制文件（图片、GLB 模型）按 SHA-256 哈希去重存储
+  - 新增 `BlobStorage` 字节层（LocalBlobStorage + S3BlobStorage），文件路径 `blobs/{hash[:2]}/{hash[2:4]}/{hash}`
+  - 新增 `BlobService` 引用计数层：ingest_upload / addref / release，PostgreSQL advisory lock 保证并发安全
+  - 替换全部 12 个 `storage_path TEXT` 列为 `blob_hash CHAR(64) FK→blobs`
+  - 删除旧 `storage_service.py`，全部 API / pipeline / service 切换到新 blob 接口
+  - 新增 `/files` 业务路由：按 `/files/clothing-items/{id}/{kind}` 格式流式返回内容，不暴露哈希
+
+##### 2. 卡包导入/退订流程
+  - 新增 `card_pack_imports` 表，记录"用户 U 导入了卡包 P"
+  - `POST /imports/card-pack`：整包导入，为每个 creator_item 创建快照 clothing_items（source=IMPORTED），共享 blob 引用
+  - `DELETE /imports/card-pack/{pack_id}`：退订整包，删除所有来自该包的 clothing_items，释放 blob 引用
+  - `clothing_items` 新增 `imported_from_card_pack_id` 和 `imported_from_creator_item_id` 弱引用追溯来源
+
+##### 3. 删除逻辑
+  - 新增 `DELETE /clothing-items/{id}`：消费者可以删除自己的衣物（OWNED 或 IMPORTED），释放 blob 引用
+  - 卡包 ARCHIVE 无条件允许；HARD DELETE 需要 import_count=0
+  - 创作者衣物在已发布卡包中时禁止删除
+
+##### 4. 异步 GC
+  - 新增 `gc_sweep` Celery 任务：每小时扫描 `ref_count=0` 且超过 24 小时的 blob，物理删除
+  - advisory lock 防止 GC 和 ingest 的竞态
+  - Docker Compose 新增 `celery-beat` 服务
+
+##### 5. 数据库迁移
+  - 新增 Alembic 迁移 `20260415_000010`（接在 `20260413_000005` 之后）
+  - 此前修复了迁移链分叉问题（`20260413_000005` 的 down_revision 从 `20260401_000004` 改为 `20260402_000007`）
+
+##### 6. 运维工具
+  - `backend/scripts/verify_blob_refcount.py`：校验所有业务表的 blob_hash 引用计数与 `blobs.ref_count` 一致性
+
+##### 7. 涉及文件统计
+  - 新增 9 个文件，修改 ~28 个文件，删除 1 个文件
+  - 总计 +4604 / -499 行
