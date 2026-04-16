@@ -14,9 +14,10 @@ from app.models.clothing_item import ClothingItem, Image, Model3D, ProcessingTas
 from app.services import background_removal_service as bg
 from app.services import model_3d_service as m3d
 from app.services import angle_renderer_service as renderer
+from app.core.config import settings
+from app.services.blob_service import get_blob_service
+from app.services.blob_storage import get_blob_storage
 from app.services.processing_task_service import claim_processing_task
-from app.services.storage_service import StorageService
-from app.services.storage_service import get_storage_service
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,8 @@ DERIVED_IMAGE_TYPES = ("PROCESSED_FRONT", "PROCESSED_BACK", "ANGLE_VIEW")
 
 async def run_pipeline_task(task_id: UUID, worker_id: str | None = None) -> bool:
     db = SessionLocal()
-    storage = get_storage_service()
+    blob_service = get_blob_service()
+    blob_storage = get_blob_storage()
     worker = worker_id or f"pid-{task_id}"
 
     try:
@@ -42,44 +44,55 @@ async def run_pipeline_task(task_id: UUID, worker_id: str | None = None) -> bool
         if item is None:
             raise RuntimeError(f"Clothing item {task.clothing_item_id} not found")
 
-        front_bytes, back_bytes = await _load_original_images(db, storage, item.id)
+        front_bytes, back_bytes = await _load_original_images(db, blob_storage, item.id)
 
-        await cleanup_pipeline_artifacts(db, storage, item.id)
+        await cleanup_pipeline_artifacts(db, item.id)
         _update(db, task, 5)
 
         front_proc = await bg.remove_background(front_bytes)
-        proc_front_path = _image_path(item.user_id, item.id, "processed_front.png")
-        await storage.upload(io.BytesIO(front_proc), proc_front_path)
-        _upsert_image(db, item.id, "PROCESSED_FRONT", proc_front_path)
+        proc_blob = await blob_service.ingest_upload(
+            db, io.BytesIO(front_proc),
+            claimed_mime_type="image/png",
+            max_size=settings.MAX_UPLOAD_SIZE_BYTES * 2,
+        )
+        _upsert_image(db, item.id, "PROCESSED_FRONT", proc_blob.blob_hash)
 
         back_proc = None
         if back_bytes:
             back_proc = await bg.remove_background(back_bytes)
-            proc_back_path = _image_path(item.user_id, item.id, "processed_back.png")
-            await storage.upload(io.BytesIO(back_proc), proc_back_path)
-            _upsert_image(db, item.id, "PROCESSED_BACK", proc_back_path)
+            back_blob = await blob_service.ingest_upload(
+                db, io.BytesIO(back_proc),
+                claimed_mime_type="image/png",
+                max_size=settings.MAX_UPLOAD_SIZE_BYTES * 2,
+            )
+            _upsert_image(db, item.id, "PROCESSED_BACK", back_blob.blob_hash)
         _update(db, task, 25)
 
         _update(db, task, 30)
         mesh = await m3d.generate_3d_model(front_proc, back_proc)
         glb_bytes = m3d.export_mesh(mesh, "glb")
-        model_path = _image_path(item.user_id, item.id, "model.glb")
-        await storage.upload(io.BytesIO(glb_bytes), model_path)
+        model_blob = await blob_service.ingest_upload(
+            db, io.BytesIO(glb_bytes),
+            claimed_mime_type="model/gltf-binary",
+            max_size=settings.MAX_UPLOAD_SIZE_BYTES * 5,
+        )
         _upsert_model(
             db,
             item.id,
-            model_path=model_path,
+            blob_hash=model_blob.blob_hash,
             vertex_count=len(mesh.vertices),
             face_count=len(mesh.faces),
-            file_size=len(glb_bytes),
         )
         _update(db, task, 70)
 
         angle_images = renderer.render_all_angles(mesh)
         for angle_deg, png_bytes in angle_images.items():
-            angle_path = _image_path(item.user_id, item.id, f"angle_{angle_deg:03d}.png")
-            await storage.upload(io.BytesIO(png_bytes), angle_path)
-            _upsert_image(db, item.id, "ANGLE_VIEW", angle_path, angle=angle_deg)
+            angle_blob = await blob_service.ingest_upload(
+                db, io.BytesIO(png_bytes),
+                claimed_mime_type="image/png",
+                max_size=settings.MAX_UPLOAD_SIZE_BYTES * 2,
+            )
+            _upsert_image(db, item.id, "ANGLE_VIEW", angle_blob.blob_hash, angle=angle_deg)
         _update(db, task, 95)
 
         task.status = "COMPLETED"
@@ -99,7 +112,7 @@ async def run_pipeline_task(task_id: UUID, worker_id: str | None = None) -> bool
                 .first()
             )
             if item is not None:
-                await cleanup_pipeline_artifacts(db, storage, item.id)
+                await cleanup_pipeline_artifacts(db, item.id)
             task.status = "FAILED"
             task.error_message = str(exc)[:500]
             task.completed_at = datetime.now(timezone.utc)
@@ -118,14 +131,11 @@ def _update(db: Session, task: ProcessingTask, progress: int):
 
 async def cleanup_pipeline_artifacts(
     db: Session,
-    storage: StorageService,
     clothing_id: UUID,
     *,
     commit: bool = True,
 ) -> None:
-    item = db.query(ClothingItem).filter(ClothingItem.id == clothing_id).first()
-    if item is None:
-        return
+    blob_service = get_blob_service()
 
     derived_images = (
         db.query(Image)
@@ -135,33 +145,22 @@ async def cleanup_pipeline_artifacts(
         )
         .all()
     )
+    for img in derived_images:
+        blob_service.release(db, img.blob_hash)
+        db.delete(img)
+
     model = db.query(Model3D).filter(Model3D.clothing_item_id == clothing_id).first()
+    if model:
+        blob_service.release(db, model.blob_hash)
+        db.delete(model)
 
-    paths = {img.storage_path for img in derived_images}
-    if model is not None:
-        paths.add(model.storage_path)
-    paths.update(_derived_paths(item.user_id, clothing_id))
-
-    db.query(Image).filter(
-        Image.clothing_item_id == clothing_id,
-        Image.image_type.in_(DERIVED_IMAGE_TYPES),
-    ).delete(synchronize_session=False)
-    db.query(Model3D).filter(Model3D.clothing_item_id == clothing_id).delete(
-        synchronize_session=False
-    )
     if commit:
         db.commit()
-
-    for path in paths:
-        try:
-            await storage.delete(path)
-        except Exception:
-            logger.warning("Failed to cleanup storage path %s", path, exc_info=True)
 
 
 async def _load_original_images(
     db: Session,
-    storage: StorageService,
+    blob_storage,
     clothing_id: UUID,
 ) -> tuple[bytes, bytes | None]:
     images = (
@@ -175,7 +174,7 @@ async def _load_original_images(
     front_bytes = None
     back_bytes = None
     for img in images:
-        payload = await storage.download(img.storage_path)
+        payload = await blob_storage.get_bytes(img.blob_hash)
         if img.image_type == "ORIGINAL_FRONT":
             front_bytes = payload
         else:
@@ -188,9 +187,9 @@ async def _load_original_images(
 
 def _upsert_image(
     db: Session, clothing_id: UUID, image_type: str,
-    path: str, angle: int | None = None,
+    blob_hash: str, angle: int | None = None,
 ):
-    image = (
+    existing = (
         db.query(Image)
         .filter(
             Image.clothing_item_id == clothing_id,
@@ -199,52 +198,39 @@ def _upsert_image(
         )
         .first()
     )
-    if image is None:
-        image = Image(
+    if existing:
+        existing.blob_hash = blob_hash
+    else:
+        db.add(Image(
             clothing_item_id=clothing_id,
             image_type=image_type,
-            storage_path=path,
+            blob_hash=blob_hash,
             angle=angle,
-        )
-        db.add(image)
-    else:
-        image.storage_path = path
-    db.commit()
+        ))
+    db.flush()
 
 
 def _upsert_model(
     db: Session,
     clothing_id: UUID,
     *,
-    model_path: str,
+    blob_hash: str,
     vertex_count: int,
     face_count: int,
-    file_size: int,
 ) -> None:
-    model = db.query(Model3D).filter(Model3D.clothing_item_id == clothing_id).first()
-    if model is None:
-        model = Model3D(clothing_item_id=clothing_id)
-        db.add(model)
-    model.model_format = "glb"
-    model.storage_path = model_path
-    model.vertex_count = vertex_count
-    model.face_count = face_count
-    model.file_size = file_size
-    db.commit()
+    existing = db.query(Model3D).filter(Model3D.clothing_item_id == clothing_id).first()
+    if existing:
+        existing.blob_hash = blob_hash
+        existing.vertex_count = vertex_count
+        existing.face_count = face_count
+    else:
+        db.add(Model3D(
+            clothing_item_id=clothing_id,
+            model_format="glb",
+            blob_hash=blob_hash,
+            vertex_count=vertex_count,
+            face_count=face_count,
+        ))
+    db.flush()
 
 
-def _image_path(user_id: UUID, clothing_id: UUID, filename: str) -> str:
-    return f"{user_id}/{clothing_id}/{filename}"
-
-
-def _derived_paths(user_id: UUID, clothing_id: UUID) -> set[str]:
-    paths = {
-        _image_path(user_id, clothing_id, "processed_front.png"),
-        _image_path(user_id, clothing_id, "processed_back.png"),
-        _image_path(user_id, clothing_id, "model.glb"),
-    }
-    paths.update(
-        _image_path(user_id, clothing_id, f"angle_{angle:03d}.png")
-        for angle in (0, 45, 90, 135, 180, 225, 270, 315)
-    )
-    return paths
