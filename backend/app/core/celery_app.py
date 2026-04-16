@@ -21,3 +21,12 @@ celery_app.conf.update(
         "styled_generation.run": {"queue": "styled_generation"},
     },
 )
+
+from celery.schedules import crontab
+
+celery_app.conf.beat_schedule = {
+    "blob-gc-sweep": {
+        "task": "blobs.gc_sweep",
+        "schedule": crontab(minute=17),
+    },
+}
