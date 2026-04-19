@@ -334,7 +334,11 @@ CREATE INDEX idx_outfit_items_outfit ON outfit_items(outfit_id);
 CREATE TABLE creators (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'ACTIVE', 'SUSPENDED')),
+    display_name VARCHAR(100),
     brand_name VARCHAR(200),
+    bio TEXT,
+    avatar_url TEXT,
     website_url TEXT,
     social_links JSONB,  -- {platform: url}
     follower_count INTEGER DEFAULT 0,
@@ -344,6 +348,7 @@ CREATE TABLE creators (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX idx_creator_status ON creators(status);
 CREATE INDEX idx_creator_verified ON creators(is_verified);
 
 -- card_packs table

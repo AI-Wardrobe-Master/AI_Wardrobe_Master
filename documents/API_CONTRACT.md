@@ -396,7 +396,17 @@ POST /clothing-items/search
 }
 ```
 
-**Current implementation note:** the backend currently auto-predicts only `category`, and the supported values are `dress`, `hat`, `longsleeve`, `outwear`, `pants`, `shirt`, `shoes`, `shorts`, `t-shirt`. `season`, `style`, and `audience` remain valid searchable tags, but are expected to be user-supplied in `finalTags`.
+**Current implementation note:** 
+
+**Phase 1 Classification:**
+- Backend auto-predicts only `category` tag during upload
+- Supported category values (9 basic types): `dress`, `hat`, `longsleeve`, `outwear`, `pants`, `shirt`, `shoes`, `shorts`, `t-shirt`
+- Classification runs synchronously during `POST /clothing-items` before 3D generation
+- `season`, `style`, and `audience` tags are valid for search but must be user-supplied via `PATCH /clothing-items/:id`
+
+**Future Expansion:**
+- Phase 2+ will add 27 additional clothing types
+- Additional auto-classification attributes may be added in future phases
 
 **Response (200):**
 ```json
@@ -1051,6 +1061,7 @@ GET /creators/:id
   "data": {
     "userId": "creator-456",
     "username": "fashionguru",
+    "status": "ACTIVE",
     "displayName": "Fashion Guru",
     "brandName": "FG Fashion",
     "bio": "Sharing fashion inspiration",
@@ -1063,9 +1074,13 @@ GET /creators/:id
     "followerCount": 1250,
     "packCount": 15,
     "isVerified": true,
-    "verifiedAt": "2024-01-01T00:00:00Z"
+    "verifiedAt": "2024-01-01T00:00:00Z",
+    "createdAt": "2024-01-01T00:00:00Z"
   }
 }
+```
+
+**Status values:** `PENDING` | `ACTIVE` | `SUSPENDED`
 ```
 
 ### 7.2 List Creators
@@ -1297,6 +1312,7 @@ GET /clothing-items/:id/processing-status
     "progress": 60,
     "steps": {
       "upload": "completed",
+      "classification": "completed",
       "backgroundRemoval": "completed",
       "modelGeneration": "processing",
       "angleRendering": "pending"
@@ -1308,6 +1324,21 @@ GET /clothing-items/:id/processing-status
 
 **Status values:** `PENDING` | `PROCESSING` | `COMPLETED` | `FAILED`
 
+**Processing step values:** `pending` | `processing` | `completed` | `failed`
+
+**Classification Flow:**
+1. **Upload Phase**: Frontend uploads images via `POST /clothing-items`
+2. **Synchronous Classification**: Backend immediately runs AI classification on front image
+3. **Async 3D Pipeline**: Backend then enqueues background removal → 3D generation → angle rendering
+4. **Early Tag Access**: Since classification completes synchronously, `steps.classification` is always `completed` when processing status is queried
+5. **Frontend Strategy**: Call `GET /clothing-items/:id` immediately after upload to get `predictedTags` and initial `finalTags`, without waiting for 3D generation to finish
+
+**Tag availability note:**
+- Classification happens synchronously during `POST /clothing-items`, NOT as part of the async processing pipeline
+- `predictedTags` and initial `finalTags` are available immediately after the upload request returns
+- Frontend can display tags and allow user editing while 3D generation continues in background
+- `GET /clothing-items/:id/processing-status` tracks only the async 3D pipeline steps
+
 **FAILED example:**
 ```json
 {
@@ -1317,6 +1348,7 @@ GET /clothing-items/:id/processing-status
     "progress": 25,
     "steps": {
       "upload": "completed",
+      "classification": "completed",
       "backgroundRemoval": "failed",
       "modelGeneration": "pending",
       "angleRendering": "pending"

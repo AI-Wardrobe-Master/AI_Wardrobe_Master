@@ -78,11 +78,13 @@ Content creators who upload clothing assets, create outfit collections, and shar
 **So that** I don't have to manually categorize each item
 
 **Acceptance Criteria:**
-- System uses AI/ML to classify clothing and return Tag[] (e.g., category, color, pattern)
+- System uses AI/ML to classify clothing and return Tag[] (e.g., category)
 - Tags are returned as `{key: string, value: string}` pairs
 - No confidence scores are displayed to the user
-- Classification happens automatically after image capture
+- Classification happens synchronously during image upload, before 3D generation starts
 - Predicted tags are stored separately from user-confirmed tags
+- **Phase 1**: Only `category` tag is auto-predicted (9 basic types: t-shirt, shirt, longsleeve, pants, shorts, outwear, dress, shoes, hat)
+- **Future phases**: Additional attributes (color, pattern, style) will be auto-predicted
 
 ---
 

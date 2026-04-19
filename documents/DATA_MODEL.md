@@ -201,7 +201,7 @@ enum ItemSource {
 }
 
 enum ClothingType {
-  // Current Roboflow-supported values used by the backend today
+  // Phase 1: Current Roboflow-supported values (9 basic categories)
   @JsonValue('t-shirt')
   tShirt,
   @JsonValue('shirt')
@@ -221,65 +221,15 @@ enum ClothingType {
   @JsonValue('hat')
   hat,
 
-  // Temporarily disabled until the model actually supports them
-  // @JsonValue('BLOUSE')
-  // blouse,
-  // @JsonValue('POLO')
-  // polo,
-  // @JsonValue('TANK_TOP')
-  // tankTop,
-  // @JsonValue('SWEATER')
-  // sweater,
-  // @JsonValue('HOODIE')
-  // hoodie,
-  // @JsonValue('SWEATSHIRT')
-  // sweatshirt,
-  // @JsonValue('CARDIGAN')
-  // cardigan,
-  // @JsonValue('JEANS')
-  // jeans,
-  // @JsonValue('TROUSERS')
-  // trousers,
-  // @JsonValue('SKIRT')
-  // skirt,
-  // @JsonValue('LEGGINGS')
-  // leggings,
-  // @JsonValue('SWEATPANTS')
-  // sweatpants,
-  // @JsonValue('JACKET')
-  // jacket,
-  // @JsonValue('COAT')
-  // coat,
-  // @JsonValue('BLAZER')
-  // blazer,
-  // @JsonValue('PUFFER')
-  // puffer,
-  // @JsonValue('WIND_BREAKER')
-  // windBreaker,
-  // @JsonValue('VEST')
-  // vest,
-  // @JsonValue('JUMPSUIT')
-  // jumpsuit,
-  // @JsonValue('ROMPER')
-  // romper,
-  // @JsonValue('SNEAKERS')
-  // sneakers,
-  // @JsonValue('BOOTS')
-  // boots,
-  // @JsonValue('SANDALS')
-  // sandals,
-  // @JsonValue('DRESS_SHOES')
-  // dressShoes,
-  // @JsonValue('HEELS')
-  // heels,
-  // @JsonValue('SLIPPERS')
-  // slippers,
-  // @JsonValue('SCARF')
-  // scarf,
-  // @JsonValue('BELT')
-  // belt,
-  // @JsonValue('OTHER')
-  // other,
+  // Future expansion: Additional types to be supported in later phases
+  // Phase 2+ will include:
+  // - More tops: BLOUSE, POLO, TANK_TOP, SWEATER, HOODIE, SWEATSHIRT, CARDIGAN
+  // - More bottoms: JEANS, TROUSERS, SKIRT, LEGGINGS, SWEATPANTS
+  // - More outerwear: JACKET, COAT, BLAZER, PUFFER, WIND_BREAKER, VEST
+  // - Full body: JUMPSUIT, ROMPER
+  // - More footwear: SNEAKERS, BOOTS, SANDALS, DRESS_SHOES, HEELS, SLIPPERS
+  // - More accessories: SCARF, BELT
+  // - Fallback: OTHER
 }
 
 enum Pattern {
@@ -462,7 +412,7 @@ Additional information for creator accounts.
 ```dart
 class Creator {
   String userId;                // Reference to User.id
-  String status;                // PENDING | ACTIVE | SUSPENDED
+  CreatorStatus status;         // PENDING | ACTIVE | SUSPENDED
   String displayName;           // Public display name
   String? brandName;            // Brand/channel name
   String? bio;                  // Creator introduction
@@ -473,12 +423,22 @@ class Creator {
   int packCount;                // Number of published packs
   bool isVerified;              // Verified creator badge
   DateTime? verifiedAt;
+  DateTime createdAt;
+}
+
+enum CreatorStatus {
+  @JsonValue('PENDING')
+  pending,                      // Application under review
+  @JsonValue('ACTIVE')
+  active,                       // Can publish content
+  @JsonValue('SUSPENDED')
+  suspended,                    // Temporarily restricted
 }
 ```
 
 **Indexes:**
 - Primary: `userId`
-- Index: `status`
+- Index: `status` for filtering by creator state
 - Index: `isVerified` for featured creators
 
 ---
