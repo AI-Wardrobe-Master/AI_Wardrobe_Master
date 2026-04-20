@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 from uuid import UUID
 
-from sqlalchemy import exists, func, or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.models.clothing_item import ClothingItem, Image, Model3D
@@ -272,11 +272,22 @@ def delete_with_lifecycle(
     if item is None:
         return None
 
-    in_published_pack = db.query(exists().where(
-        (CardPackItem.clothing_item_id == item.id)
-        & (CardPackItem.card_pack_id == CardPack.id)
-        & (CardPack.status == "PUBLISHED")
-    )).scalar()
+    # Lock any PUBLISHED packs that reference this item. This serializes with
+    # concurrent `POST /imports/card-pack` handlers (which FOR UPDATE the pack
+    # row before snapshotting its items). Without this, an importer reading
+    # the pack's items could race our delete and snapshot a canonical that is
+    # about to be dropped or tombstoned. See spec §4.7 "Concurrency".
+    published_packs = (
+        db.query(CardPack)
+        .join(CardPackItem, CardPackItem.card_pack_id == CardPack.id)
+        .filter(
+            CardPackItem.clothing_item_id == item.id,
+            CardPack.status == "PUBLISHED",
+        )
+        .with_for_update()
+        .all()
+    )
+    in_published_pack = bool(published_packs)
 
     import_count = (
         db.query(ClothingItem)
