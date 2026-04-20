@@ -54,6 +54,7 @@ def update(
     category: Optional[str] = None,
     material: Optional[str] = None,
     style: Optional[str] = None,
+    catalog_visibility: Optional[str] = None,
 ) -> Optional[ClothingItem]:
     """Full update for PATCH /clothing-items/:id"""
     item = get(db, item_id, user_id)
@@ -75,6 +76,8 @@ def update(
         item.material = material
     if style is not None:
         item.style = style
+    if catalog_visibility is not None:
+        item.catalog_visibility = catalog_visibility
     db.commit()
     db.refresh(item)
     return item

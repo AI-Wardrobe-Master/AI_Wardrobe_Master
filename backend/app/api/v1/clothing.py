@@ -15,6 +15,7 @@ from app.crud import clothing as crud_clothing
 from app.crud import wardrobe as crud_wardrobe
 from app.db.session import get_db
 from app.models.clothing_item import ClothingItem, Image, Model3D, ProcessingTask
+from app.models.creator import CardPack, CardPackItem
 from app.schemas.clothing_item import (
     AngleViewsResponse,
     ClothingItemCreateResponse,
@@ -62,6 +63,9 @@ def _item_to_response(item, *, images: list[Image] | None = None) -> dict:
         "previewSvgState": item.preview_svg_state or "PLACEHOLDER",
         "previewSvgAvailable": bool(item.preview_svg_available),
         "syncStatus": item.sync_status or "SYNCED",
+        "catalogVisibility": item.catalog_visibility or "PRIVATE",
+        "viewCount": item.view_count or 0,
+        "deletedAt": item.deleted_at.isoformat() if item.deleted_at else None,
         "wardrobeIds": wardrobe_ids,
         "createdAt": item.created_at.isoformat() if item.created_at else None,
         "updatedAt": item.updated_at.isoformat() if item.updated_at else None,
@@ -79,6 +83,9 @@ def _item_to_response(item, *, images: list[Image] | None = None) -> dict:
     return response
 
 
+_VALID_CATALOG_VISIBILITY = {"PRIVATE", "PACK_ONLY", "PUBLIC"}
+
+
 @router.post("", response_model=ClothingItemCreateResponse, status_code=202)
 async def create_clothing_item(
     front_image: UploadFile = File(...),
@@ -90,14 +97,24 @@ async def create_clothing_item(
     material: str | None = Form(None),
     style: str | None = Form(None),
     wardrobe_id: UUID | None = Form(None),
+    catalog_visibility: str = Form("PRIVATE", alias="catalogVisibility"),
     db: Session = Depends(get_db),
     user_id: UUID = Depends(get_current_user_id),
 ):
+    if catalog_visibility not in _VALID_CATALOG_VISIBILITY:
+        raise HTTPException(
+            422,
+            f"catalogVisibility must be one of {sorted(_VALID_CATALOG_VISIBILITY)}",
+        )
     front_bytes = await _read_upload_bytes(front_image, "front_image")
     back_bytes = (
         await _read_upload_bytes(back_image, "back_image")
         if back_image else None
     )
+    if len(front_bytes) > settings.MAX_UPLOAD_SIZE_BYTES:
+        raise HTTPException(413, "front_image exceeds size limit")
+    if back_bytes and len(back_bytes) > settings.MAX_UPLOAD_SIZE_BYTES:
+        raise HTTPException(413, "back_image exceeds size limit")
     try:
         predicted_tags = AIService().classify_bytes(front_bytes)
     except ClassificationError as exc:
@@ -137,6 +154,7 @@ async def create_clothing_item(
         preview_svg_state="PLACEHOLDER",
         preview_svg_available=False,
         sync_status="SYNCED",
+        catalog_visibility=catalog_visibility,
     )
 
     try:
@@ -226,6 +244,9 @@ def get_clothing_item(
         previewSvgState=item.preview_svg_state or "PLACEHOLDER",
         previewSvgAvailable=bool(item.preview_svg_available),
         syncStatus=item.sync_status or "SYNCED",
+        catalogVisibility=item.catalog_visibility or "PRIVATE",
+        viewCount=item.view_count or 0,
+        deletedAt=item.deleted_at,
         wardrobeIds=[entry.wardrobe_id for entry in item.wardrobe_entries],
         createdAt=item.created_at,
         updatedAt=item.updated_at,
@@ -239,6 +260,28 @@ def update_clothing_item(
     db: Session = Depends(get_db),
     user_id: UUID = Depends(get_current_user_id),
 ):
+    if body.catalog_visibility is not None:
+        if body.catalog_visibility not in _VALID_CATALOG_VISIBILITY:
+            raise HTTPException(
+                422,
+                f"catalogVisibility must be one of {sorted(_VALID_CATALOG_VISIBILITY)}",
+            )
+        if body.catalog_visibility == "PRIVATE":
+            in_published_pack = (
+                db.query(CardPackItem)
+                .join(CardPack, CardPack.id == CardPackItem.card_pack_id)
+                .filter(
+                    CardPackItem.clothing_item_id == item_id,
+                    CardPack.status == "PUBLISHED",
+                )
+                .first()
+                is not None
+            )
+            if in_published_pack:
+                raise HTTPException(
+                    409,
+                    "Cannot unpublish item while it belongs to a published card pack",
+                )
     item = crud_clothing.update(
         db,
         item_id,
@@ -251,6 +294,7 @@ def update_clothing_item(
         category=body.category,
         material=body.material,
         style=body.style,
+        catalog_visibility=body.catalog_visibility,
     )
     if not item:
         raise HTTPException(status_code=404, detail="Clothing item not found")
