@@ -137,7 +137,7 @@ Request Body:
 ```json
 {
   "id_image": "<base64 PNG>",
-  "garment_image": "<base64 PNG>",
+  "garment_images": ["<base64 PNG>", "<base64 PNG>", "..."],
   "prompt": "a realistic full-body fashion portrait, ...",
   "negative_prompt": "blurry, low quality, ...",
   "guidance_scale": 4.5,
@@ -158,7 +158,9 @@ Response:
 }
 ```
 
-Both `id_image` and `garment_image` are optional, but at least one must be provided.
+Both `id_image` and `garment_images` are optional, but at least one must be provided. The server accepts `garment_image` (singular, string) as a **deprecated shim** for single-garment callers; internally it is promoted to `garment_images: [...]`.
+
+`garment_images` must contain 1–4 entries. The server iterates them in the provided order and expects the caller (i.e. the backend prompt builder) to have already sorted by slot (HAT → TOP → PANTS → SHOES).
 
 ---
 
@@ -180,6 +182,17 @@ The backend assembles prompts from three templates:
 
 If results look "glossy" or "plastic", reduce guidance_scale to 3.5.
 
+### Gender-Aware Multi-Garment Template
+
+The backend prompt builder selects a gender-specific base phrasing (`gender = "male" | "female"`), then concatenates per-slot garment clauses in the fixed order **HAT → TOP → PANTS → SHOES**. Missing slots are skipped — the template never emits empty clauses. Example composition:
+
+1. Gender base: `"a realistic full-body fashion portrait of a young man, natural skin texture, ..."` (or `young woman`).
+2. Slot clauses, in order: `"wearing the provided hat ..."`, `"wearing the provided top ..."`, `"wearing the provided pants ..."`, `"wearing the provided shoes ..."` — only the slots actually submitted are included.
+3. Fidelity clause: `"preserve garment appearance, color, silhouette, and category for every provided garment"`.
+4. User scene clause appended last.
+
+The same slot order is used when assembling `garment_images` for the DreamO service, so the image list and the prompt text line up positionally.
+
 ---
 
 ## Failure Troubleshooting
@@ -200,7 +213,7 @@ If results look "glossy" or "plastic", reduce guidance_scale to 3.5.
 
 ## V1 Limitations
 
-- **Single garment only**: Multi-garment composition is not supported in this version.
 - **No style transfer**: The DreamO style condition is disabled for stability reasons.
 - **Resolution**: Output is 768-1024px. Larger sizes are not supported.
 - **Speed**: ~15-30 seconds per generation on an RTX 3080 (with turbo), longer on lower-end GPUs.
+- **Garment slots capped at 4**: Up to 4 garments can be submitted per generation, one per slot from {HAT, TOP, PANTS, SHOES}.

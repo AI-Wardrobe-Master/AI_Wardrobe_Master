@@ -143,9 +143,10 @@ The archived `backend_missing_feature_design` set has been absorbed into this do
 ### Route and Module Boundaries
 
 - `me.py` returns unified user context plus creator capability flags for Flutter shell gating.
-- `creator_items.py` reuses the clothing pipeline but enforces creator ownership and catalog visibility.
+- `creator_items.py` is a legacy façade. The old `creator_items` table has been merged into `clothing_items`; this router remains solely as a backwards-compatible shim delegating to the unified clothing endpoints.
+- `clothing.py` is now the single source of truth for both consumer and creator items. Publishing, visibility, and import are all expressed on the `clothing_items` row via `catalog_visibility`.
 - `creators.py` handles public creator browse plus authenticated self-service profile and dashboard access.
-- `card_packs.py` owns draft/publish/archive/delete transitions and public share reads.
+- `card_packs.py` owns draft/publish/archive/delete transitions and public share reads, and exposes the new `/card-packs/popular` ranking endpoint.
 - `imports.py` is a transactional route surface and must delegate write orchestration to a service.
 - `outfit_preview.py` is isolated from clothing processing and owns preview task creation, polling, and save-to-outfit.
 - `outfits.py` only manages saved outfit metadata and retrieval. It does not behave like a generation task controller.
@@ -153,11 +154,14 @@ The archived `backend_missing_feature_design` set has been absorbed into this do
 ### Data Model Overrides
 
 - Imported-item provenance is stored on `clothing_items` via origin fields, not in a standalone `provenance` table.
+- **Creator/consumer clothing table merge.** There is exactly one canonical table — `clothing_items`. The previous `creator_items` table has been folded in. Every item (owned, imported, or creator-authored) carries `catalog_visibility` ∈ {`PRIVATE`, `PACK_ONLY`, `PUBLIC`}, which drives public discovery filters. `card_pack_items.clothing_item_id` references this merged table directly; there is no separate `creator_item_id`. Data migration `20260420_000015` performs the move.
+- There is a single async pipeline queue, `clothing_pipeline`, used for both consumer uploads and creator-authored items. The old `creator_pipeline` name is no longer used.
 - `wardrobes` must support `is_system_managed` and `system_key`, with `DEFAULT_VIRTUAL_IMPORTED` reserved for the auto-created imported-content wardrobe.
 - Creator business data should live in `creator_profiles` keyed by `user_id`, with explicit `PENDING / ACTIVE / SUSPENDED` lifecycle state.
-- Import flow requires `import_histories` plus `import_history_items` so that cloned imported items can be traced back to both pack and source item.
+- Import flow requires `import_histories` plus `import_history_items` so that cloned imported items can be traced back to both pack and source item. The self-reference field on imported copies is now `imported_from_clothing_item_id` (was `imported_from_creator_item_id`).
 - Outfit preview is a separate domain modeled by `outfit_preview_tasks` and `outfit_preview_task_items`.
 - `outfits` represent confirmed saved results and may reference `preview_task_id`; they should not also serve as asynchronous processing records.
+- **Styled generation multi-garment model.** `styled_generations` now carries a `gender VARCHAR(10)` column, and the many-to-many `styled_generation_clothing_items` junction table (`styled_generation_id`, `clothing_item_id`, `slot ∈ {HAT,TOP,PANTS,SHOES}`, `sort_order`) replaces the single `source_clothing_item_id` FK for inference. The FK is retained on `styled_generations` for backward-compat reads.
 
 ### Service Boundaries
 
@@ -474,17 +478,18 @@ CREATE TRIGGER update_outfits_updated_at BEFORE UPDATE ON outfits
 
 A separate async pipeline for personalized fashion photo generation:
 
-- **Endpoint**: `POST /api/v1/styled-generations` creates a `StyledGeneration` record and enqueues to the `styled_generation` Celery queue.
+- **Endpoint**: `POST /api/v1/styled-generations` creates a `StyledGeneration` record, inserts one `styled_generation_clothing_items` row per submitted garment (1–4, unique slots), and enqueues to the `styled_generation` Celery queue.
 - **Queue**: `styled_generation` (separate from `clothing_pipeline`)
 - **Worker**: `celery-styled-gen` Docker service
 - **Pipeline steps**:
-  1. Validate garment has PROCESSED_FRONT image (from Hunyuan3D pipeline)
-  2. Download and preprocess selfie (face detection, background removal, white bg composite)
-  3. Build composite prompt from templates + user scene description
-  4. Call isolated DreamO HTTP service (port 9000) for inference
-  5. Store result image and update status to SUCCEEDED
+  1. Load the gender and all slot→garment rows from `styled_generation_clothing_items` via the junction table (ordered HAT → TOP → PANTS → SHOES).
+  2. Validate every garment has a PROCESSED_FRONT image (from Hunyuan3D pipeline).
+  3. Download and preprocess selfie (face detection, background removal, white bg composite).
+  4. Build composite prompt from gender-aware templates + slot-ordered garment descriptions + user scene description.
+  5. Call isolated DreamO HTTP service (port 9000) for inference, passing `garment_images: [...]` (list).
+  6. Store result image and update status to SUCCEEDED.
 - **DreamO** runs as a separate Docker service with its own Python environment (torch, diffusers, transformers pinned to specific versions).
-- Retry resets the record to PENDING and re-dispatches.
+- Retry resets the record to PENDING and re-dispatches, but before re-enqueueing it releases any blobs produced by the prior failed attempt (result image, intermediate selfie variants).
 
 ### StyledGeneration Entity
 
@@ -493,6 +498,9 @@ CREATE TABLE styled_generations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     source_clothing_item_id UUID REFERENCES clothing_items(id) ON DELETE SET NULL,
+    -- kept as a backwards-compat "first garment" shortcut; real garments live in
+    -- the junction table styled_generation_clothing_items
+    gender VARCHAR(10) NOT NULL CHECK (gender IN ('male','female')),
     selfie_original_path TEXT NOT NULL,
     selfie_processed_path TEXT,
     scene_prompt TEXT NOT NULL,
@@ -510,6 +518,19 @@ CREATE TABLE styled_generations (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
+
+-- Multi-garment junction. 1-4 rows per generation, unique slots per generation.
+CREATE TABLE styled_generation_clothing_items (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    styled_generation_id UUID NOT NULL REFERENCES styled_generations(id) ON DELETE CASCADE,
+    clothing_item_id UUID NOT NULL REFERENCES clothing_items(id),
+    slot VARCHAR(10) NOT NULL CHECK (slot IN ('HAT','TOP','PANTS','SHOES')),
+    sort_order INTEGER NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+    UNIQUE(styled_generation_id, slot)
+);
+CREATE INDEX idx_sgci_generation ON styled_generation_clothing_items(styled_generation_id);
+CREATE INDEX idx_sgci_clothing ON styled_generation_clothing_items(clothing_item_id);
 ```
 
 ### Content-Addressed Storage (CAS)
@@ -542,9 +563,36 @@ When a consumer imports a published card pack:
 3. `import_count` on the card pack is incremented
 4. Consumer can delete individual imported items or un-import the entire pack
 
-**Deletion rules:**
-- Consumer clothing_item (OWNED or IMPORTED): always deletable (releases blob refs)
-- Creator item in published pack: blocked (new imports need it)
-- Card pack ARCHIVE: always allowed (hides from discovery, doesn't affect imports)
-- Card pack HARD DELETE: blocked while `card_pack_imports` count > 0
+**Deletion rules (3-tier clothing item lifecycle, spec §4.7):**
+
+`DELETE /clothing-items/{id}` dispatches as follows:
+
+1. **Hard delete — private or never published.** If `catalog_visibility = PRIVATE`, or the item has never been referenced by a `PUBLISHED` card pack, the row is removed and `BlobService.release()` runs for every asset.
+2. **Hard delete — published but zero downstream downloaders.** If the item has been published (`PACK_ONLY` / `PUBLIC`) but no consumer import row currently references it, the row is still removed. Same release path.
+3. **Tombstone — published with live downstream imports.** If at least one `clothing_items` row has `imported_from_clothing_item_id = <id>`, the row is retained but `deleted_at` is set. It is filtered out of every list / discovery endpoint. Blob references remain until the consumer un-imports; consumer un-import cascades the tombstone (its downstream copies are deleted, which triggers blob `release()`).
+
+**Other deletion constraints:**
+- Consumer clothing_item (OWNED or IMPORTED): always deletable (releases blob refs).
+- Card pack ARCHIVE: always allowed (hides from discovery, doesn't affect imports).
+- Card pack HARD DELETE: blocked while `card_pack_imports` count > 0.
+
+### View Counts and Popular Packs
+
+`clothing_items` and `card_packs` both carry a `view_count INTEGER NOT NULL DEFAULT 0` column, incremented atomically on every detail GET (`UPDATE ... SET view_count = view_count + 1 RETURNING view_count`). The same transaction also performs the read, so the response reflects the post-increment value.
+
+Rules:
+- Only `PUBLISHED` packs accrue views (the counter is still persisted for drafts, but all paths that read it skip non-published rows).
+- Self-views are skipped: if the authenticated caller owns the pack (or the creator-authored item), the increment is short-circuited.
+- `GET /api/v1/card-packs/popular?limit=10` returns `PUBLISHED` packs ordered by `view_count DESC, published_at DESC`.
+
+### Database Hardening
+
+- `release()` acquires the per-hash `pg_advisory_xact_lock` before decrementing `ref_count`, so concurrent release / ingest calls cannot race into double-decrement or stale zero-ref observations.
+- Retry paths for `StyledGeneration` / `ProcessingTask` explicitly release prior-attempt blobs before re-enqueue to avoid blob leaks on repeated failures.
+- `card_pack.import_count` is now updated under `SELECT ... FOR UPDATE`, closing the TOCTOU window between "I was at zero when I checked" and the hard-delete commit. A new `ck_card_pack_import_count_nonneg` CHECK constraint defends against underflow.
+- New Celery-beat reap jobs scan `styled_generations` and `processing_tasks` every hour for rows stuck in `PROCESSING` past their `lease_expires_at` and flip them to `FAILED`.
+- A weekly orphan-file sweep on local storage reconciles bytes on disk against `blobs.blob_hash`, removing anything not in the registry. (S3 storage is covered by the existing `gc_sweep` task.)
+- `SECRET_KEY` now has a production-environment validator that rejects the dev default on `ENV=production`.
+- N+1 fix in the wardrobe list endpoints (single query now loads `wardrobe_items` with joinedload; previously each item fetched its `clothing_items` row individually).
+- `files.py` card-pack cover route gained an auth guard that returns 404 for `DRAFT` / `ARCHIVED` packs to non-owners — the previous route leaked DRAFT cover bytes by blob hash.
 

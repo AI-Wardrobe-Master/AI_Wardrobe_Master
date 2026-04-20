@@ -147,3 +147,65 @@
 ##### 7. 涉及文件统计
   - 新增 9 个文件，修改 ~28 个文件，删除 1 个文件
   - 总计 +4604 / -499 行
+
+### 2026.4.20
+#### 多件衣物 DreamO + 创作者/消费者衣物表合并 + 三档删除 + 浏览量 + 数据库健壮性
+
+##### 1. 多件衣物 DreamO 支持
+  - `POST /api/v1/styled-generations` 不再只接受单件衣物：
+    - 新增 `gender` 字段（required，`"male" | "female"`）
+    - 新增 `clothing_items` 字段（required，JSON string，编码 1~4 件衣物数组，每项含 `id` + `slot ∈ {HAT,TOP,PANTS,SHOES}`，slot 全局唯一）
+    - 旧 `clothing_item_id` 字段保留一个版本作为 DEPRECATED 兼容 shim
+  - 响应新增 `gender` 和 `garments: [{id, slot, name, imageUrl}]` 字段，按 HAT→TOP→PANTS→SHOES 顺序返回
+  - 新增 `styled_generation_clothing_items` 多对多 junction 表（`generation_id`, `clothing_item_id`, `slot`, `sort_order`），`unique(generation_id, slot)` 防同 slot 冲突
+  - `styled_generations` 新增 `gender VARCHAR(10)` 列
+  - Pipeline 改为：按 slot 顺序从 junction 表批量拉取 garments → 校验每件都有 `PROCESSED_FRONT` → 组装 gender-aware prompt → 组装 `garment_images: [...]` → 调 DreamO
+  - DreamO 服务端 + 客户端都改为 `garment_images` 列表；旧 `garment_image` 单数作为 deprecated shim 保留
+  - Prompt builder 新增 gender-aware 基础短语和 HAT→TOP→PANTS→SHOES 按槽位拼装的多件衣物模板
+
+##### 2. 创作者/消费者衣物表合并
+  - `creator_items` 表完全合入 `clothing_items`，系统只剩一张 canonical 衣物表
+  - 所有衣物（OWNED / IMPORTED / 创作者原创）都走同一张表，通过 `catalog_visibility ∈ {PRIVATE, PACK_ONLY, PUBLIC}` 控制发布可见性
+  - `card_pack_items.clothing_item_id` 直接引用合并后的 `clothing_items.id`，不再有独立的 `creator_item_id`
+  - `/creator-items/*` 这批旧端点改为薄 legacy shim，内部委托给统一的 `/clothing-items/*`
+  - `imported_from_creator_item_id` 改名为 `imported_from_clothing_item_id`（自引用 FK）
+  - Alembic 迁移 `20260420_000015` 负责数据搬迁：`creator_items` → `clothing_items`（含 blob 引用、origin 字段）、更新 `card_pack_items` FK、重命名 `imported_from_*` 列、回填 `catalog_visibility`
+
+##### 3. 三档删除生命周期（spec §4.7）
+  - Tier 1：`catalog_visibility = PRIVATE` OR 从未发布 → 硬删，release 全部 blob
+  - Tier 2：已发布但 0 下游消费者导入 → 硬删
+  - Tier 3：已发布且存在下游 `imported_from_clothing_item_id` 引用 → tombstone（设 `deleted_at`，从所有列表/搜索端点隐藏，但保留行以便 backlink 解析）
+  - 消费者卸载卡包（un-import）时会级联将其拥有的 tombstone 副本硬删并 release blob
+  - `clothing_items` 新增 `deleted_at TIMESTAMPTZ` 列，所有列表/搜索 query 增加 `deleted_at IS NULL` 过滤
+
+##### 4. 浏览量 + Top10
+  - `clothing_items` 和 `card_packs` 都新增 `view_count INTEGER NOT NULL DEFAULT 0` 列
+  - 详情 GET 走 `UPDATE ... SET view_count = view_count + 1 RETURNING view_count` 原子自增，返回值即为响应字段
+  - 只有 `PUBLISHED` 状态的卡包累积浏览量；创作者本人访问自己的卡包/衣物不计数（short-circuit）
+  - 新增 `GET /api/v1/card-packs/popular?limit=10` 端点：返回 `PUBLISHED` 卡包按 `view_count DESC, published_at DESC` 排序，响应 shape 同 `GET /card-packs`
+  - 详情响应（`GET /clothing-items/:id`, `GET /creator-items/:id`, `GET /card-packs/:id`）均包含 `viewCount: int`
+  - 新增 `(status, view_count DESC)` 复合索引加速 popular 查询
+
+##### 5. 数据库健壮性
+  - `BlobService.release()` 现在先拿 `pg_advisory_xact_lock(hash)` 再递减 `ref_count`，消除与并发 ingest / GC 的 double-decrement 竞态
+  - `StyledGeneration` / `ProcessingTask` 的 retry 路径在重新入队前显式 release 上一次失败产生的 blob，防止失败循环导致 blob 泄漏
+  - `card_pack.import_count` 的硬删前检查改走 `SELECT ... FOR UPDATE`，修掉原先 "检查时 0 但实际已被别人 +1" 的 TOCTOU
+  - 新增 CHECK 约束 `ck_card_pack_import_count_nonneg` 防下溢
+  - 新增 Celery beat 任务每小时 reap-stuck：扫描 `styled_generations` 和 `processing_tasks` 中 `PROCESSING` 超过 `lease_expires_at` 的行，翻成 `FAILED`
+  - 新增每周 orphan-file GC sweep（本地存储专用），对账磁盘字节 vs `blobs` 注册表，删除孤儿文件；S3 存储继续沿用现有 `gc_sweep`
+  - `SECRET_KEY` 新增生产环境校验器：`ENV=production` 时禁止使用 dev 默认值，启动即报错
+  - 修掉 wardrobe 列表端点的 N+1：之前每个 `wardrobe_items` 行单独拉 `clothing_items`，改成一次 joinedload
+  - `files.py` 卡包封面路由加鉴权 guard：`DRAFT` / `ARCHIVED` 卡包的封面对非 owner 返回 404（之前按 blob hash 直读，泄漏 DRAFT 封面字节）
+
+##### 6. 审计发现（遗留项）
+  - `/auth/register` 现在真正尊重 `userType` 字段（之前是静默降级为 CONSUMER，即使前端传了 `CREATOR`）——**follow-up：需要和产品确认这是否符合预期**，是否应保留原来的"注册即 CONSUMER、后续走创作者申请"的行为。如要恢复旧行为，把 schema 里的 `userType` 打回 `Optional` 并忽略输入即可。
+
+##### 7. 变更范围（按模块）
+  - backend：styled_generations pipeline + schema + API + prompt builder + DreamO client
+  - backend：clothing_items 表加 `catalog_visibility` / `deleted_at` / `view_count` / 重命名 `imported_from_*`
+  - backend：card_packs 加 `view_count` + popular 端点
+  - backend：3-tier delete dispatcher + tombstone 过滤
+  - backend：release() advisory lock、TOCTOU fix、reap-stuck beat、orphan GC、SECRET_KEY validator、N+1 fix、files.py 鉴权 guard
+  - DreamO：server.py + client 接受 `garment_images` 列表
+  - 迁移：`20260420_000015`（合并 creator_items、新列、新约束、新索引）
+  - 文档：`API_CONTRACT.md`、`BACKEND_ARCHITECTURE.md`、`DATA_MODEL.md`、`DREAMO_INTEGRATION.md` 同步更新

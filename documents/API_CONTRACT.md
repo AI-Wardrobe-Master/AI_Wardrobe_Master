@@ -268,6 +268,8 @@ GET /clothing-items/:id
 - Automatic prediction currently only fills `category`. `season`, `style`, and `audience` are expected to be user-added later through `PATCH /clothing-items/:id`.
 - For owned items, `provenance` is `null`.
 - For imported items, `provenance` includes creator and pack summary data assembled from the imported item's stored origin fields.
+- The detail response now also includes `viewCount: int` (lifetime detail-view count, atomically incremented on each authenticated GET). Self-views by the owning creator are excluded.
+- The detail response now includes `catalogVisibility` (`PRIVATE` | `PACK_ONLY` | `PUBLIC`).
 
 ### 2.3 Update Clothing Item (Including Tag Confirmation)
 ```
@@ -290,7 +292,8 @@ PATCH /clothing-items/:id
     { "key": "audience", "value": "unisex" }
   ],
   "isConfirmed": true,
-  "customTags": ["cotton", "comfortable", "everyday"]
+  "customTags": ["cotton", "comfortable", "everyday"],
+  "catalogVisibility": "PACK_ONLY"
 }
 ```
 
@@ -307,6 +310,10 @@ PATCH /clothing-items/:id
 - The `predictedTags` remain immutable and cannot be modified
 - Set `isConfirmed: true` when user has reviewed and confirmed the tags
 - Search operations use `finalTags` only, not `predictedTags`
+- `catalogVisibility` ∈ {`PRIVATE`, `PACK_ONLY`, `PUBLIC`} controls creator-catalog exposure for a `ClothingItem` that has been promoted out of purely private use.
+  - Transition to `PRIVATE` is rejected with `409 Conflict` while the item participates in any `PUBLISHED` card pack. Unpublish or remove the item from all published packs first.
+  - `PACK_ONLY` means the item is only visible through packs that contain it.
+  - `PUBLIC` means the item is also discoverable through creator catalog endpoints.
 
 **Example - Confirming Predicted Tags:**
 ```json
@@ -337,6 +344,28 @@ DELETE /clothing-items/:id
 
 **Response (204):**
 No content
+
+**3-tier delete semantics (spec §4.7):**
+
+Backend dispatches between three outcomes based on the item's state at the moment of deletion:
+
+| State | Outcome |
+|-------|---------|
+| `catalog_visibility = PRIVATE` and no active publish linkage | **Hard delete.** Row removed. Blob `release()` runs for every referenced asset. |
+| `catalog_visibility ∈ {PACK_ONLY, PUBLIC}` and never downloaded (zero consumer imports trace back to it) | **Hard delete.** Same as above — safe because no backlinks exist. |
+| Item has at least one consumer import (`imported_from_clothing_item_id` referenced) | **Tombstone.** Row is kept with `deleted_at` set, content is hidden from all list/discovery endpoints, and existing consumer copies continue to resolve through the junction/import-history backlinks. |
+
+Tombstoned items are not re-usable. Attempting to create a new pack or outfit
+reference to a tombstoned id returns `404`.
+
+### 2.7 View Count Field
+
+All `ClothingItem` detail responses (`GET /clothing-items/:id`,
+`GET /creator-items/:id`) include a top-level `viewCount: int`. The counter is
+incremented atomically in the same transaction as the detail load. Self-views
+(owner fetching own item) are excluded. The same field is exposed on
+`CardPack` detail responses (`GET /card-packs/:id`), and drives the
+`/card-packs/popular` ranking.
 
 ### 2.5 List User's Clothing Items
 ```
@@ -827,7 +856,7 @@ GET /card-packs/:id
 {
   "success": true,
   "data": {
-    /* CardPack object with populated ClothingItem details */
+    /* CardPack object with populated ClothingItem details, now including `viewCount: int` */
   }
 }
 ```
@@ -835,6 +864,7 @@ GET /card-packs/:id
 **Frontend handling:**
 - If creator opens their own draft or archived pack, the same endpoint works with auth.
 - If a public caller or another user requests a non-published pack, backend returns `404`, not `403`.
+- `viewCount` is incremented atomically on each non-creator detail GET of a `PUBLISHED` pack. Creator self-views and non-published states do not contribute. See `/card-packs/popular` for the ranking endpoint.
 
 ### 5.3 Get Card Pack by Share Link
 ```
@@ -971,6 +1001,32 @@ DELETE /creator-items/:id
 **Frontend handling:**
 - Show this message directly in the delete flow.
 - Offer a secondary action that routes the creator to pack management instead of retrying the same delete.
+
+### 5.10 List Popular Card Packs
+```
+GET /card-packs/popular?limit=10
+```
+
+**Query Parameters:**
+- `limit` (optional, default: 10, max: 50): Number of packs to return
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "items": [ /* Array of CardPack summary objects */ ],
+    "pagination": { /* pagination info */ }
+  }
+}
+```
+
+**Behavior:**
+- Returns `PUBLISHED` card packs only, ordered by `view_count` DESC, then `published_at` DESC.
+- Response shape matches `GET /card-packs` / `GET /creators/:creatorId/card-packs`.
+- Each pack carries a top-level `viewCount` field (see §2.7 / §5.2).
+- Self-views by the pack creator are excluded from the underlying counter, so
+  creators cannot inflate rankings.
 
 ---
 
@@ -1522,7 +1578,15 @@ POST /styled-generations
 **Request Body (multipart/form-data):**
 ```
 selfie_image: <file>                     (required, JPEG/PNG, max 10 MB)
-clothing_item_id: "item-uuid"            (required, must have PROCESSED_FRONT)
+gender: "male" | "female"                (required, drives prompt template selection)
+clothing_items: '[{"id":"...","slot":"TOP"}, ...]'
+                                         (required, JSON string encoding an array of
+                                          1–4 items; each item has `id` (clothing_item
+                                          UUID) and `slot` ∈ {"HAT","TOP","PANTS","SHOES"};
+                                          slots must be unique within a request)
+clothing_item_id: "item-uuid"            (DEPRECATED single-item shim; retained for
+                                          one release for backward compatibility.
+                                          Ignored when `clothing_items` is provided.)
 scene_prompt: "standing in a cafe..."    (required)
 negative_prompt: "blurry, bad anatomy"   (optional)
 guidance_scale: 4.5                      (optional, default 4.5, range 1.0-10.0)
@@ -1541,10 +1605,12 @@ height: 1024                             (optional, 768-1024)
 ```
 
 **Error responses:**
-- `404` - Clothing item not found
-- `409` - Clothing item has not finished processing (no PROCESSED_FRONT image)
+- `404` - Clothing item not found (any referenced id)
+- `409` - A clothing item has not finished processing (no PROCESSED_FRONT image)
 - `413` - Selfie image exceeds size limit
-- `422` - Validation error (invalid UUID, invalid dimensions, not an image)
+- `422` - Validation error (invalid UUID, invalid dimensions, not an image,
+  malformed `clothing_items` JSON, duplicate slot, empty list, >4 items,
+  unknown `slot` value, or missing `gender`)
 - `503` - Processing queue unavailable
 
 ### 10.2 Get Styled Generation
@@ -1559,7 +1625,22 @@ GET /styled-generations/:id
   "data": {
     "id": "gen-uuid",
     "userId": "user-uuid",
-    "sourceClothingItemId": "item-uuid",
+    "gender": "female",
+    "garments": [
+      {
+        "id": "item-uuid-1",
+        "slot": "TOP",
+        "name": "Blue Striped T-Shirt",
+        "imageUrl": "/files/clothing-items/item-uuid-1/processed-front"
+      },
+      {
+        "id": "item-uuid-2",
+        "slot": "PANTS",
+        "name": "Black Jeans",
+        "imageUrl": "/files/clothing-items/item-uuid-2/processed-front"
+      }
+    ],
+    "sourceClothingItemId": "item-uuid-1",
     "selfieOriginalUrl": "/files/.../selfie_original.jpg",
     "selfieProcessedUrl": "/files/.../selfie_processed.png",
     "scenePrompt": "standing in a coffee shop, warm light",
@@ -1578,6 +1659,15 @@ GET /styled-generations/:id
   }
 }
 ```
+
+**Response field notes:**
+- `gender` (`"male"` | `"female"`) mirrors the value submitted at creation.
+- `garments` is an ordered list of the referenced clothing items, one entry per
+  occupied slot. Each entry includes `id`, `slot`, `name`, and the processed
+  `imageUrl`. The list honors the HAT → TOP → PANTS → SHOES rendering order used
+  by the prompt builder.
+- `sourceClothingItemId` is retained for backward compatibility and equals the
+  first garment's id (typically `TOP` when present).
 
 **Status values:** `PENDING` | `PROCESSING` | `SUCCEEDED` | `FAILED`
 
@@ -1670,7 +1760,10 @@ Removes the import record and all clothing_items that originated from this pack 
 DELETE /clothing-items/{id}
 ```
 
-Permanently deletes a clothing item (OWNED or IMPORTED) and releases blob storage references.
+Deletes a clothing item (OWNED, IMPORTED, or creator-authored). Backend applies
+the 3-tier rule documented in §2.4: hard-delete when safe, otherwise tombstone
+so existing consumer imports keep resolving. Hard-deletes call blob `release()`
+for every referenced asset.
 
 **Response (204):** No content
 
