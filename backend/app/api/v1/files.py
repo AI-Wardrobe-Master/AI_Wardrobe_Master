@@ -9,19 +9,14 @@ import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user_id, get_optional_current_user_id
 from app.db.session import get_db
 from app.models.blob import Blob
 from app.models.clothing_item import ClothingItem, Image, Model3D
-from app.models.creator import (
-    CardPack,
-    CreatorItem,
-    CreatorItemImage,
-    CreatorItemModel3D,
-)
+from app.models.creator import CardPack
 from app.models.outfit_preview import (
     Outfit,
     OutfitPreviewTask,
@@ -139,45 +134,16 @@ async def get_clothing_file(
     return await _stream_blob(db, img.blob_hash)
 
 
-# ---- Creator item files ----
+# ---- Creator item files (legacy shim) ----
 
-@router.get("/creator-items/{item_id}/{kind}")
-async def get_creator_item_file(
-    item_id: UUID,
-    kind: str,
-    db: Session = Depends(get_db),
-    user_id: UUID = Depends(get_current_user_id),
-):
-    item = db.query(CreatorItem).filter(
-        CreatorItem.id == item_id,
-        CreatorItem.creator_id == user_id,
-    ).first()
-    if not item:
-        raise HTTPException(404)
-
-    if kind == "model":
-        model = db.query(CreatorItemModel3D).filter_by(
-            creator_item_id=item_id
-        ).first()
-        if not model:
-            raise HTTPException(404)
-        storage = _storage()
-        return StreamingResponse(
-            await storage.open_stream(model.blob_hash),
-            media_type="model/gltf-binary",
-        )
-
-    if kind not in IMAGE_KIND_MAP:
-        raise HTTPException(404)
-    image_type, angle = IMAGE_KIND_MAP[kind]
-    img = db.query(CreatorItemImage).filter_by(
-        creator_item_id=item_id,
-        image_type=image_type,
-        angle=angle,
-    ).first()
-    if not img:
-        raise HTTPException(404)
-    return await _stream_blob(db, img.blob_hash)
+@router.get("/creator-items/{item_id}/{kind}", deprecated=True)
+def legacy_serve_creator_item_file(item_id: UUID, kind: str):
+    """Redirect to the unified /files/clothing-items route; retained for
+    one release so existing clients don't break immediately."""
+    return RedirectResponse(
+        url=f"/files/clothing-items/{item_id}/{kind}",
+        status_code=302,
+    )
 
 
 # ---- Styled generation files ----
