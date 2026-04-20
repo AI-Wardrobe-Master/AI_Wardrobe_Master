@@ -112,7 +112,10 @@ class BlobService:
     def release(self, db: Session, blob_hash: str) -> None:
         """
         Decrement refcount. If it reaches 0, mark for GC.
+        Acquires a transaction-scoped advisory lock on the hash to serialize
+        with ingest_upload / addref.
         """
+        _lock_hash(db, blob_hash)
         blob = db.query(Blob).filter(Blob.blob_hash == blob_hash).first()
         if blob is None:
             logger.warning("release() called for unknown blob %s", blob_hash)
