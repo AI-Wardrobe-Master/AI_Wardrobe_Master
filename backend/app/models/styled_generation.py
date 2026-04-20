@@ -11,6 +11,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -52,6 +53,12 @@ class StyledGeneration(Base):
     width = Column(Integer, nullable=False, default=1024)
     height = Column(Integer, nullable=False, default=1024)
 
+    # Gender is NOT NULL in DB with CHECK IN ('MALE','FEMALE') — enforced by migration.
+    gender = Column(String(10), nullable=False)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    lease_expires_at = Column(DateTime(timezone=True), nullable=True)
+    worker_id = Column(String(255), nullable=True)
+
     created_at = Column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -77,3 +84,44 @@ class StyledGeneration(Base):
     clothing_item = relationship(
         "ClothingItem", foreign_keys=[source_clothing_item_id]
     )
+
+    garments = relationship(
+        "StyledGenerationClothingItem",
+        backref="generation",
+        cascade="all, delete-orphan",
+        order_by="StyledGenerationClothingItem.position",
+    )
+
+
+class StyledGenerationClothingItem(Base):
+    __tablename__ = "styled_generation_clothing_items"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    generation_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("styled_generations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    clothing_item_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("clothing_items.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    slot = Column(String(10), nullable=False)
+    position = Column(Integer, nullable=False, default=0)
+    created_at = Column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "slot IN ('HAT','TOP','PANTS','SHOES')", name="ck_sgci_slot"
+        ),
+        UniqueConstraint(
+            "generation_id", "slot", name="uq_sgci_gen_slot"
+        ),
+    )
+
+    clothing_item = relationship("ClothingItem", foreign_keys=[clothing_item_id])
