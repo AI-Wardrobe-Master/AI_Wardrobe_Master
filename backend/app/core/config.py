@@ -87,10 +87,19 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _reject_default_secret_key_in_prod(self):
         if self.SECRET_KEY == _DEFAULT_SECRET_KEY_PLACEHOLDER:
-            if self.ENV.lower() in ("production", "prod"):
+            env_norm = self.ENV.strip().lower()
+            # Match anything starting with 'prod' — 'prod', 'production',
+            # 'prod-eu', 'prod_canary', etc. — not just the two literals.
+            # Also covers 'staging' / 'stage' so shared-infra envs fail hard.
+            is_production_like = (
+                env_norm.startswith("prod")
+                or env_norm.startswith("stag")
+                or env_norm == "live"
+            )
+            if is_production_like:
                 raise ValueError(
-                    "SECRET_KEY must be overridden via environment in production. "
-                    "Current value is the placeholder default."
+                    "SECRET_KEY must be overridden via environment in "
+                    f"{self.ENV!r}. Current value is the placeholder default."
                 )
             logging.getLogger(__name__).warning(
                 "SECRET_KEY is the default placeholder. Override via .env before deploying."
