@@ -183,3 +183,60 @@ def reap_stuck_processing_tasks() -> int:
         return count
     finally:
         db.close()
+
+
+@celery_app.task(name="blobs.gc_orphan_files")
+def gc_orphan_files() -> int:
+    """Sweep local blob directory for files not referenced in `blobs` table,
+    older than 24 hours. Physical deletes them. Only runs on LocalBlobStorage."""
+    import time
+    from pathlib import Path
+
+    from sqlalchemy import select
+
+    from app.db.session import SessionLocal
+    from app.models.blob import Blob
+    from app.services.blob_storage import LocalBlobStorage, get_blob_storage
+
+    storage = get_blob_storage()
+    if not isinstance(storage, LocalBlobStorage):
+        logger.info("gc_orphan_files: skipped (non-local storage)")
+        return 0
+
+    db = SessionLocal()
+    try:
+        known_hashes: set[str] = {
+            h for (h,) in db.execute(select(Blob.blob_hash))
+        }
+        cutoff = time.time() - 86400  # 24h ago
+        deleted = 0
+        base: Path = storage.base
+        if not base.exists():
+            return 0
+        for shard in base.iterdir():
+            if not shard.is_dir():
+                continue
+            for sub in shard.iterdir():
+                if not sub.is_dir():
+                    continue
+                for f in sub.iterdir():
+                    if not f.is_file():
+                        continue
+                    name = f.name
+                    # Skip non-hash files (temp uploads start with "_upload_").
+                    if len(name) != 64 or name.startswith("_"):
+                        continue
+                    if name in known_hashes:
+                        continue
+                    try:
+                        if f.stat().st_mtime >= cutoff:
+                            continue  # too fresh — might be mid-commit
+                        f.unlink()
+                        deleted += 1
+                    except OSError:
+                        logger.exception("gc_orphan_files: failed to delete %s", f)
+        if deleted:
+            logger.info("gc_orphan_files: deleted %d orphan files", deleted)
+        return deleted
+    finally:
+        db.close()
