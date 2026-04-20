@@ -197,8 +197,17 @@
   - 修掉 wardrobe 列表端点的 N+1：之前每个 `wardrobe_items` 行单独拉 `clothing_items`，改成一次 joinedload
   - `files.py` 卡包封面路由加鉴权 guard：`DRAFT` / `ARCHIVED` 卡包的封面对非 owner 返回 404（之前按 blob hash 直读，泄漏 DRAFT 封面字节）
 
-##### 6. 审计发现（遗留项）
-  - `/auth/register` 现在真正尊重 `userType` 字段（之前是静默降级为 CONSUMER，即使前端传了 `CREATOR`）——**follow-up：需要和产品确认这是否符合预期**，是否应保留原来的"注册即 CONSUMER、后续走创作者申请"的行为。如要恢复旧行为，把 schema 里的 `userType` 打回 `Optional` 并忽略输入即可。
+##### 6. 审计发现与决策
+
+  - **`/auth/register` userType 行为**（2026-04-20 确认）：
+    - 当前行为：后端**尊重前端传入**的 `userType`。传 `CREATOR` 则直接创建 CREATOR 账号并立即获得全部 creator capabilities；传 `CONSUMER` 或不传则创建 CONSUMER 账号；不合法值返回 422。
+    - 历史背景：更早的某个迭代里曾存在"静默 clamp 为 CONSUMER"的逻辑，但那个 clamp 在最近的某次提交被意外去掉且未文档化。本轮重构发现了这个已经事实上存在的行为漂移。
+    - **决策**：保持当前行为（尊重前端输入）。理由：
+      1. 简化后端——无需维护一条后续的"CONSUMER 升级为 CREATOR"的路径，gating 留给前端处理；
+      2. 与 `CreatorProfile` 的生命周期解耦——创建账号即可决定身份，不需要额外的申请 + 审批状态机；
+      3. 对前端影响可控——前端可通过 UI 门槛（邀请码、审核链接等）控制谁能看到 `userType=CREATOR` 选项。
+    - 对应文档已同步：`documents/API_CONTRACT.md` §1.1 详细列出了 userType 字段、可选值、默认回退、错误码矩阵，以及明确的 "Product implication: enforce the gate on the frontend" 注解。
+    - 测试：原先检查 clamp 行为的 `test_register_ignores_requested_user_type_for_now` 与新行为矛盾，已删除（FU-T05 标记为 resolved）。
 
 ##### 7. 变更范围（按模块）
   - backend：styled_generations pipeline + schema + API + prompt builder + DreamO client
@@ -218,4 +227,33 @@
 - **`backend/tests/test_outfit_preview_flow.py`** — FU-T02：改写对齐 CAS schema。原测试用已删除的 `_absolute_storage_url` helper 和 `storage_path=...` 字段；现在要走 `blob_hash=...`。覆盖 outfit 预览端到端 + 保存流程，目前空白。
 - **`backend/tests/test_clothing_processing.py`** — FU-T03：改写对齐 `blob_hash`。原测试构造 `Image(storage_path=...)` 全文要替换。覆盖上传 + 后台流水线 + retry，核心流程。
 - **`backend/tests/test_creator_foundation.py`** — FU-T04：补齐 User fixture 的 `uid` 字段 + 改写 `/me` 响应断言。小范围。
-- **`backend/tests/test_r1_auth.py::test_register_ignores_requested_user_type_for_now`** — FU-T05：与 §6 `/auth/register` 行为漂移绑定。产品确认 userType 新行为后，决定是删测试还是恢复 clamp。
+- ~~**`backend/tests/test_r1_auth.py::test_register_ignores_requested_user_type_for_now`** — FU-T05~~：✅ **已解决（2026-04-20）**。产品决策保留"尊重前端 userType"的新行为（见 §6），原测试与新行为矛盾，已从 `test_r1_auth.py` 删除。
+
+##### 9. 本轮最终清理 + 文档同步（2026-04-20 晚间）
+
+Final code review 后收到 4 处改进建议，选"B 方案"全部落地（+ 额外的文档更新）：
+
+1. **Race fix（spec §4.7 concurrency）**：`delete_with_lifecycle` 先前仅 `FOR UPDATE` 锁 ClothingItem 行，未锁引用它的 PUBLISHED pack。并发 `POST /imports/card-pack`（锁了 pack 行但没锁 items）理论上能跟 publisher 的删除交错。
+   - 修复：把 `in_published_pack` 的 `EXISTS` 查询换成 `JOIN + FOR UPDATE + .all()`，同时拿到所有引用本 item 的 PUBLISHED pack 行锁。
+   - 结果：publisher 的 delete 和 importer 的 snapshot 现在必然串行化通过 pack 行锁。
+
+2. **死代码清理**：合并后 `app/schemas/creator.py` 里 8 个 `CreatorItem*` 类（`CreatorItemCreateResponseData`、`CreatorItemCreateResponse`、`CreatorItemUpdate`、`CreatorItemDetail`、`CreatorItemResponse`、`PublicCreatorItem`、`CreatorItemListData`、`CreatorItemListResponse`）已无任何 importer，删掉；同步移除 `ImageSetResponse, Tag` 的 unused import。文件从 169 行缩到 100 行。
+
+3. **`SECRET_KEY` validator 严格化**：原先只匹配字面量 `production` / `prod`，`ENV=Prod-EU` 或 `ENV=' production '`（带空格）会静默漏过，让 dev 默认 key 流入生产。
+   - 修复：先 `.strip().lower()`，然后用 `startswith("prod") or startswith("stag") or == "live"` 匹配——prod 系和 staging 系都硬拦住。
+   - 验证：`ENV=production` / `ENV=Prod-EU` / `ENV='  staging  '` 全部 raise；`ENV=development`（默认）照常 warn 通过。
+
+4. **Quarantine 指针化**：原来 4 个被 quarantine 的测试文件 skip 消息都以"Tracked in follow-ups"结尾，没有具体定位。改成引用 `gch.md §8 FU-T01..T05`，每个 FU 列有独立的改写范围、阻塞点。其中 FU-T05 本轮即已 resolved。
+
+5. **`/auth/register` userType 语义文档化**：
+   - `documents/API_CONTRACT.md` §1.1 重写：加字段表（类型、是否必须、默认值、合法值）、明确"backend 不做 gating、前端控制入口"的产品含义、补 CONSUMER 与 CREATOR 两种成功响应示例、列错误码矩阵（409 重复、422 不合法）。
+   - 删除与新行为矛盾的旧测试 `test_register_ignores_requested_user_type_for_now`。
+
+涉及 commits（按时间）：
+  - `ac3a50a` — fix(clothing): lock PUBLISHED packs in delete_with_lifecycle
+  - `aa8d833` — refactor(schemas): prune unused CreatorItem schemas after merge
+  - `18f5b63` — fix(config): tighten ENV validator — strip + prefix match prod/stag/live
+  - `b83ccd9` — docs(followups): link quarantined tests to FU-T01..FU-T05 in gch.md
+  - 本 commit：API_CONTRACT.md userType 语义 + gch.md §6/§8/§9 更新 + 删除过时测试
+
+测试状态：**60 passed, 22 skipped, 0 failed**。原 skip 掉的 `test_register_ignores_requested_user_type_for_now` 被改写成 `test_register_honors_requested_user_type`（断言新行为），比上轮多 1 个 passing 测试、少 1 个 skip。

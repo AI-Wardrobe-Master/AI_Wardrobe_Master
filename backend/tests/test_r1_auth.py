@@ -190,12 +190,9 @@ class R1AuthTests(unittest.TestCase):
 
         self.assertEqual(response.data.user.user_type, "CONSUMER")
 
-    @unittest.skip(
-        "Pre-existing test; register now honors userType field "
-        "(behavior changed, no longer clamps to CONSUMER). "
-        "Tracked as FU-T05 in groupmembers'markdown/gch.md (2026-04-20 §8)."
-    )
-    def test_register_ignores_requested_user_type_for_now(self):
+    def test_register_honors_requested_user_type(self):
+        """As of 2026-04-20 /auth/register honors the client-supplied
+        userType. See gch.md §6 for the product decision."""
         response = register(
             RegisterRequest(
                 username="creator_user",
@@ -206,7 +203,7 @@ class R1AuthTests(unittest.TestCase):
             FakeSession([]),
         )
 
-        self.assertEqual(response.data.user.user_type, "CONSUMER")
+        self.assertEqual(response.data.user.user_type, "CREATOR")
 
     def test_register_validates_email(self):
         with self.assertRaises(ValidationError):

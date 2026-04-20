@@ -90,32 +90,69 @@ POST /auth/register
   "username": "johndoe",
   "email": "john@example.com",
   "password": "SecurePass123!",
-  "userType": "CONSUMER"
+  "userType": "CREATOR"
 }
 ```
 
-**Current implementation note:** `userType` is accepted for forward compatibility, but the backend currently creates newly registered users as `CONSUMER` by default.
+**Fields:**
 
-**Response (201):**
+| Field      | Type    | Required | Notes |
+|------------|---------|----------|-------|
+| `username` | string  | yes      | 3–50 chars, trimmed, must be unique across all users |
+| `email`    | string  | yes      | 3–255 chars, lowercased + trimmed, must be unique, must contain `@` and a dot in the domain |
+| `password` | string  | yes      | 8–255 chars, stored as a bcrypt hash |
+| `userType` | string  | **no**   | `"CONSUMER"` or `"CREATOR"` (case-insensitive, trimmed); omitted / `null` → defaults to `"CONSUMER"`; any other value → 422 `"Invalid user type"` |
+
+**`userType` semantics (as of 2026-04-20):** the backend **honors whatever the client sends**. Passing `"CREATOR"` at registration creates an account with `user_type='CREATOR'` and grants creator capabilities (`canApplyForCreator` / `canPublishItems` / `canCreateCardPacks` / `canEditCreatorProfile` / `canViewCreatorCenter` in `GET /me`) from the first request. Passing `"CONSUMER"` or omitting the field creates a consumer account. Note: this is a change from an earlier (undocumented) build that silently clamped every new registration to `"CONSUMER"`; that clamp has been removed.
+
+Product implication: if you want a gated "apply to become a creator" flow, enforce it **on the frontend** (e.g., only surface the `userType=CREATOR` option behind an invite / review step) — the backend does not police it today.
+
+**Response (201) — consumer registration:**
 ```json
 {
   "success": true,
   "data": {
     "user": {
       "id": "user-123",
+      "uid": "U-ABC12345",
       "username": "johndoe",
       "email": "john@example.com",
       "type": "CONSUMER",
-      "createdAt": "2024-01-15T10:30:00Z"
+      "createdAt": "2026-04-20T10:30:00Z"
     },
     "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
   }
 }
 ```
 
-**Error responses:**
-- `409 Conflict` - email already registered or username already taken
-- `422 Unprocessable Entity` - invalid username/email/password format
+**Response (201) — creator registration:**
+```json
+{
+  "success": true,
+  "data": {
+    "user": {
+      "id": "user-456",
+      "uid": "U-XYZ98765",
+      "username": "janedesigner",
+      "email": "jane@example.com",
+      "type": "CREATOR",
+      "createdAt": "2026-04-20T10:30:00Z"
+    },
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  }
+}
+```
+
+**Errors:**
+
+| Status | Condition | `detail` |
+|--------|-----------|----------|
+| 409    | Email already registered         | `"Email already registered"` |
+| 409    | Username already taken           | `"Username already taken"` |
+| 422    | `username` empty after trim      | standard pydantic `ValueError` |
+| 422    | `email` missing `@` or domain dot | `"Invalid email address"` |
+| 422    | `userType` not in `{CONSUMER, CREATOR}` | `"Invalid user type"` |
+| 422    | `password` outside 8–255         | standard pydantic constraint error |
 
 ### 1.2 Login
 ```
