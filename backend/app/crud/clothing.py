@@ -15,7 +15,11 @@ from app.schemas.clothing_item import Tag
 def get(db: Session, item_id: UUID, user_id: UUID) -> Optional[ClothingItem]:
     return (
         db.query(ClothingItem)
-        .filter(ClothingItem.id == item_id, ClothingItem.user_id == user_id)
+        .filter(
+            ClothingItem.id == item_id,
+            ClothingItem.user_id == user_id,
+            ClothingItem.deleted_at.is_(None),
+        )
         .first()
     )
 
@@ -90,7 +94,10 @@ def search_by_final_tags(
     Search using final_tags only (not predicted_tags).
     Multiple tags with same key = OR; different keys = AND.
     """
-    q = db.query(ClothingItem).filter(ClothingItem.user_id == user_id)
+    q = db.query(ClothingItem).filter(
+        ClothingItem.user_id == user_id,
+        ClothingItem.deleted_at.is_(None),
+    )
 
     if source:
         q = q.filter(ClothingItem.source == source)
@@ -126,6 +133,71 @@ def search_by_final_tags(
     return items, total
 
 
+def create(
+    db: Session,
+    *,
+    item_id: UUID,
+    user_id: UUID,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    source: str = "OWNED",
+    catalog_visibility: str = "PRIVATE",
+) -> ClothingItem:
+    item = ClothingItem(
+        id=item_id,
+        user_id=user_id,
+        source=source,
+        catalog_visibility=catalog_visibility,
+        predicted_tags=[],
+        final_tags=[],
+        is_confirmed=False,
+        custom_tags=[],
+        name=name,
+        description=description,
+    )
+    db.add(item)
+    db.flush()
+    return item
+
+
+def list_published_by_user(
+    db: Session,
+    *,
+    user_id: UUID,
+    page: int = 1,
+    limit: int = 20,
+) -> Tuple[List[ClothingItem], int]:
+    q = (
+        db.query(ClothingItem)
+        .filter(
+            ClothingItem.user_id == user_id,
+            ClothingItem.catalog_visibility.in_(("PACK_ONLY", "PUBLIC")),
+            ClothingItem.deleted_at.is_(None),
+        )
+        .order_by(ClothingItem.created_at.desc())
+    )
+    total = q.count()
+    items = q.offset((page - 1) * limit).limit(limit).all()
+    return items, total
+
+
+def list_popular(
+    db: Session,
+    *,
+    limit: int = 10,
+) -> List[ClothingItem]:
+    return (
+        db.query(ClothingItem)
+        .filter(
+            ClothingItem.catalog_visibility.in_(("PACK_ONLY", "PUBLIC")),
+            ClothingItem.deleted_at.is_(None),
+        )
+        .order_by(ClothingItem.view_count.desc(), ClothingItem.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+
 def list_with_tag_filter(
     db: Session,
     user_id: UUID,
@@ -139,7 +211,10 @@ def list_with_tag_filter(
     limit: int = 20,
 ) -> Tuple[List[ClothingItem], int]:
     """GET /clothing-items with tagKey, tagValue, search filters"""
-    q = db.query(ClothingItem).filter(ClothingItem.user_id == user_id)
+    q = db.query(ClothingItem).filter(
+        ClothingItem.user_id == user_id,
+        ClothingItem.deleted_at.is_(None),
+    )
 
     if source:
         q = q.filter(ClothingItem.source == source)
