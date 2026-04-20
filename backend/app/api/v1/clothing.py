@@ -312,12 +312,7 @@ def delete_clothing_item(
     db: Session = Depends(get_db),
     user_id: UUID = Depends(get_current_user_id),
 ):
-    from app.api.v1.imports import _delete_clothing_item_internal
-
-    item = crud_clothing.get(db, item_id, user_id)
-    if not item:
-        raise HTTPException(404, "Clothing item not found")
-
+    # Refuse if processing is active.
     active = db.query(ProcessingTask).filter(
         ProcessingTask.clothing_item_id == item_id,
         ProcessingTask.status.in_(["PENDING", "PROCESSING"]),
@@ -325,7 +320,31 @@ def delete_clothing_item(
     if active:
         raise HTTPException(409, "Cannot delete while processing")
 
-    _delete_clothing_item_internal(db, item)
+    blob_service = get_blob_service()
+
+    # Capture provenance for cascade cleanup before the delete happens.
+    current = db.query(ClothingItem).filter_by(id=item_id, user_id=user_id).first()
+    if not current:
+        raise HTTPException(404, "Clothing item not found")
+    imported_from = current.imported_from_clothing_item_id
+
+    outcome = crud_clothing.delete_with_lifecycle(
+        db, item_id=item_id, user_id=user_id, blob_service=blob_service,
+    )
+    if outcome is None:
+        raise HTTPException(404, "Clothing item not found")
+
+    # Cascade: if the deleted item was an IMPORTED copy of a tombstoned canonical,
+    # and no other imports remain, hard-delete the tombstone.
+    if imported_from is not None:
+        canonical = db.query(ClothingItem).filter_by(id=imported_from).first()
+        if canonical and canonical.deleted_at is not None:
+            remaining = db.query(ClothingItem).filter_by(
+                imported_from_clothing_item_id=canonical.id
+            ).count()
+            if remaining == 0:
+                crud_clothing._hard_delete(db, canonical, blob_service)
+
     db.commit()
 
 

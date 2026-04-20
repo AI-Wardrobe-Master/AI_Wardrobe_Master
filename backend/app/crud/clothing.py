@@ -1,15 +1,18 @@
 """
 Clothing CRUD - Module 2: final_tags update, search
 """
+from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 from uuid import UUID
 
-from sqlalchemy import func, or_
+from sqlalchemy import exists, func, or_
 from sqlalchemy.orm import Session
 
-from app.models.clothing_item import ClothingItem
+from app.models.clothing_item import ClothingItem, Image, Model3D
+from app.models.creator import CardPack, CardPackItem
 from app.models.wardrobe import WardrobeItem
 from app.schemas.clothing_item import Tag
+from app.services.blob_service import BlobService
 
 
 def get(db: Session, item_id: UUID, user_id: UUID) -> Optional[ClothingItem]:
@@ -246,3 +249,79 @@ def list_with_tag_filter(
     offset = (page - 1) * limit
     items = q.offset(offset).limit(limit).all()
     return items, total
+
+
+def delete_with_lifecycle(
+    db: Session,
+    *,
+    item_id: UUID,
+    user_id: UUID,
+    blob_service: BlobService,
+) -> str | None:
+    """Runs the 3-tier delete. Returns 'HARD_DELETED', 'TOMBSTONED', or None (not found)."""
+    item = (
+        db.query(ClothingItem)
+        .filter(
+            ClothingItem.id == item_id,
+            ClothingItem.user_id == user_id,
+            ClothingItem.deleted_at.is_(None),
+        )
+        .with_for_update()
+        .first()
+    )
+    if item is None:
+        return None
+
+    in_published_pack = db.query(exists().where(
+        (CardPackItem.clothing_item_id == item.id)
+        & (CardPackItem.card_pack_id == CardPack.id)
+        & (CardPack.status == "PUBLISHED")
+    )).scalar()
+
+    import_count = (
+        db.query(ClothingItem)
+        .filter(ClothingItem.imported_from_clothing_item_id == item.id)
+        .count()
+    )
+
+    if not in_published_pack or import_count == 0:
+        _hard_delete(db, item, blob_service)
+        return "HARD_DELETED"
+    else:
+        _tombstone(db, item, blob_service)
+        return "TOMBSTONED"
+
+
+def _hard_delete(db: Session, item: ClothingItem, blob_service: BlobService) -> None:
+    blob_hashes = [img.blob_hash for img in item.images if img.blob_hash]
+    if item.model_3d and item.model_3d.blob_hash:
+        blob_hashes.append(item.model_3d.blob_hash)
+
+    db.query(WardrobeItem).filter_by(clothing_item_id=item.id).delete(synchronize_session=False)
+    db.query(CardPackItem).filter_by(clothing_item_id=item.id).delete(synchronize_session=False)
+    db.delete(item)
+    db.flush()
+    for h in blob_hashes:
+        if h:
+            blob_service.release(db, h)
+
+
+def _tombstone(db: Session, item: ClothingItem, blob_service: BlobService) -> None:
+    blob_hashes = [img.blob_hash for img in item.images if img.blob_hash]
+    if item.model_3d and item.model_3d.blob_hash:
+        blob_hashes.append(item.model_3d.blob_hash)
+
+    db.query(WardrobeItem).filter_by(clothing_item_id=item.id).delete(synchronize_session=False)
+    db.query(CardPackItem).filter_by(clothing_item_id=item.id).delete(synchronize_session=False)
+
+    # Delete publisher-side images + model. Consumer IMPORTED copies have their own Image/Model3D rows.
+    db.query(Image).filter_by(clothing_item_id=item.id).delete(synchronize_session=False)
+    if item.model_3d:
+        db.delete(item.model_3d)
+
+    item.deleted_at = datetime.now(timezone.utc)
+    db.flush()
+
+    for h in blob_hashes:
+        if h:
+            blob_service.release(db, h)
