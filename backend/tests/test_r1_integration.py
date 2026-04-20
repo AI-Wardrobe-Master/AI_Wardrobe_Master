@@ -14,6 +14,7 @@ from app.core.security import create_access_token, get_password_hash
 from app.db.session import get_db
 from app.main import app
 from app.models.user import User
+from app.models.wardrobe import Wardrobe
 
 
 class FakeQuery:
@@ -47,7 +48,9 @@ class FakeQuery:
 class FakeSession:
     def __init__(self, users):
         self.users = {user.id: user for user in users}
+        self.wardrobes = {}
         self._pending_user = None
+        self._pending_wardrobes = []
 
     def get(self, model, key):
         if model is User:
@@ -57,12 +60,17 @@ class FakeSession:
     def query(self, model):
         if model is User:
             return FakeQuery(self.users.values())
+        if model is Wardrobe:
+            return FakeQuery(self.wardrobes.values())
         raise AssertionError(f"Unexpected query model: {model}")
 
     def add(self, instance):
-        if not isinstance(instance, User):
+        if isinstance(instance, User):
+            self._pending_user = instance
+        elif isinstance(instance, Wardrobe):
+            self._pending_wardrobes.append(instance)
+        else:
             raise AssertionError(f"Unexpected add model: {type(instance)}")
-        self._pending_user = instance
 
     def commit(self):
         if self._pending_user is not None:
@@ -72,14 +80,23 @@ class FakeSession:
                 self._pending_user.created_at = datetime.now(timezone.utc)
             self.users[self._pending_user.id] = self._pending_user
             self._pending_user = None
+        for wardrobe in self._pending_wardrobes:
+            if wardrobe.id is None:
+                wardrobe.id = uuid4()
+            if wardrobe.created_at is None:
+                wardrobe.created_at = datetime.now(timezone.utc)
+            self.wardrobes[wardrobe.id] = wardrobe
+        self._pending_wardrobes = []
 
     def refresh(self, instance):
         return instance
 
 
 def make_user(email: str, password: str) -> User:
+    user_id = uuid4()
     return User(
-        id=uuid4(),
+        id=user_id,
+        uid=f"USR-{str(user_id)[:8].upper()}",
         username=email.split("@")[0],
         email=email,
         hashed_password=get_password_hash(password),
