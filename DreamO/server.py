@@ -36,7 +36,8 @@ _lock = threading.Lock()
 
 class GenerateRequest(BaseModel):
     id_image: Optional[str] = None
-    garment_image: Optional[str] = None
+    garment_images: Optional[list[str]] = Field(default=None)  # NEW
+    garment_image: Optional[str] = None                        # DEPRECATED shim
     prompt: str
     negative_prompt: str = ""
     guidance_scale: float = Field(default=4.5, ge=1.0, le=10.0)
@@ -92,9 +93,13 @@ def generate(req: GenerateRequest):
     if _generator is None:
         raise HTTPException(503, "Model not loaded yet")
 
-    if req.id_image is None and req.garment_image is None:
+    garments_list: list[str] = req.garment_images or (
+        [req.garment_image] if req.garment_image else []
+    )
+
+    if req.id_image is None and not garments_list:
         raise HTTPException(
-            422, "At least one of id_image or garment_image must be provided"
+            422, "At least one of id_image or garment_images must be provided"
         )
 
     try:
@@ -105,8 +110,8 @@ def generate(req: GenerateRequest):
             ref_images.append(_decode_image(req.id_image))
             ref_tasks.append("id")
 
-        if req.garment_image:
-            ref_images.append(_decode_image(req.garment_image))
+        for g in garments_list:
+            ref_images.append(_decode_image(g))
             ref_tasks.append("ip")
 
         with _lock:
