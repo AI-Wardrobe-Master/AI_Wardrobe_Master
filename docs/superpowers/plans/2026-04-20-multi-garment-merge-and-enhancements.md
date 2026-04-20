@@ -123,7 +123,7 @@ async def test_release_and_addref_concurrent_preserve_ref_count():
         finally:
             local_db.close()
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     await asyncio.gather(*[loop.run_in_executor(None, work) for _ in range(50)])
 
     db.refresh(initial)
