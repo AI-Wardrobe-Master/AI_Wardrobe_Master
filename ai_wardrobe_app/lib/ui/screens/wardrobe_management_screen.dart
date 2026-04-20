@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../l10n/app_strings_provider.dart';
 import '../../models/wardrobe.dart';
@@ -77,11 +78,13 @@ class _WardrobeManagementScreenState extends State<WardrobeManagementScreen> {
                   SegmentedButton<String>(
                     segments: [
                       ButtonSegment(
-                          value: 'REGULAR',
-                          label: Text(s.regularWardrobeLabel)),
+                        value: 'REGULAR',
+                        label: Text(s.regularWardrobeLabel),
+                      ),
                       ButtonSegment(
-                          value: 'VIRTUAL',
-                          label: Text(s.virtualWardrobeLabel)),
+                        value: 'VIRTUAL',
+                        label: Text(s.virtualWardrobeLabel),
+                      ),
                     ],
                     selected: {type},
                     onSelectionChanged: (v) =>
@@ -101,12 +104,15 @@ class _WardrobeManagementScreenState extends State<WardrobeManagementScreen> {
                     Navigator.of(ctx).pop();
                     try {
                       await WardrobeService.createWardrobe(
-                          name: name, type: type);
+                        name: name,
+                        type: type,
+                      );
                       _load();
                     } catch (e) {
                       if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text(e.toString())));
+                        ScaffoldMessenger.of(
+                          context,
+                        ).showSnackBar(SnackBar(content: Text(e.toString())));
                       }
                     }
                   },
@@ -155,8 +161,9 @@ class _WardrobeManagementScreenState extends State<WardrobeManagementScreen> {
       _load();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(e.toString())));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.toString())));
       }
     }
   }
@@ -175,7 +182,8 @@ class _WardrobeManagementScreenState extends State<WardrobeManagementScreen> {
           ),
           FilledButton(
             style: FilledButton.styleFrom(
-                backgroundColor: Theme.of(context).colorScheme.error),
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
             onPressed: () => Navigator.of(ctx).pop(true),
             child: Text(s.deleteWardrobe),
           ),
@@ -188,114 +196,147 @@ class _WardrobeManagementScreenState extends State<WardrobeManagementScreen> {
       _load();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(e.toString())));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.toString())));
       }
     }
+  }
+
+  Future<void> _shareWardrobe(Wardrobe wardrobe) async {
+    var latestWardrobe = wardrobe;
+    if (!wardrobe.isPublic) {
+      latestWardrobe = await WardrobeService.updateWardrobe(
+        wardrobe.id,
+        isPublic: true,
+      );
+      await _load();
+    }
+
+    final shareText =
+        'AI Wardrobe share code: ${latestWardrobe.wid}\nWardrobe: ${latestWardrobe.name}';
+    await Clipboard.setData(ClipboardData(text: shareText));
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Share code copied: ${latestWardrobe.wid}')),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final s = AppStringsProvider.of(context);
     return Scaffold(
-      appBar: AppBar(
-        title: Text(s.manageWardrobes),
-      ),
+      appBar: AppBar(title: Text(s.manageWardrobes)),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-              ? Center(
-                  child: Column(
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(_error!, style: TextStyle(color: _textSecondary)),
+                  const SizedBox(height: 8),
+                  TextButton(onPressed: _load, child: const Text('Retry')),
+                ],
+              ),
+            )
+          : _wardrobes.isEmpty
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      s.noWardrobesYet,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: _textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      s.createFirstWardrobe,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 14, color: _textSecondary),
+                    ),
+                    const SizedBox(height: 24),
+                    FilledButton.icon(
+                      onPressed: _createWardrobe,
+                      icon: const Icon(Icons.add),
+                      label: Text(s.createWardrobe),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          : ListView.builder(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              itemCount: _wardrobes.length,
+              itemBuilder: (context, index) {
+                final w = _wardrobes[index];
+                return ListTile(
+                  title: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          w.name,
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: _textPrimary,
+                          ),
+                        ),
+                      ),
+                      if (w.isVirtual)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: _textSecondary.withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            s.virtualWardrobeLabel,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: _textSecondary,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  subtitle: Text(
+                    '${w.itemCount} ${s.statClothes}',
+                    style: TextStyle(fontSize: 12, color: _textSecondary),
+                  ),
+                  trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(_error!, style: TextStyle(color: _textSecondary)),
-                      const SizedBox(height: 8),
-                      TextButton(
-                        onPressed: _load,
-                        child: const Text('Retry'),
+                      IconButton(
+                        icon: const Icon(Icons.share_outlined),
+                        onPressed: () => _shareWardrobe(w),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.edit_outlined),
+                        onPressed: () => _renameWardrobe(w),
+                      ),
+                      IconButton(
+                        icon: Icon(
+                          Icons.delete_outline,
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                        onPressed: () => _deleteWardrobe(w),
                       ),
                     ],
                   ),
-                )
-              : _wardrobes.isEmpty
-                  ? Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(24),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(s.noWardrobesYet,
-                                style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
-                                    color: _textPrimary)),
-                            const SizedBox(height: 8),
-                            Text(s.createFirstWardrobe,
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                    fontSize: 14, color: _textSecondary)),
-                            const SizedBox(height: 24),
-                            FilledButton.icon(
-                              onPressed: _createWardrobe,
-                              icon: const Icon(Icons.add),
-                              label: Text(s.createWardrobe),
-                            ),
-                          ],
-                        ),
-                      ),
-                    )
-                  : ListView.builder(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      itemCount: _wardrobes.length,
-                      itemBuilder: (context, index) {
-                        final w = _wardrobes[index];
-                        return ListTile(
-                          title: Row(
-                            children: [
-                              Expanded(
-                                  child: Text(
-                                w.name,
-                                style: TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                    color: _textPrimary),
-                              )),
-                              if (w.isVirtual)
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 8, vertical: 2),
-                                  decoration: BoxDecoration(
-                                    color: _textSecondary.withValues(alpha: 0.2),
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: Text(
-                                    s.virtualWardrobeLabel,
-                                    style: TextStyle(
-                                        fontSize: 12, color: _textSecondary),
-                                  ),
-                                ),
-                            ],
-                          ),
-                          subtitle: Text(
-                            '${w.itemCount} ${s.statClothes}',
-                            style: TextStyle(fontSize: 12, color: _textSecondary),
-                          ),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              IconButton(
-                                icon: const Icon(Icons.edit_outlined),
-                                onPressed: () => _renameWardrobe(w),
-                              ),
-                              IconButton(
-                                icon: Icon(Icons.delete_outline,
-                                    color: Theme.of(context).colorScheme.error),
-                                onPressed: () => _deleteWardrobe(w),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
+                );
+              },
+            ),
       floatingActionButton: _wardrobes.isNotEmpty
           ? FloatingActionButton(
               onPressed: _createWardrobe,

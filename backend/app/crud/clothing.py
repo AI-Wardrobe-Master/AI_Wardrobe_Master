@@ -1,12 +1,14 @@
 """
 Clothing CRUD - Module 2: final_tags update, search
 """
-from typing import Optional, List, Tuple
+from typing import List, Optional, Tuple
 from uuid import UUID
+
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_, func
 
 from app.models.clothing_item import ClothingItem
+from app.models.wardrobe import WardrobeItem
 from app.schemas.clothing_item import Tag
 
 
@@ -25,7 +27,10 @@ def update_final_tags(
     item = get(db, item_id, user_id)
     if not item:
         return None
-    item.final_tags = [t if isinstance(t, dict) else {"key": t.key, "value": t.value} for t in final_tags]
+    item.final_tags = [
+        t if isinstance(t, dict) else {"key": t.key, "value": t.value}
+        for t in final_tags
+    ]
     item.is_confirmed = is_confirmed
     db.commit()
     db.refresh(item)
@@ -42,6 +47,9 @@ def update(
     final_tags: Optional[List[Tag]] = None,
     is_confirmed: Optional[bool] = None,
     custom_tags: Optional[List[str]] = None,
+    category: Optional[str] = None,
+    material: Optional[str] = None,
+    style: Optional[str] = None,
 ) -> Optional[ClothingItem]:
     """Full update for PATCH /clothing-items/:id"""
     item = get(db, item_id, user_id)
@@ -57,6 +65,12 @@ def update(
         item.is_confirmed = is_confirmed
     if custom_tags is not None:
         item.custom_tags = custom_tags
+    if category is not None:
+        item.category = category
+    if material is not None:
+        item.material = material
+    if style is not None:
+        item.style = style
     db.commit()
     db.refresh(item)
     return item
@@ -86,22 +100,24 @@ def search_by_final_tags(
             or_(
                 ClothingItem.name.ilike(f"%{query}%"),
                 ClothingItem.description.ilike(f"%{query}%"),
+                ClothingItem.category.ilike(f"%{query}%"),
+                ClothingItem.material.ilike(f"%{query}%"),
+                ClothingItem.style.ilike(f"%{query}%"),
                 func.array_to_string(ClothingItem.custom_tags, " ").ilike(f"%{query}%"),
             )
         )
 
     if tags:
         from collections import defaultdict
+
         by_key = defaultdict(list)
         for tag in tags:
             key = tag.get("key")
             value = tag.get("value")
             if key and value:
                 by_key[key].append({"key": key, "value": value})
-        for key, key_tags in by_key.items():
-            or_conds = [
-                ClothingItem.final_tags.contains([t]) for t in key_tags
-            ]
+        for key_tags in by_key.values():
+            or_conds = [ClothingItem.final_tags.contains([t]) for t in key_tags]
             q = q.filter(or_(*or_conds))
 
     total = q.count()
@@ -118,6 +134,7 @@ def list_with_tag_filter(
     tag_key: Optional[str] = None,
     tag_value: Optional[str] = None,
     search: Optional[str] = None,
+    wardrobe_id: Optional[UUID] = None,
     page: int = 1,
     limit: int = 20,
 ) -> Tuple[List[ClothingItem], int]:
@@ -126,6 +143,11 @@ def list_with_tag_filter(
 
     if source:
         q = q.filter(ClothingItem.source == source)
+    if wardrobe_id is not None:
+        q = q.join(
+            WardrobeItem,
+            WardrobeItem.clothing_item_id == ClothingItem.id,
+        ).filter(WardrobeItem.wardrobe_id == wardrobe_id)
     if tag_key and tag_value:
         q = q.filter(
             ClothingItem.final_tags.contains([{"key": tag_key, "value": tag_value}])
@@ -135,6 +157,9 @@ def list_with_tag_filter(
             or_(
                 ClothingItem.name.ilike(f"%{search}%"),
                 ClothingItem.description.ilike(f"%{search}%"),
+                ClothingItem.category.ilike(f"%{search}%"),
+                ClothingItem.material.ilike(f"%{search}%"),
+                ClothingItem.style.ilike(f"%{search}%"),
                 func.array_to_string(ClothingItem.custom_tags, " ").ilike(f"%{search}%"),
             )
         )

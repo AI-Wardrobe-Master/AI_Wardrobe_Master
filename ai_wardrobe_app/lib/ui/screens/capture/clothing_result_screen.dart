@@ -24,6 +24,7 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
   bool _loading = true;
   bool _addingToWardrobe = false;
   bool _addedToWardrobe = false;
+  String? _currentWardrobeId;
 
   @override
   void initState() {
@@ -37,9 +38,33 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
         ClothingApiService.getClothingItem(widget.itemId),
         ClothingApiService.getAngleViews(widget.itemId),
       ]);
+      final item = Map<String, dynamic>.from(results[0] as Map);
+      final angleViews = (results[1] as Map)['angleViews'] as List? ?? [];
+
+      String? currentWardrobeId = CurrentWardrobeController.currentWardrobeId;
+      if (currentWardrobeId == null) {
+        try {
+          final wardrobes = await WardrobeService.fetchWardrobes();
+          if (wardrobes.isNotEmpty) {
+            currentWardrobeId = wardrobes.first.id;
+            CurrentWardrobeController.setCurrentWardrobeId(currentWardrobeId);
+          }
+        } catch (_) {
+          // Keep the add button available when wardrobe lookup is unavailable.
+        }
+      }
+
+      final wardrobeIds = ((item['wardrobeIds'] as List?) ?? const <dynamic>[])
+          .map((id) => id.toString())
+          .toSet();
+
       setState(() {
-        _item = results[0];
-        _angleViews = (results[1] as Map)['angleViews'] as List? ?? [];
+        _item = item;
+        _angleViews = angleViews;
+        _currentWardrobeId = currentWardrobeId;
+        _addedToWardrobe =
+            currentWardrobeId != null &&
+            wardrobeIds.contains(currentWardrobeId);
         _loading = false;
       });
     } catch (e) {
@@ -49,8 +74,7 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
 
   String _fullUrl(String? url) {
     if (url == null || url.isEmpty) return '';
-    if (url.startsWith('http')) return url;
-    return '$fileBaseUrl$url';
+    return resolveFileUrl(url);
   }
 
   Future<void> _addToCurrentWardrobe() async {
@@ -62,9 +86,9 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
         if (list.isEmpty) {
           if (mounted) {
             final s = AppStringsProvider.of(context);
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(s.createWardrobeFirst)),
-            );
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text(s.createWardrobeFirst)));
           }
           return;
         }
@@ -88,16 +112,16 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
           _addedToWardrobe = true;
         });
         final s = AppStringsProvider.of(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(s.addedToWardrobe)),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(s.addedToWardrobe)));
       }
     } catch (e) {
       if (mounted) {
         setState(() => _addingToWardrobe = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(e.toString())),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.toString())));
       }
     }
   }
@@ -106,12 +130,12 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final textP = isDark ? AppColors.darkTextPrimary : AppColors.textPrimary;
-    final textS = isDark ? AppColors.darkTextSecondary : AppColors.textSecondary;
+    final textS = isDark
+        ? AppColors.darkTextSecondary
+        : AppColors.textSecondary;
 
     if (_loading) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
     final name = _item?['name'] as String? ?? 'Clothing Item';
@@ -162,8 +186,7 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
                 child: Row(
                   children: [
-                    Icon(Icons.rotate_90_degrees_ccw,
-                        size: 18, color: textS),
+                    Icon(Icons.rotate_90_degrees_ccw, size: 18, color: textS),
                     const SizedBox(width: 6),
                     Text(
                       '${_selectedAngle * 45}°',
@@ -208,15 +231,15 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
                         ),
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(9),
-                          child: CachedNetworkImage(
-                            imageUrl: url,
+                          child: _buildAdaptiveImage(
+                            url,
                             fit: BoxFit.cover,
-                            placeholder: (_, __) => Container(
+                            placeholder: Container(
                               color: isDark
                                   ? Colors.white10
                                   : Colors.black.withValues(alpha: 0.05),
                             ),
-                            errorWidget: (_, __, ___) => const Icon(
+                            errorWidget: const Icon(
                               Icons.broken_image,
                               size: 20,
                             ),
@@ -255,12 +278,14 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
                                   ? Icons.check_circle
                                   : Icons.add_to_photos_outlined,
                               size: 20,
-                              color: _addedToWardrobe
-                                  ? Colors.green
-                                  : textP,
+                              color: _addedToWardrobe ? Colors.green : textP,
                             ),
                       label: Text(
-                        AppStringsProvider.of(context).addToCurrentWardrobe,
+                        _addedToWardrobe
+                            ? 'Already in current wardrobe'
+                            : AppStringsProvider.of(
+                                context,
+                              ).addToCurrentWardrobe,
                         style: TextStyle(color: textP),
                       ),
                     ),
@@ -287,6 +312,40 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
     );
   }
 
+  Widget _buildAdaptiveImage(
+    String url, {
+    BoxFit fit = BoxFit.cover,
+    Widget? placeholder,
+    Widget? errorWidget,
+  }) {
+    if (url.isEmpty) {
+      return errorWidget ?? const SizedBox.shrink();
+    }
+    if (url.startsWith('data:')) {
+      try {
+        final data = Uri.parse(url).data;
+        if (data != null) {
+          return Image.memory(
+            data.contentAsBytes(),
+            fit: fit,
+            errorBuilder: (_, __, ___) =>
+                errorWidget ?? const SizedBox.shrink(),
+          );
+        }
+      } catch (_) {
+        return errorWidget ?? const SizedBox.shrink();
+      }
+      return errorWidget ?? const SizedBox.shrink();
+    }
+    return CachedNetworkImage(
+      imageUrl: url,
+      httpHeaders: ApiSession.authHeaders,
+      fit: fit,
+      placeholder: (_, __) => placeholder ?? const SizedBox.shrink(),
+      errorWidget: (_, __, ___) => errorWidget ?? const SizedBox.shrink(),
+    );
+  }
+
   Widget _buildAngleViewer() {
     final view = _angleViews[_selectedAngle] as Map;
     final url = _fullUrl(view['url'] as String?);
@@ -304,13 +363,11 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
       },
       child: Padding(
         padding: const EdgeInsets.all(16),
-        child: CachedNetworkImage(
-          imageUrl: url,
+        child: _buildAdaptiveImage(
+          url,
           fit: BoxFit.contain,
-          placeholder: (_, __) =>
-              const Center(child: CircularProgressIndicator()),
-          errorWidget: (_, __, ___) =>
-              const Center(child: Icon(Icons.broken_image, size: 48)),
+          placeholder: const Center(child: CircularProgressIndicator()),
+          errorWidget: const Center(child: Icon(Icons.broken_image, size: 48)),
         ),
       ),
     );
@@ -326,18 +383,12 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
         if (front.isNotEmpty)
           Padding(
             padding: const EdgeInsets.all(16),
-            child: CachedNetworkImage(
-              imageUrl: front,
-              fit: BoxFit.contain,
-            ),
+            child: _buildAdaptiveImage(front, fit: BoxFit.contain),
           ),
         if (back.isNotEmpty)
           Padding(
             padding: const EdgeInsets.all(16),
-            child: CachedNetworkImage(
-              imageUrl: back,
-              fit: BoxFit.contain,
-            ),
+            child: _buildAdaptiveImage(back, fit: BoxFit.contain),
           ),
       ],
     );

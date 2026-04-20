@@ -1,17 +1,15 @@
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_strings_provider.dart';
-import '../../models/card_pack.dart';
 import '../../models/creator.dart';
-import '../../services/card_pack_api_service.dart';
+import '../../models/wardrobe.dart';
 import '../../services/creator_api_service.dart';
-import '../../services/local_card_pack_service.dart';
+import '../../services/wardrobe_service.dart';
 import '../../theme/app_theme.dart';
-import '../widgets/card_pack/card_pack_list_item.dart';
 import '../widgets/creator/creator_list_item.dart';
-import 'card_pack_detail_screen.dart';
 import 'creator/card_pack_creator_screen.dart';
 import 'creator/creator_profile_screen.dart';
+import 'shared_wardrobe_detail_screen.dart';
 
 class DiscoverScreen extends StatefulWidget {
   const DiscoverScreen({super.key});
@@ -25,11 +23,11 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   late final TabController _tabController;
   final TextEditingController _searchController = TextEditingController();
 
-  List<CardPack> _packs = [];
+  List<Wardrobe> _wardrobes = [];
   List<Creator> _creators = [];
-  bool _loadingPacks = false;
+  bool _loadingWardrobes = false;
   bool _loadingCreators = false;
-  String? _errorPacks;
+  String? _errorWardrobes;
   String? _errorCreators;
   String _searchQuery = '';
 
@@ -67,42 +65,34 @@ class _DiscoverScreenState extends State<DiscoverScreen>
 
   Future<void> _loadData() async {
     if (_tabController.index == 0) {
-      await _loadPacks();
+      await _loadWardrobes();
     } else {
       await _loadCreators();
     }
   }
 
-  Future<void> _loadPacks() async {
-    if (_loadingPacks) return;
+  Future<void> _loadWardrobes() async {
+    if (_loadingWardrobes) return;
     setState(() {
-      _loadingPacks = true;
-      _errorPacks = null;
+      _loadingWardrobes = true;
+      _errorWardrobes = null;
     });
-
-    final allPacks = <CardPack>[];
     try {
-      final apiPacks =
-          await CardPackApiService.listCardPacks(status: 'PUBLISHED');
-      allPacks.addAll(apiPacks);
-    } catch (_) {}
-
-    try {
-      final localPacks = await LocalCardPackService.listCardPacks();
-      for (final pack in localPacks) {
-        if (!allPacks.any((item) => item.id == pack.id)) {
-          allPacks.add(pack);
-        }
-      }
+      final wardrobes = await WardrobeService.listPublicWardrobes(
+        search: _searchQuery.isNotEmpty ? _searchQuery : null,
+      );
+      if (!mounted) return;
+      setState(() {
+        _wardrobes = wardrobes;
+        _loadingWardrobes = false;
+      });
     } catch (e) {
-      _errorPacks = e.toString();
+      if (!mounted) return;
+      setState(() {
+        _errorWardrobes = e.toString();
+        _loadingWardrobes = false;
+      });
     }
-
-    if (!mounted) return;
-    setState(() {
-      _packs = allPacks;
-      _loadingPacks = false;
-    });
   }
 
   Future<void> _loadCreators() async {
@@ -129,12 +119,15 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     }
   }
 
-  List<CardPack> get _filteredPacks {
-    if (_searchQuery.isEmpty) return _packs;
+  List<Wardrobe> get _filteredWardrobes {
+    if (_searchQuery.isEmpty) return _wardrobes;
     final query = _searchQuery.toLowerCase();
-    return _packs.where((pack) {
-      return pack.name.toLowerCase().contains(query) ||
-          (pack.description?.toLowerCase().contains(query) ?? false);
+    return _wardrobes.where((wardrobe) {
+      return wardrobe.name.toLowerCase().contains(query) ||
+          wardrobe.wid.toLowerCase().contains(query) ||
+          (wardrobe.ownerUid?.toLowerCase().contains(query) ?? false) ||
+          (wardrobe.ownerUsername?.toLowerCase().contains(query) ?? false) ||
+          (wardrobe.description?.toLowerCase().contains(query) ?? false);
     }).toList();
   }
 
@@ -154,7 +147,9 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     final s = AppStringsProvider.of(context);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final textP = isDark ? AppColors.darkTextPrimary : AppColors.textPrimary;
-    final textS = isDark ? AppColors.darkTextSecondary : AppColors.textSecondary;
+    final textS = isDark
+        ? AppColors.darkTextSecondary
+        : AppColors.textSecondary;
 
     return SafeArea(
       child: Column(
@@ -192,30 +187,28 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                           )
                         : null,
                     filled: true,
-                    fillColor:
-                        isDark ? AppColors.darkSurface : Colors.grey.shade100,
+                    fillColor: isDark
+                        ? AppColors.darkSurface
+                        : Colors.grey.shade100,
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
                       borderSide: BorderSide.none,
                     ),
                   ),
-                  onChanged: (_) {
-                    if (_tabController.index == 1) {
-                      _loadCreators();
-                    }
-                  },
+                  onChanged: (_) => _loadData(),
                 ),
                 const SizedBox(height: 12),
                 TabBar(
                   controller: _tabController,
                   tabs: const [
-                    Tab(text: 'Packs'),
+                    Tab(text: 'Wardrobes'),
                     Tab(text: 'Creators'),
                   ],
                   labelColor: textP,
                   unselectedLabelColor: textS,
-                  indicatorColor:
-                      isDark ? AppColors.darkAccentBlue : AppColors.accentBlue,
+                  indicatorColor: isDark
+                      ? AppColors.darkAccentBlue
+                      : AppColors.accentBlue,
                 ),
               ],
             ),
@@ -224,7 +217,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
             child: TabBarView(
               controller: _tabController,
               children: [
-                _buildPacksTab(textP, textS, isDark),
+                _buildWardrobesTab(textP, textS, isDark),
                 _buildCreatorsTab(textP, textS),
               ],
             ),
@@ -234,44 +227,44 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     );
   }
 
-  Widget _buildPacksTab(Color textP, Color textS, bool isDark) {
-    if (_loadingPacks) {
+  Widget _buildWardrobesTab(Color textP, Color textS, bool isDark) {
+    if (_loadingWardrobes) {
       return Center(child: CircularProgressIndicator(color: textP));
     }
 
-    if (_errorPacks != null && _packs.isEmpty) {
+    if (_errorWardrobes != null) {
       return _ErrorState(
-        title: 'Error loading packs',
-        detail: _errorPacks!,
+        title: 'Error loading wardrobes',
+        detail: _errorWardrobes!,
         textP: textP,
         textS: textS,
-        onRetry: _loadPacks,
+        onRetry: _loadWardrobes,
       );
     }
 
-    final filtered = _filteredPacks;
+    final filtered = _filteredWardrobes;
     if (filtered.isEmpty) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.collections_bookmark_outlined, size: 48, color: textS),
-            const SizedBox(height: 16),
+            Icon(Icons.inventory_2_outlined, size: 40, color: textS),
+            const SizedBox(height: 8),
             Text(
-              'No card packs yet',
+              'No shared wardrobes yet',
               style: TextStyle(
-                fontSize: 16,
+                fontSize: 13,
                 fontWeight: FontWeight.w600,
                 color: textP,
               ),
             ),
             const SizedBox(height: 8),
             Text(
-              'Create your first card pack and share your styling inspiration',
-              style: TextStyle(fontSize: 13, color: textS),
+              'Published card packs and shared outfit wardrobes will both appear here.',
+              style: TextStyle(fontSize: 12, color: textS),
               textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 20),
             FilledButton.icon(
               onPressed: () {
                 Navigator.push(
@@ -284,8 +277,9 @@ class _DiscoverScreenState extends State<DiscoverScreen>
               icon: const Icon(Icons.add, size: 18),
               label: const Text('Create Card Pack'),
               style: FilledButton.styleFrom(
-                backgroundColor:
-                    isDark ? AppColors.darkAccentBlue : AppColors.accentBlue,
+                backgroundColor: isDark
+                    ? AppColors.darkAccentBlue
+                    : AppColors.accentBlue,
               ),
             ),
           ],
@@ -294,22 +288,99 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     }
 
     return RefreshIndicator(
-      onRefresh: _loadPacks,
+      onRefresh: _loadWardrobes,
       child: ListView.builder(
         padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
         itemCount: filtered.length,
         itemBuilder: (context, index) {
-          final pack = filtered[index];
-          return CardPackListItem(
-            pack: pack,
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => CardPackDetailScreen(packId: pack.id),
+          final wardrobe = filtered[index];
+          return Card(
+            margin: const EdgeInsets.only(bottom: 12),
+            color: isDark ? AppColors.darkSurface : Colors.white,
+            child: ListTile(
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        SharedWardrobeDetailScreen(wardrobeWid: wardrobe.wid),
+                  ),
+                );
+              },
+              title: Text(
+                wardrobe.name,
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 15,
+                  color: textP,
                 ),
-              );
-            },
+              ),
+              subtitle: Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'WID: ${wardrobe.wid}',
+                      style: TextStyle(fontSize: 12, color: textS),
+                    ),
+                    if (wardrobe.ownerUid != null)
+                      Text(
+                        'Publisher UID: ${wardrobe.ownerUid}',
+                        style: TextStyle(fontSize: 12, color: textS),
+                      ),
+                    if (wardrobe.description?.isNotEmpty == true)
+                      Text(
+                        wardrobe.description!,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 12, color: textS),
+                      ),
+                  ],
+                ),
+              ),
+              trailing: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  if (wardrobe.source == 'CARD_PACK')
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.accentBlue.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        'Card Pack',
+                        style: TextStyle(fontSize: 11, color: textP),
+                      ),
+                    )
+                  else
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: textS.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        'Shared Wardrobe',
+                        style: TextStyle(fontSize: 11, color: textP),
+                      ),
+                    ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '${wardrobe.itemCount} items',
+                    style: TextStyle(fontSize: 11, color: textS),
+                  ),
+                ],
+              ),
+            ),
           );
         },
       ),
@@ -365,7 +436,8 @@ class _DiscoverScreenState extends State<DiscoverScreen>
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (_) => CreatorProfileScreen(creatorId: creator.userId),
+                  builder: (_) =>
+                      CreatorProfileScreen(creatorId: creator.userId),
                 ),
               );
             },
@@ -407,10 +479,7 @@ class _ErrorState extends StatelessWidget {
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 16),
-          TextButton(
-            onPressed: onRetry,
-            child: const Text('Retry'),
-          ),
+          TextButton(onPressed: onRetry, child: const Text('Retry')),
         ],
       ),
     );

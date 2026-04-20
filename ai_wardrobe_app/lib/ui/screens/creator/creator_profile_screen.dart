@@ -121,9 +121,8 @@ class _CreatorProfileScreenState extends State<CreatorProfileScreen> {
                                 backgroundColor: textS.withValues(alpha: 0.1),
                                 backgroundImage: _creator!.avatarUrl != null
                                     ? CachedNetworkImageProvider(
-                                        _creator!.avatarUrl!.startsWith('http')
-                                            ? _creator!.avatarUrl!
-                                            : '$fileBaseUrl${_creator!.avatarUrl}',
+                                        resolveFileUrl(_creator!.avatarUrl!),
+                                        headers: ApiSession.authHeaders,
                                       )
                                     : null,
                                 child: _creator!.avatarUrl == null

@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_creator_user_id, get_optional_current_user_id
@@ -10,10 +10,14 @@ from app.crud import creator as crud_creator
 from app.db.session import get_db
 from app.models.card_pack_import import CardPackImport
 from app.models.creator import CardPackItem
+from app.models.user import User
 from app.schemas.card_pack import (
     CardPackCreate,
     CardPackDetail,
     CardPackDetailResponse,
+    CardPackListData,
+    CardPackListItem,
+    CardPackListResponse,
     CardPackItemSummary,
     CardPackPublishData,
     CardPackPublishResponse,
@@ -22,6 +26,35 @@ from app.schemas.card_pack import (
 from app.services.blob_service import get_blob_service
 
 router = APIRouter(prefix="/card-packs", tags=["card-packs"])
+
+
+@router.get("", response_model=CardPackListResponse)
+def list_card_packs(
+    status: str | None = Query(None),
+    search: str | None = Query(None, min_length=1),
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    if status not in (None, "PUBLISHED"):
+        raise HTTPException(422, "Only published card packs are available in the public feed")
+    packs, total = crud_card_pack.list_public_card_packs(
+        db,
+        search=search,
+        page=page,
+        limit=limit,
+    )
+    return CardPackListResponse(
+        data=CardPackListData(
+            items=[_to_card_pack_list_item(db, pack) for pack in packs],
+            pagination={
+                "page": page,
+                "limit": limit,
+                "total": total,
+                "totalPages": (total + limit - 1) // limit if total else 0,
+            },
+        )
+    )
 
 
 @router.post("", response_model=CardPackDetailResponse, status_code=201)
@@ -39,7 +72,7 @@ def create_card_pack(
         cover_image_blob_hash=body.cover_image,
         item_ids=body.item_ids,
     )
-    return CardPackDetailResponse(data=_to_card_pack_detail(pack))
+    return CardPackDetailResponse(data=_to_card_pack_detail(db, pack))
 
 
 @router.get("/{pack_id}", response_model=CardPackDetailResponse)
@@ -59,7 +92,7 @@ def get_card_pack(
         pack = crud_card_pack.get_public_card_pack(db, pack_id=pack_id)
     if pack is None:
         raise HTTPException(404, "Card pack not found")
-    return CardPackDetailResponse(data=_to_card_pack_detail(pack))
+    return CardPackDetailResponse(data=_to_card_pack_detail(db, pack))
 
 
 @router.get("/share/{share_id}", response_model=CardPackDetailResponse)
@@ -70,7 +103,7 @@ def get_card_pack_by_share_id(
     pack = crud_card_pack.get_public_card_pack(db, share_id=share_id)
     if pack is None:
         raise HTTPException(404, "Card pack not found")
-    return CardPackDetailResponse(data=_to_card_pack_detail(pack))
+    return CardPackDetailResponse(data=_to_card_pack_detail(db, pack))
 
 
 @router.patch("/{pack_id}", response_model=CardPackDetailResponse)
@@ -96,9 +129,7 @@ def update_card_pack(
         item_ids=body.item_ids,
         cover_image_blob_hash=body.cover_image,
     )
-    return CardPackDetailResponse(
-        data=_to_card_pack_detail(updated)
-    )
+    return CardPackDetailResponse(data=_to_card_pack_detail(db, updated))
 
 
 @router.post("/{pack_id}/publish", response_model=CardPackPublishResponse)
@@ -116,7 +147,7 @@ def publish_card_pack(
     if pack is None:
         raise HTTPException(404, "Card pack not found")
     published = crud_card_pack.publish_card_pack(db, pack)
-    detail = _to_card_pack_detail(published)
+    detail = _to_card_pack_detail(db, published)
     return CardPackPublishResponse(
         data=CardPackPublishData(
             **detail.model_dump(by_alias=True),
@@ -140,9 +171,7 @@ def archive_card_pack(
     if pack is None:
         raise HTTPException(404, "Card pack not found")
     archived = crud_card_pack.archive_card_pack(db, pack)
-    return CardPackDetailResponse(
-        data=_to_card_pack_detail(archived)
-    )
+    return CardPackDetailResponse(data=_to_card_pack_detail(db, archived))
 
 
 @router.delete("/{pack_id}", status_code=204)
@@ -171,7 +200,34 @@ def delete_card_pack(
     return None
 
 
-def _to_card_pack_detail(pack) -> CardPackDetail:
+def _to_card_pack_list_item(db: Session, pack) -> CardPackListItem:
+    creator = db.get(User, pack.creator_id)
+    linked_wardrobe = getattr(pack, "linked_wardrobe", None)
+    return CardPackListItem(
+        id=pack.id,
+        creatorId=pack.creator_id,
+        creatorUid=creator.uid if creator else None,
+        creatorUsername=creator.username if creator else None,
+        name=pack.name,
+        description=pack.description,
+        type=pack.pack_type,
+        status=pack.status,
+        coverImage=f"/files/card-packs/{pack.id}/cover" if pack.cover_image_blob_hash else None,
+        wardrobeId=pack.wardrobe_id,
+        wardrobeWid=linked_wardrobe.wid if linked_wardrobe else None,
+        shareId=pack.share_id,
+        importCount=pack.import_count,
+        publishedAt=pack.published_at,
+        archivedAt=pack.archived_at,
+        itemCount=len(pack.items),
+        createdAt=pack.created_at,
+        updatedAt=pack.updated_at,
+    )
+
+
+def _to_card_pack_detail(db: Session, pack) -> CardPackDetail:
+    creator = db.get(User, pack.creator_id)
+    linked_wardrobe = getattr(pack, "linked_wardrobe", None)
     items = [
         _to_card_pack_item_summary(pack_item)
         for pack_item in pack.items
@@ -179,11 +235,15 @@ def _to_card_pack_detail(pack) -> CardPackDetail:
     return CardPackDetail(
         id=pack.id,
         creatorId=pack.creator_id,
+        creatorUid=creator.uid if creator else None,
+        creatorUsername=creator.username if creator else None,
         name=pack.name,
         description=pack.description,
         type=pack.pack_type,
         status=pack.status,
         coverImage=f"/files/card-packs/{pack.id}/cover" if pack.cover_image_blob_hash else None,
+        wardrobeId=pack.wardrobe_id,
+        wardrobeWid=linked_wardrobe.wid if linked_wardrobe else None,
         shareId=pack.share_id,
         importCount=pack.import_count,
         publishedAt=pack.published_at,

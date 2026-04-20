@@ -6,11 +6,11 @@ import 'package:flutter/material.dart';
 import '../l10n/app_strings_provider.dart';
 import '../theme/app_theme.dart';
 import 'screens/capture/camera_capture_screen.dart';
-import 'screens/capture/processing_screen.dart';
+import 'screens/capture/clothing_intake_screen.dart';
 import 'screens/creator/card_pack_creator_screen.dart';
 import 'screens/discover_screen.dart';
-import 'screens/outfit_canvas_screen.dart';
 import 'screens/profile_screen.dart';
+import 'screens/visualization_hub_screen.dart';
 import 'screens/wardrobe_screen.dart';
 
 /// Root shell that switches layout between mobile and web/desktop.
@@ -47,7 +47,7 @@ class _MobileRootShellState extends State<_MobileRootShell> {
   final _pages = const <Widget>[
     WardrobeScreen(),
     DiscoverScreen(),
-    OutfitCanvasScreen(),
+    VisualizationHubScreen(),
     ProfileScreen(),
   ];
 
@@ -66,7 +66,9 @@ class _MobileRootShellState extends State<_MobileRootShell> {
     final s = AppStringsProvider.of(context);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final textP = isDark ? AppColors.darkTextPrimary : AppColors.textPrimary;
-    final textS = isDark ? AppColors.darkTextSecondary : AppColors.textSecondary;
+    final textS = isDark
+        ? AppColors.darkTextSecondary
+        : AppColors.textSecondary;
     final accent = isDark ? AppColors.darkAccentBlue : AppColors.accentBlue;
 
     showModalBottomSheet<void>(
@@ -114,14 +116,12 @@ class _MobileRootShellState extends State<_MobileRootShell> {
                     width: 40,
                     height: 40,
                     decoration: BoxDecoration(
-                      color:
-                          isDark ? AppColors.darkBackground : AppColors.background,
+                      color: isDark
+                          ? AppColors.darkBackground
+                          : AppColors.background,
                       borderRadius: BorderRadius.circular(14),
                     ),
-                    child: Icon(
-                      Icons.checkroom_rounded,
-                      color: textP,
-                    ),
+                    child: Icon(Icons.checkroom_rounded, color: textP),
                   ),
                   title: Text(
                     s.addClothes,
@@ -138,41 +138,6 @@ class _MobileRootShellState extends State<_MobileRootShell> {
                   onTap: () {
                     Navigator.of(context).pop();
                     _navigateToCapture();
-                  },
-                ),
-                const SizedBox(height: 8),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: AppColors.accentYellow.withValues(alpha: 0.18),
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: Icon(
-                      Icons.style_rounded,
-                      color: accent,
-                    ),
-                  ),
-                  title: Text(
-                    s.openOutfitCanvas,
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 15,
-                      color: textP,
-                    ),
-                  ),
-                  subtitle: Text(
-                    s.openOutfitCanvasSubtitle,
-                    style: TextStyle(fontSize: 12, color: textS),
-                  ),
-                  onTap: () {
-                    Navigator.of(context).pop();
-                    setState(() {
-                      _navIndex = 3;
-                      _pageIndex = 2;
-                    });
                   },
                 ),
                 const SizedBox(height: 8),
@@ -231,10 +196,8 @@ class _MobileRootShellState extends State<_MobileRootShell> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => ProcessingScreen(
-          frontImage: front,
-          backImage: result['back'],
-        ),
+        builder: (_) =>
+            ClothingIntakeScreen(frontImage: front, backImage: result['back']),
       ),
     );
   }
@@ -243,10 +206,7 @@ class _MobileRootShellState extends State<_MobileRootShell> {
   Widget build(BuildContext context) {
     final s = AppStringsProvider.of(context);
     return Scaffold(
-      body: IndexedStack(
-        index: _pageIndex,
-        children: _pages,
-      ),
+      body: IndexedStack(index: _pageIndex, children: _pages),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _navIndex,
         onTap: _onNavTap,
@@ -298,11 +258,7 @@ class _AddNavIcon extends StatelessWidget {
             : AppColors.accentYellow.withValues(alpha: 0.9),
         borderRadius: BorderRadius.circular(16),
       ),
-      child: const Icon(
-        Icons.add,
-        size: 20,
-        color: AppColors.textPrimary,
-      ),
+      child: const Icon(Icons.add, size: 20, color: AppColors.textPrimary),
     );
   }
 }
@@ -322,7 +278,7 @@ class _WebRootShellState extends State<_WebRootShell> {
   final _pages = const <Widget>[
     WardrobeScreen(),
     DiscoverScreen(),
-    OutfitCanvasScreen(),
+    VisualizationHubScreen(),
     ProfileScreen(),
   ];
 
@@ -330,7 +286,9 @@ class _WebRootShellState extends State<_WebRootShell> {
     final s = AppStringsProvider.of(context);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final textP = isDark ? AppColors.darkTextPrimary : AppColors.textPrimary;
-    final textS = isDark ? AppColors.darkTextSecondary : AppColors.textSecondary;
+    final textS = isDark
+        ? AppColors.darkTextSecondary
+        : AppColors.textSecondary;
     final accent = isDark ? AppColors.darkAccentBlue : AppColors.accentBlue;
 
     showModalBottomSheet<void>(
@@ -378,14 +336,12 @@ class _WebRootShellState extends State<_WebRootShell> {
                     width: 40,
                     height: 40,
                     decoration: BoxDecoration(
-                      color:
-                          isDark ? AppColors.darkBackground : AppColors.background,
+                      color: isDark
+                          ? AppColors.darkBackground
+                          : AppColors.background,
                       borderRadius: BorderRadius.circular(14),
                     ),
-                    child: Icon(
-                      Icons.checkroom_rounded,
-                      color: textP,
-                    ),
+                    child: Icon(Icons.checkroom_rounded, color: textP),
                   ),
                   title: Text(
                     s.addClothes,
@@ -402,40 +358,6 @@ class _WebRootShellState extends State<_WebRootShell> {
                   onTap: () {
                     Navigator.of(context).pop();
                     _navigateToCapture();
-                  },
-                ),
-                const SizedBox(height: 8),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: AppColors.accentYellow.withValues(alpha: 0.18),
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: Icon(
-                      Icons.style_rounded,
-                      color: accent,
-                    ),
-                  ),
-                  title: Text(
-                    s.openOutfitCanvas,
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 15,
-                      color: textP,
-                    ),
-                  ),
-                  subtitle: Text(
-                    s.openOutfitCanvasSubtitle,
-                    style: TextStyle(fontSize: 12, color: textS),
-                  ),
-                  onTap: () {
-                    Navigator.of(context).pop();
-                    setState(() {
-                      _pageIndex = 2;
-                    });
                   },
                 ),
                 const SizedBox(height: 8),
@@ -494,10 +416,8 @@ class _WebRootShellState extends State<_WebRootShell> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => ProcessingScreen(
-          frontImage: front,
-          backImage: result['back'],
-        ),
+        builder: (_) =>
+            ClothingIntakeScreen(frontImage: front, backImage: result['back']),
       ),
     );
   }
@@ -579,10 +499,7 @@ class _WebRootShellState extends State<_WebRootShell> {
             color: Theme.of(context).dividerColor,
           ),
           Expanded(
-            child: IndexedStack(
-              index: _pageIndex,
-              children: _pages,
-            ),
+            child: IndexedStack(index: _pageIndex, children: _pages),
           ),
         ],
       ),

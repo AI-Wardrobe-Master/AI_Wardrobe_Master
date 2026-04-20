@@ -13,8 +13,10 @@ from app.db.session import get_db
 from app.models.card_pack_import import CardPackImport
 from app.models.clothing_item import ClothingItem, Image, Model3D
 from app.models.creator import CardPack, CardPackItem
+from app.models.wardrobe import WardrobeItem
 from app.schemas.imports import ImportCardPackRequest, ImportCardPackResponse
 from app.services.blob_service import get_blob_service
+from app.crud import wardrobe as crud_wardrobe
 
 router = APIRouter(prefix="/imports", tags=["Imports"])
 logger = logging.getLogger(__name__)
@@ -29,6 +31,10 @@ def _delete_clothing_item_internal(db: Session, item: ClothingItem) -> None:
     blob_hashes = [img.blob_hash for img in item.images if img.blob_hash]
     if item.model_3d and item.model_3d.blob_hash:
         blob_hashes.append(item.model_3d.blob_hash)
+
+    db.query(WardrobeItem).filter(
+        WardrobeItem.clothing_item_id == item.id,
+    ).delete(synchronize_session=False)
 
     db.delete(item)
     db.flush()
@@ -60,6 +66,7 @@ def import_card_pack(
     db.add(CardPackImport(user_id=user_id, card_pack_id=pack.id))
 
     blob_service = get_blob_service()
+    main_wardrobe = crud_wardrobe.ensure_main_wardrobe(db, user_id)
     imported_item_ids = []
 
     pack_items = (
@@ -106,6 +113,12 @@ def import_card_pack(
             ))
             blob_service.addref(db, ci.model_3d.blob_hash)
 
+        crud_wardrobe.ensure_item_in_wardrobe(
+            db,
+            user_id=user_id,
+            wardrobe_id=main_wardrobe.id,
+            clothing_item_id=clothing_item.id,
+        )
         imported_item_ids.append(str(clothing_item.id))
 
     pack.import_count = (pack.import_count or 0) + 1

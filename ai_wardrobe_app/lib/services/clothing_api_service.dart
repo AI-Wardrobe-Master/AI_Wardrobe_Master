@@ -1,18 +1,25 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 
 import 'api_config.dart';
+import 'local_clothing_service.dart';
 
 class ClothingApiService {
-  static final _dio = Dio(BaseOptions(baseUrl: apiBaseUrl));
+  static final Dio _dio = buildApiDio();
 
   static Future<Map<String, dynamic>> createClothingItem({
     required File frontImage,
     File? backImage,
     String? name,
     String? description,
+    List<String> manualTags = const <String>[],
+    String? category,
+    String? material,
+    String? style,
+    String? wardrobeId,
   }) async {
     final formData = FormData.fromMap({
       'front_image': await MultipartFile.fromFile(
@@ -26,6 +33,11 @@ class ClothingApiService {
         ),
       if (name case final value?) 'name': value,
       if (description case final value?) 'description': value,
+      if (manualTags.isNotEmpty) 'custom_tags_json': jsonEncode(manualTags),
+      if (category case final value?) 'category': value,
+      if (material case final value?) 'material': value,
+      if (style case final value?) 'style': value,
+      if (wardrobeId case final value?) 'wardrobe_id': value,
     });
 
     final resp = await _dio.post('/clothing-items', data: formData);
@@ -37,6 +49,11 @@ class ClothingApiService {
     Uint8List? backImageBytes,
     String? name,
     String? description,
+    List<String> manualTags = const <String>[],
+    String? category,
+    String? material,
+    String? style,
+    String? wardrobeId,
   }) async {
     final formData = FormData.fromMap({
       'front_image': MultipartFile.fromBytes(
@@ -50,6 +67,11 @@ class ClothingApiService {
         ),
       if (name case final value?) 'name': value,
       if (description case final value?) 'description': value,
+      if (manualTags.isNotEmpty) 'custom_tags_json': jsonEncode(manualTags),
+      if (category case final value?) 'category': value,
+      if (material case final value?) 'material': value,
+      if (style case final value?) 'style': value,
+      if (wardrobeId case final value?) 'wardrobe_id': value,
     });
 
     final resp = await _dio.post('/clothing-items', data: formData);
@@ -62,17 +84,109 @@ class ClothingApiService {
   }
 
   static Future<Map<String, dynamic>> getClothingItem(String itemId) async {
-    final resp = await _dio.get('/clothing-items/$itemId');
-    return resp.data as Map<String, dynamic>;
+    if (LocalClothingService.isLocalItem(itemId)) {
+      final local = await LocalClothingService.getItem(itemId);
+      if (local == null) {
+        throw Exception('Local clothing item not found');
+      }
+      return local;
+    }
+
+    try {
+      final resp = await _dio.get('/clothing-items/$itemId');
+      final data = resp.data as Map<String, dynamic>;
+      final payload = Map<String, dynamic>.from(
+        data['data'] as Map<String, dynamic>? ?? data,
+      );
+      await LocalClothingService.cacheRemoteItem(payload);
+      final cached = await LocalClothingService.getItem(itemId);
+      final mergedPayload = {
+        ...payload,
+        if (cached?['previewSvg'] != null) 'previewSvg': cached!['previewSvg'],
+        if (cached?['previewSvgStoredLocally'] != null)
+          'previewSvgStoredLocally': cached!['previewSvgStoredLocally'],
+      };
+      return data['data'] != null
+          ? <String, dynamic>{...data, 'data': mergedPayload}
+          : mergedPayload;
+    } on DioException {
+      final local = await LocalClothingService.getItem(itemId);
+      if (local != null) {
+        return local;
+      }
+      rethrow;
+    }
   }
 
   static Future<Map<String, dynamic>> getAngleViews(String itemId) async {
+    if (LocalClothingService.isLocalItem(itemId)) {
+      return {'angleViews': const <dynamic>[]};
+    }
     final resp = await _dio.get('/clothing-items/$itemId/angle-views');
     return resp.data as Map<String, dynamic>;
   }
 
+  static Future<void> deleteClothingItem(String itemId) async {
+    if (LocalClothingService.isLocalItem(itemId)) {
+      await LocalClothingService.deleteItem(itemId);
+      return;
+    }
+
+    await _dio.delete('/clothing-items/$itemId');
+    await LocalClothingService.deleteItem(itemId);
+  }
+
   static Future<void> retryProcessing(String itemId) async {
     await _dio.post('/clothing-items/$itemId/retry');
+  }
+
+  static Future<Map<String, dynamic>> updateClothingItem(
+    String itemId, {
+    String? name,
+    String? description,
+    List<Map<String, String>>? finalTags,
+    List<String>? customTags,
+    bool? isConfirmed,
+    String? category,
+    String? material,
+    String? style,
+    List<String>? wardrobeIds,
+  }) async {
+    if (LocalClothingService.isLocalItem(itemId)) {
+      await LocalClothingService.updateItem(
+        itemId,
+        name: name,
+        description: description,
+        manualTags: customTags,
+        mergedTags: finalTags,
+        category: category,
+        material: material,
+        style: style,
+        wardrobeIds: wardrobeIds,
+      );
+      final local = await LocalClothingService.getItem(itemId);
+      return {'success': true, 'data': local};
+    }
+
+    final body = <String, dynamic>{
+      if (name != null) 'name': name,
+      if (description != null) 'description': description,
+      if (finalTags != null) 'finalTags': finalTags,
+      if (customTags != null) 'customTags': customTags,
+      if (isConfirmed != null) 'isConfirmed': isConfirmed,
+      if (category != null) 'category': category,
+      if (material != null) 'material': material,
+      if (style != null) 'style': style,
+      if (wardrobeIds != null) 'wardrobeIds': wardrobeIds,
+    };
+    final resp = await _dio.patch('/clothing-items/$itemId', data: body);
+    final data = resp.data as Map<String, dynamic>;
+    final payload = data['data'] as Map<String, dynamic>? ?? data;
+    await LocalClothingService.cacheRemoteItem(
+      payload,
+      wardrobeIds: wardrobeIds ?? const <String>[],
+    );
+    return data;
   }
 
   static Future<List<Map<String, dynamic>>> listClothingItems({
@@ -80,42 +194,53 @@ class ClothingApiService {
     int page = 1,
     int limit = 100,
   }) async {
-    if (limit > 100) limit = 100;
-
-    final queryParams = <String, dynamic>{
-      'page': page,
-      'limit': limit,
-    };
-    if (wardrobeId != null) {
-      queryParams['wardrobeId'] = wardrobeId;
+    if (limit > 100) {
+      limit = 100;
     }
 
-    final resp = await _dio.get(
-      '/clothing-items',
-      queryParameters: queryParams,
+    final localOnly = await LocalClothingService.listItems(
+      wardrobeId: wardrobeId,
+      includeCachedRemote: false,
     );
-    final responseData = resp.data as Map<String, dynamic>;
-    final data = responseData['data'] as Map<String, dynamic>? ?? responseData;
-    final items = (data['items'] as List<dynamic>? ?? const [])
-        .map((e) => Map<String, dynamic>.from(e as Map))
-        .toList();
 
-    final itemsWithImages = <Map<String, dynamic>>[];
-    for (final item in items) {
-      if (!item.containsKey('images') || item['images'] == null) {
-        try {
-          final itemId = item['id'] as String;
-          final fullItem = await getClothingItem(itemId);
-          final fullData =
-              fullItem['data'] as Map<String, dynamic>? ?? fullItem;
-          item['images'] = fullData['images'];
-        } catch (_) {
-          // Keep list response as-is if the detail request fails.
-        }
+    try {
+      final queryParams = <String, dynamic>{'page': page, 'limit': limit};
+      if (wardrobeId != null) {
+        queryParams['wardrobeId'] = wardrobeId;
       }
-      itemsWithImages.add(item);
-    }
 
-    return itemsWithImages;
+      final resp = await _dio.get(
+        '/clothing-items',
+        queryParameters: queryParams,
+      );
+      final responseData = resp.data as Map<String, dynamic>;
+      final data =
+          responseData['data'] as Map<String, dynamic>? ?? responseData;
+      final items = (data['items'] as List<dynamic>? ?? const <dynamic>[])
+          .map((entry) => Map<String, dynamic>.from(entry as Map))
+          .toList();
+
+      final itemsWithImages = <Map<String, dynamic>>[];
+      for (final item in items) {
+        await LocalClothingService.cacheRemoteItem(
+          item,
+          wardrobeIds: wardrobeId == null
+              ? const <String>[]
+              : <String>[wardrobeId],
+        );
+        itemsWithImages.add(item);
+      }
+
+      final merged = <String, Map<String, dynamic>>{};
+      for (final item in itemsWithImages) {
+        merged[item['id'].toString()] = item;
+      }
+      for (final item in localOnly) {
+        merged[item['id'].toString()] = item;
+      }
+      return merged.values.toList();
+    } on DioException {
+      return LocalClothingService.listItems(wardrobeId: wardrobeId);
+    }
   }
 }

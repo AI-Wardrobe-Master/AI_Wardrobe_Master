@@ -270,6 +270,12 @@ class CardPack(Base):
     pack_type = Column(String(40), nullable=False, default="CLOTHING_COLLECTION")
     status = Column(String(20), nullable=False, default="DRAFT")
     cover_image_blob_hash = Column(String(64), ForeignKey("blobs.blob_hash"), nullable=True)
+    wardrobe_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("wardrobes.id", ondelete="SET NULL"),
+        nullable=True,
+        unique=True,
+    )
     share_id = Column(String(64), nullable=True, unique=True)
     import_count = Column(Integer, nullable=False, default=0)
     published_at = Column(DateTime(timezone=True), nullable=True)
@@ -302,6 +308,7 @@ class CardPack(Base):
         cascade="all, delete-orphan",
         order_by="CardPackItem.sort_order, CardPackItem.created_at",
     )
+    linked_wardrobe = relationship("Wardrobe", foreign_keys=[wardrobe_id], uselist=False)
 
 
 class CardPackItem(Base):

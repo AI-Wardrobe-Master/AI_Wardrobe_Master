@@ -1,20 +1,17 @@
-enum PackType {
-  clothingCollection,
-  outfit,
-}
+enum PackType { clothingCollection, outfit }
 
-enum PackStatus {
-  draft,
-  published,
-  archived,
-}
+enum PackStatus { draft, published, archived }
 
 class CardPack {
   final String id;
   final String creatorId;
+  final String? creatorUid;
+  final String? creatorUsername;
   final String name;
   final String? description;
   final String? coverImageUrl;
+  final String? wardrobeId;
+  final String? wardrobeWid;
   final PackType type;
   final List<String> itemIds;
   final int itemCount;
@@ -29,9 +26,13 @@ class CardPack {
   CardPack({
     required this.id,
     required this.creatorId,
+    this.creatorUid,
+    this.creatorUsername,
     required this.name,
     this.description,
     this.coverImageUrl,
+    this.wardrobeId,
+    this.wardrobeWid,
     required this.type,
     required this.itemIds,
     required this.itemCount,
@@ -48,14 +49,20 @@ class CardPack {
     return CardPack(
       id: json['id'] as String,
       creatorId: json['creatorId'] as String,
+      creatorUid: json['creatorUid'] as String?,
+      creatorUsername: json['creatorUsername'] as String?,
       name: json['name'] as String,
       description: json['description'] as String?,
-      coverImageUrl: json['coverImageUrl'] as String?,
+      coverImageUrl:
+          json['coverImageUrl'] as String? ?? json['coverImage'] as String?,
+      wardrobeId: json['wardrobeId'] as String?,
+      wardrobeWid: json['wardrobeWid'] as String?,
       type: _parsePackType(json['type'] as String? ?? 'CLOTHING_COLLECTION'),
       itemIds: (json['itemIds'] as List<dynamic>? ?? const [])
           .map((e) => e.toString())
           .toList(),
-      itemCount: json['itemCount'] as int? ??
+      itemCount:
+          json['itemCount'] as int? ??
           (json['itemIds'] as List<dynamic>? ?? const []).length,
       shareLink: json['shareLink'] as String?,
       status: _parsePackStatus(json['status'] as String? ?? 'DRAFT'),
@@ -71,8 +78,8 @@ class CardPack {
       ),
       items: json['items'] != null
           ? (json['items'] as List<dynamic>)
-              .map((e) => Map<String, dynamic>.from(e as Map))
-              .toList()
+                .map((e) => Map<String, dynamic>.from(e as Map))
+                .toList()
           : null,
     );
   }
@@ -81,9 +88,13 @@ class CardPack {
     return {
       'id': id,
       'creatorId': creatorId,
+      'creatorUid': creatorUid,
+      'creatorUsername': creatorUsername,
       'name': name,
       'description': description,
       'coverImageUrl': coverImageUrl,
+      'wardrobeId': wardrobeId,
+      'wardrobeWid': wardrobeWid,
       'type': switch (type) {
         PackType.clothingCollection => 'CLOTHING_COLLECTION',
         PackType.outfit => 'OUTFIT',

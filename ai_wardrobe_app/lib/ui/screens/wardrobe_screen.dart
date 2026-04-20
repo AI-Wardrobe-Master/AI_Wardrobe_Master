@@ -1,6 +1,8 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
+import '../../l10n/app_strings.dart';
 import '../../l10n/app_strings_provider.dart';
 import '../../models/wardrobe.dart';
 import '../../services/api_config.dart';
@@ -10,6 +12,7 @@ import '../../services/local_clothing_service.dart';
 import '../../state/current_wardrobe_controller.dart';
 import '../../services/wardrobe_service.dart';
 import '../../theme/app_theme.dart';
+import 'clothing_detail_screen.dart';
 import 'wardrobe_management_screen.dart';
 
 /// Module 3: Wardrobe tab — multi-wardrobe selector, items grid, add/remove, category filter, virtual support.
@@ -24,7 +27,6 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
   List<Wardrobe> _wardrobes = [];
   Wardrobe? _currentWardrobe;
   List<WardrobeItemWithClothing> _items = [];
-  final Map<String, Map<String, dynamic>> _itemImages = {};
   bool _loadingWardrobes = true;
   bool _loadingItems = false;
   String? _error;
@@ -52,7 +54,9 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
   void initState() {
     super.initState();
     _searchController.addListener(() {
-      setState(() => _searchQuery = _searchController.text.trim().toLowerCase());
+      setState(
+        () => _searchQuery = _searchController.text.trim().toLowerCase(),
+      );
     });
     _loadWardrobes();
   }
@@ -79,10 +83,12 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
           _loadItems();
         } else if (_currentWardrobe != null) {
           final id = _currentWardrobe!.id;
-          _currentWardrobe = list.cast<Wardrobe?>().firstWhere(
+          _currentWardrobe =
+              list.cast<Wardrobe?>().firstWhere(
                 (w) => w?.id == id,
                 orElse: () => null,
-              ) ?? list.first;
+              ) ??
+              list.first;
           CurrentWardrobeController.setCurrentWardrobeId(_currentWardrobe!.id);
           _loadItems();
         } else {
@@ -102,51 +108,49 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
   Future<void> _loadItems() async {
     setState(() => _loadingItems = true);
     final allItems = <WardrobeItemWithClothing>[];
-    _itemImages.clear();
+
+    if (_currentWardrobe != null && _currentWardrobe?.isVirtual != true) {
+      try {
+        await LocalClothingService.ensure3dPreviewDemoItem(
+          wardrobeId: _currentWardrobe!.id,
+        );
+      } catch (_) {}
+    }
 
     if (_currentWardrobe != null) {
       try {
-        final list =
-            await WardrobeService.fetchWardrobeItems(_currentWardrobe!.id);
+        final list = await WardrobeService.fetchWardrobeItems(
+          _currentWardrobe!.id,
+        );
         allItems.addAll(list);
-        for (final entry in list) {
-          try {
-            final fullItem =
-                await ClothingApiService.getClothingItem(entry.clothingItemId);
-            final data = fullItem['data'] as Map<String, dynamic>? ?? fullItem;
-            if (data['images'] != null) {
-              _itemImages[entry.clothingItemId] =
-                  Map<String, dynamic>.from(data['images'] as Map);
-            }
-          } catch (_) {}
-        }
       } catch (e) {
         _error = e.toString();
       }
     }
 
-    // Regular wardrobes show owned/local items, while virtual wardrobes focus
-    // on imported content restored from card-pack imports.
+    // Regular wardrobes should only supplement remote data with true local-only
+    // entries for the currently selected wardrobe.
     final includeOwnedLocals =
         _currentWardrobe == null || _currentWardrobe?.isVirtual != true;
     final includeImported = _currentWardrobe?.isVirtual == true;
 
     if (includeOwnedLocals) {
       try {
-        final localItems = await LocalClothingService.listItems();
+        final localItems = await LocalClothingService.listItems(
+          wardrobeId: _currentWardrobe?.id,
+          includeCachedRemote: false,
+        );
         for (final item in localItems) {
           final itemId = item['id'] as String;
-          if (allItems.any((entry) => entry.clothingItem?.id == itemId)) continue;
+          if (allItems.any((entry) => entry.clothingItemId == itemId)) continue;
 
-          if (item['images'] != null) {
-            _itemImages[itemId] = Map<String, dynamic>.from(item['images'] as Map);
-          }
           allItems.add(
             WardrobeItemWithClothing(
               id: 'local_$itemId',
               wardrobeId: _currentWardrobe?.id ?? 'default',
               clothingItemId: itemId,
-              addedAt: DateTime.tryParse(item['createdAt'] as String? ?? '') ??
+              addedAt:
+                  DateTime.tryParse(item['createdAt'] as String? ?? '') ??
                   DateTime.now(),
               displayOrder: allItems.length,
               clothingItem: ClothingItemBrief(
@@ -167,17 +171,15 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
         final importedItems = await ImportApiService.getImportedItems();
         for (final item in importedItems) {
           final itemId = item['id'] as String;
-          if (allItems.any((entry) => entry.clothingItem?.id == itemId)) continue;
+          if (allItems.any((entry) => entry.clothingItemId == itemId)) continue;
 
-          if (item['images'] != null) {
-            _itemImages[itemId] = Map<String, dynamic>.from(item['images'] as Map);
-          }
           allItems.add(
             WardrobeItemWithClothing(
               id: 'imported_$itemId',
               wardrobeId: _currentWardrobe?.id ?? 'virtual',
               clothingItemId: itemId,
-              addedAt: DateTime.tryParse(item['createdAt'] as String? ?? '') ??
+              addedAt:
+                  DateTime.tryParse(item['createdAt'] as String? ?? '') ??
                   DateTime.now(),
               displayOrder: allItems.length,
               clothingItem: ClothingItemBrief(
@@ -193,8 +195,10 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
       } catch (_) {}
     }
 
-    allItems.sort((a, b) =>
-        (b.addedAt ?? DateTime(1970)).compareTo(a.addedAt ?? DateTime(1970)));
+    allItems.sort(
+      (a, b) =>
+          (b.addedAt ?? DateTime(1970)).compareTo(a.addedAt ?? DateTime(1970)),
+    );
 
     if (!mounted) return;
     setState(() {
@@ -210,9 +214,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
         : 'all';
     if (key != 'all') {
       list = list.where((e) {
-        final cat = e.clothingItem?.categoryTag?.toLowerCase();
-        if (cat == null) return false;
-        return cat.contains(key);
+        return _matchesCategory(e.clothingItem, key);
       }).toList();
     }
     if (_searchQuery.isNotEmpty) {
@@ -229,11 +231,28 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
 
   Future<void> _openManageWardrobes() async {
     await Navigator.of(context).push<void>(
-      MaterialPageRoute(
-        builder: (ctx) => const WardrobeManagementScreen(),
-      ),
+      MaterialPageRoute(builder: (ctx) => const WardrobeManagementScreen()),
     );
     _loadWardrobes();
+  }
+
+  Future<void> _shareWardrobe(Wardrobe wardrobe) async {
+    var latestWardrobe = wardrobe;
+    if (!wardrobe.isPublic) {
+      latestWardrobe = await WardrobeService.updateWardrobe(
+        wardrobe.id,
+        isPublic: true,
+      );
+      await _loadWardrobes();
+    }
+
+    final shareText =
+        'AI Wardrobe share code: ${latestWardrobe.wid}\nWardrobe: ${latestWardrobe.name}';
+    await Clipboard.setData(ClipboardData(text: shareText));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Share code copied: ${latestWardrobe.wid}')),
+    );
   }
 
   Future<void> _removeFromWardrobe(WardrobeItemWithClothing entry) async {
@@ -242,8 +261,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(s.removeFromWardrobe),
-        content: Text(
-            entry.clothingItem?.name ?? entry.clothingItemId),
+        content: Text(entry.clothingItem?.name ?? entry.clothingItemId),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
@@ -264,31 +282,108 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
       );
       _loadItems();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(s.removeFromWardrobe)));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(s.removeFromWardrobe)));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(e.toString())));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.toString())));
       }
     }
   }
 
+  Future<void> _deleteClothingCard(WardrobeItemWithClothing entry) async {
+    final shouldDelete = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete clothing card?'),
+        content: Text(
+          'This will permanently remove "${entry.clothingItem?.name ?? entry.clothingItemId}" from your wardrobe and clear its local cache.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (shouldDelete != true) {
+      return;
+    }
+
+    try {
+      await ClothingApiService.deleteClothingItem(entry.clothingItemId);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _items = _items
+            .where((item) => item.clothingItemId != entry.clothingItemId)
+            .toList();
+      });
+      await _loadItems();
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Clothing card deleted')));
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.toString())));
+    }
+  }
+
+  Future<void> _handleItemLongPress(WardrobeItemWithClothing entry) async {
+    final isMainWardrobe = _currentWardrobe?.isMain ?? false;
+    if (isMainWardrobe) {
+      await _deleteClothingCard(entry);
+      return;
+    }
+    await _removeFromWardrobe(entry);
+  }
+
+  Future<void> _openItemDetails(WardrobeItemWithClothing entry) async {
+    final clothing = entry.clothingItem;
+    final deleted = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => ClothingDetailScreen(
+          itemId: entry.clothingItemId,
+          initialName: clothing?.name,
+          wardrobe: _currentWardrobe,
+          initialTags: clothing?.tagValues ?? const <String>[],
+        ),
+      ),
+    );
+    if (deleted == true && mounted) {
+      await _loadItems();
+    }
+  }
+
   Widget _buildItemImage(String itemId) {
-    final images = _itemImages[itemId];
-    final imageUrl =
-        images?['processedFrontUrl'] as String? ?? images?['originalFrontUrl'] as String?;
+    final entry = _items.cast<WardrobeItemWithClothing?>().firstWhere(
+      (item) => item?.clothingItemId == itemId,
+      orElse: () => null,
+    );
+    final imageUrl = entry?.clothingItem?.previewImageUrl;
 
     if (imageUrl == null || imageUrl.isEmpty) {
       return Container(
         color: _isDark ? AppColors.darkSurface : Colors.grey.shade200,
         child: Center(
-          child: Icon(
-            Icons.checkroom_rounded,
-            size: 32,
-            color: _textSecondary,
-          ),
+          child: Icon(Icons.checkroom_rounded, size: 32, color: _textSecondary),
         ),
       );
     }
@@ -315,7 +410,8 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
     }
 
     return CachedNetworkImage(
-      imageUrl: imageUrl.startsWith('http') ? imageUrl : '$fileBaseUrl$imageUrl',
+      imageUrl: resolveFileUrl(imageUrl),
+      httpHeaders: ApiSession.authHeaders,
       fit: BoxFit.cover,
       placeholder: (context, url) => Container(
         color: _isDark ? AppColors.darkSurface : Colors.grey.shade200,
@@ -331,6 +427,63 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
         child: Icon(Icons.image_outlined, color: _textSecondary),
       ),
     );
+  }
+
+  bool _matchesCategory(ClothingItemBrief? clothing, String key) {
+    if (clothing == null) {
+      return false;
+    }
+    final rawTokens = <String>{
+      clothing.categoryTag?.toLowerCase() ?? '',
+      clothing.category?.toLowerCase() ?? '',
+      ...clothing.tagValues.map((tag) => tag.toLowerCase()),
+    }.where((token) => token.trim().isNotEmpty);
+
+    final normalizedTokens = rawTokens
+        .map(_normalizeCategoryToken)
+        .where((token) => token.isNotEmpty)
+        .toSet();
+    final normalizedKey = _normalizeCategoryToken(key);
+    if (normalizedTokens.contains(normalizedKey)) {
+      return true;
+    }
+    return normalizedTokens.any(
+      (token) => token.contains(normalizedKey) || normalizedKey.contains(token),
+    );
+  }
+
+  String _normalizeCategoryToken(String raw) {
+    switch (raw.trim().toLowerCase()) {
+      case 'top':
+      case 'tops':
+      case 'shirt':
+      case 'shirts':
+      case 'upper':
+        return 'tops';
+      case 'bottom':
+      case 'bottoms':
+      case 'pants':
+      case 'pant':
+      case 'trousers':
+      case 'jeans':
+      case 'skirt':
+        return 'bottoms';
+      case 'outwear':
+      case 'outerwear':
+      case 'coat':
+      case 'jacket':
+      case 'hoodie':
+        return 'outerwear';
+      case 'accessory':
+      case 'accessories':
+      case 'hat':
+      case 'bag':
+      case 'scarf':
+      case 'belt':
+        return 'accessories';
+      default:
+        return raw.trim().toLowerCase();
+    }
   }
 
   @override
@@ -349,74 +502,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      s.wardrobeTitle,
-                      style: TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.w800,
-                        color: _textPrimary,
-                        letterSpacing: 0.2,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      s.wardrobeSubtitle,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: _textSecondary,
-                      ),
-                    ),
-                  ],
-                ),
-                const Spacer(),
-                GestureDetector(
-                  onTap: _openManageWardrobes,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).cardColor,
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: Theme.of(context).dividerColor),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          _currentWardrobe?.name ?? s.manageWardrobes,
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: _textPrimary,
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        Icon(Icons.arrow_drop_down, size: 20, color: _textPrimary),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).cardColor,
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(color: Theme.of(context).dividerColor),
-                  ),
-                  child: Icon(
-                    Icons.qr_code_scanner_rounded,
-                    size: 20,
-                    color: _textPrimary,
-                  ),
-                ),
-              ],
-            ),
+            _buildHeader(s),
             const SizedBox(height: 12),
             if (_loadingWardrobes)
               const Padding(
@@ -471,16 +557,18 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                               style: Theme.of(ctx).textTheme.titleMedium,
                             ),
                           ),
-                          ..._wardrobes.map((w) => ListTile(
-                                title: Text(w.name),
-                                subtitle: w.isVirtual
-                                    ? Text(s.virtualWardrobeLabel)
-                                    : null,
-                                trailing: _currentWardrobe?.id == w.id
-                                    ? Icon(Icons.check, color: _accent)
-                                    : null,
-                                onTap: () => Navigator.of(ctx).pop(w),
-                              )),
+                          ..._wardrobes.map(
+                            (w) => ListTile(
+                              title: Text(w.name),
+                              subtitle: w.isVirtual
+                                  ? Text(s.virtualWardrobeLabel)
+                                  : null,
+                              trailing: _currentWardrobe?.id == w.id
+                                  ? Icon(Icons.check, color: _accent)
+                                  : null,
+                              onTap: () => Navigator.of(ctx).pop(w),
+                            ),
+                          ),
                           ListTile(
                             leading: const Icon(Icons.settings),
                             title: Text(s.manageWardrobes),
@@ -503,35 +591,43 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                   }
                 },
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
                   decoration: BoxDecoration(
                     color: Theme.of(context).cardColor,
                     borderRadius: BorderRadius.circular(999),
                     border: Border.all(color: Theme.of(context).dividerColor),
                   ),
                   child: Row(
-                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(
-                        _currentWardrobe?.name ?? '—',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: _textPrimary,
+                      Expanded(
+                        child: Text(
+                          _currentWardrobe?.name ?? '—',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: _textPrimary,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
                       if (_currentWardrobe?.isVirtual == true) ...[
                         const SizedBox(width: 6),
-                        Text(
-                          s.virtualWardrobeLabel,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: _textSecondary,
-                          ),
+                        Icon(
+                          Icons.auto_awesome_rounded,
+                          size: 14,
+                          color: _textSecondary,
                         ),
                       ],
                       const SizedBox(width: 4),
-                      Icon(Icons.arrow_drop_down, size: 20, color: _textPrimary),
+                      Icon(
+                        Icons.arrow_drop_down,
+                        size: 20,
+                        color: _textPrimary,
+                      ),
                     ],
                   ),
                 ),
@@ -544,21 +640,29 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                 decoration: InputDecoration(
                   hintText: s.searchWardrobe,
                   hintStyle: TextStyle(fontSize: 13, color: _textSecondary),
-                  prefixIcon: Icon(Icons.search, size: 20, color: _textSecondary),
+                  prefixIcon: Icon(
+                    Icons.search,
+                    size: 20,
+                    color: _textSecondary,
+                  ),
                   isDense: true,
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
                   filled: true,
                   fillColor: _isDark ? AppColors.darkSurface : Colors.white,
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(999),
-                    borderSide:
-                        BorderSide(color: Theme.of(context).dividerColor),
+                    borderSide: BorderSide(
+                      color: Theme.of(context).dividerColor,
+                    ),
                   ),
                   enabledBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(999),
-                    borderSide:
-                        BorderSide(color: Theme.of(context).dividerColor),
+                    borderSide: BorderSide(
+                      color: Theme.of(context).dividerColor,
+                    ),
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(999),
@@ -576,7 +680,9 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                             Text(
                               _error!,
                               style: TextStyle(
-                                  fontSize: 13, color: _textSecondary),
+                                fontSize: 13,
+                                color: _textSecondary,
+                              ),
                               textAlign: TextAlign.center,
                             ),
                             const SizedBox(height: 8),
@@ -591,99 +697,218 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                         ),
                       )
                     : _loadingItems
-                        ? const Center(child: CircularProgressIndicator())
-                        : _filteredItems.isEmpty
-                            ? Center(
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(
-                                      Icons.checkroom_rounded,
-                                      size: 40,
-                                      color: _textSecondary,
-                                    ),
-                                    const SizedBox(height: 8),
-                                    Text(
-                                      s.noClothesYet,
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w600,
-                                        color: _textPrimary,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      s.useAddToStart,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: _textSecondary,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              )
-                            : GridView.builder(
-                                gridDelegate:
-                                    const SliverGridDelegateWithFixedCrossAxisCount(
-                                  crossAxisCount: 2,
-                                  childAspectRatio: 0.75,
-                                  crossAxisSpacing: 12,
-                                  mainAxisSpacing: 12,
-                                ),
-                                itemCount: _filteredItems.length,
-                                itemBuilder: (context, index) {
-                                  final entry = _filteredItems[index];
-                                  final ci = entry.clothingItem;
-                                  return GestureDetector(
-                                    onLongPress: () =>
-                                        _removeFromWardrobe(entry),
-                                    child: Card(
-                                      clipBehavior: Clip.antiAlias,
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.stretch,
-                                        children: [
-                                          Expanded(
-                                            child: _buildItemImage(
-                                              entry.clothingItemId,
-                                            ),
-                                          ),
-                                          Padding(
-                                            padding: const EdgeInsets.all(8),
-                                            child: Text(
-                                              ci?.name ?? entry.clothingItemId,
-                                              style: TextStyle(
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.w500,
-                                                color: _textPrimary,
-                                              ),
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                          ),
-                                          if (ci?.source == 'IMPORTED')
-                                            Padding(
-                                              padding: const EdgeInsets.only(
-                                                  left: 8, right: 8, bottom: 4),
-                                              child: Text(
-                                                s.virtualWardrobeLabel,
-                                                style: TextStyle(
-                                                  fontSize: 10,
-                                                  color: _textSecondary,
-                                                ),
-                                              ),
-                                            ),
-                                        ],
-                                      ),
-                                    ),
-                                  );
-                                },
+                    ? const Center(child: CircularProgressIndicator())
+                    : _filteredItems.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.checkroom_rounded,
+                              size: 40,
+                              color: _textSecondary,
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              s.noClothesYet,
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: _textPrimary,
                               ),
                             ),
+                            const SizedBox(height: 4),
+                            Text(
+                              s.useAddToStart,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: _textSecondary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : GridView.builder(
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: 2,
+                              childAspectRatio: 0.75,
+                              crossAxisSpacing: 12,
+                              mainAxisSpacing: 12,
+                            ),
+                        itemCount: _filteredItems.length,
+                        itemBuilder: (context, index) {
+                          final entry = _filteredItems[index];
+                          final ci = entry.clothingItem;
+                          return GestureDetector(
+                            onTap: () => _openItemDetails(entry),
+                            onLongPress: () => _handleItemLongPress(entry),
+                            child: Card(
+                              clipBehavior: Clip.antiAlias,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Expanded(
+                                    child: _buildItemImage(
+                                      entry.clothingItemId,
+                                    ),
+                                  ),
+                                  Padding(
+                                    padding: const EdgeInsets.all(8),
+                                    child: Text(
+                                      ci?.name ?? entry.clothingItemId,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w500,
+                                        color: _textPrimary,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  if (ci?.source == 'IMPORTED')
+                                    Padding(
+                                      padding: const EdgeInsets.only(
+                                        left: 8,
+                                        right: 8,
+                                        bottom: 4,
+                                      ),
+                                      child: Text(
+                                        s.virtualWardrobeLabel,
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          color: _textSecondary,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+              ),
             ],
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildHeader(AppStrings s) {
+    final titleBlock = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          s.wardrobeTitle,
+          style: TextStyle(
+            fontSize: 24,
+            fontWeight: FontWeight.w800,
+            color: _textPrimary,
+            letterSpacing: 0.2,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          s.wardrobeSubtitle,
+          style: TextStyle(fontSize: 12, color: _textSecondary),
+        ),
+      ],
+    );
+
+    final manageButton = OutlinedButton.icon(
+      onPressed: _openManageWardrobes,
+      style: OutlinedButton.styleFrom(
+        foregroundColor: _textPrimary,
+        backgroundColor: Theme.of(context).cardColor,
+        side: BorderSide(color: Theme.of(context).dividerColor),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        shape: const StadiumBorder(),
+      ),
+      icon: const Icon(Icons.tune_rounded, size: 18),
+      label: Text(
+        s.manageWardrobes,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+
+    final shareButton =
+        _currentWardrobe != null && _currentWardrobe!.isMain != true
+        ? OutlinedButton.icon(
+            onPressed: () => _shareWardrobe(_currentWardrobe!),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: _textPrimary,
+              backgroundColor: Theme.of(context).cardColor,
+              side: BorderSide(color: Theme.of(context).dividerColor),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              shape: const StadiumBorder(),
+            ),
+            icon: const Icon(Icons.share_outlined, size: 18),
+            label: const Text('Share'),
+          )
+        : null;
+
+    final scanButton = Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Theme.of(context).dividerColor),
+      ),
+      child: Icon(Icons.qr_code_scanner_rounded, size: 20, color: _textPrimary),
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 430;
+        if (compact) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              titleBlock,
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  if (shareButton != null) ...[
+                    Expanded(child: shareButton),
+                    const SizedBox(width: 8),
+                  ],
+                  Expanded(child: manageButton),
+                  const SizedBox(width: 8),
+                  scanButton,
+                ],
+              ),
+            ],
+          );
+        }
+
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(child: titleBlock),
+            const SizedBox(width: 12),
+            if (shareButton != null) ...[
+              Flexible(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 160),
+                  child: shareButton,
+                ),
+              ),
+              const SizedBox(width: 8),
+            ],
+            Flexible(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 220),
+                child: manageButton,
+              ),
+            ),
+            const SizedBox(width: 8),
+            scanButton,
+          ],
+        );
+      },
     );
   }
 
@@ -707,13 +932,11 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                 color: selected
                     ? (_isDark ? AppColors.darkSurface : Colors.white)
                     : (_isDark
-                        ? AppColors.darkBackground
-                        : AppColors.background),
+                          ? AppColors.darkBackground
+                          : AppColors.background),
                 borderRadius: BorderRadius.circular(999),
                 border: Border.all(
-                  color: selected
-                      ? _accent
-                      : Theme.of(context).dividerColor,
+                  color: selected ? _accent : Theme.of(context).dividerColor,
                   width: selected ? 1.4 : 1,
                 ),
               ),

@@ -11,17 +11,15 @@ class CardPackListItem extends StatelessWidget {
   final CardPack pack;
   final VoidCallback onTap;
 
-  const CardPackListItem({
-    super.key,
-    required this.pack,
-    required this.onTap,
-  });
+  const CardPackListItem({super.key, required this.pack, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final textP = isDark ? AppColors.darkTextPrimary : AppColors.textPrimary;
-    final textS = isDark ? AppColors.darkTextSecondary : AppColors.textSecondary;
+    final textS = isDark
+        ? AppColors.darkTextSecondary
+        : AppColors.textSecondary;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -53,7 +51,8 @@ class CardPackListItem extends StatelessWidget {
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    if (pack.description != null && pack.description!.isNotEmpty) ...[
+                    if (pack.description != null &&
+                        pack.description!.isNotEmpty) ...[
                       const SizedBox(height: 4),
                       Text(
                         pack.description!,
@@ -65,7 +64,11 @@ class CardPackListItem extends StatelessWidget {
                     const SizedBox(height: 8),
                     Row(
                       children: [
-                        Icon(Icons.inventory_2_outlined, size: 14, color: textS),
+                        Icon(
+                          Icons.inventory_2_outlined,
+                          size: 14,
+                          color: textS,
+                        ),
                         const SizedBox(width: 4),
                         Text(
                           '${pack.itemCount} items',
@@ -82,6 +85,21 @@ class CardPackListItem extends StatelessWidget {
                         ],
                       ],
                     ),
+                    if (pack.creatorUid != null ||
+                        pack.wardrobeWid != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        [
+                          if (pack.creatorUid?.isNotEmpty == true)
+                            'UID: ${pack.creatorUid}',
+                          if (pack.wardrobeWid?.isNotEmpty == true)
+                            'WID: ${pack.wardrobeWid}',
+                        ].join('  •  '),
+                        style: TextStyle(fontSize: 11, color: textS),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -128,9 +146,8 @@ class CardPackListItem extends StatelessWidget {
     }
 
     return CachedNetworkImage(
-      imageUrl: pack.coverImageUrl!.startsWith('http')
-          ? pack.coverImageUrl!
-          : '$fileBaseUrl${pack.coverImageUrl}',
+      imageUrl: resolveFileUrl(pack.coverImageUrl!),
+      httpHeaders: ApiSession.authHeaders,
       width: 80,
       height: 80,
       fit: BoxFit.cover,

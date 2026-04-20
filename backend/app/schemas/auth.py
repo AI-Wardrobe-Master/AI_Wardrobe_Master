@@ -50,6 +50,7 @@ class AuthUser(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: UUID
+    uid: str
     username: str
     email: str
     user_type: str = Field(alias="type")
@@ -64,3 +65,7 @@ class LoginResponseData(BaseModel):
 class LoginResponse(BaseModel):
     success: bool = True
     data: LoginResponseData
+
+
+class LogoutResponse(BaseModel):
+    success: bool = True

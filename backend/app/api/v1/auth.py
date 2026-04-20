@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_current_user_id
 from app.core.security import create_access_token, verify_password
 from app.crud import user as crud_user
+from app.crud import wardrobe as crud_wardrobe
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.auth import (
@@ -10,6 +12,7 @@ from app.schemas.auth import (
     LoginRequest,
     LoginResponse,
     LoginResponseData,
+    LogoutResponse,
     RegisterRequest,
 )
 
@@ -22,6 +25,7 @@ def _build_login_response(user: User) -> LoginResponse:
         data=LoginResponseData(
             user=AuthUser(
                 id=user.id,
+                uid=user.uid,
                 username=user.username,
                 email=user.email,
                 type=user.user_type,
@@ -51,8 +55,9 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
         username=body.username,
         email=body.email,
         password=body.password,
-        user_type="CONSUMER",
+        user_type=body.user_type or "CONSUMER",
     )
+    crud_wardrobe.ensure_main_wardrobe(db, user.id)
     return _build_login_response(user)
 
 
@@ -71,4 +76,12 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
             detail="Inactive user",
         )
 
+    crud_wardrobe.ensure_main_wardrobe(db, user.id)
     return _build_login_response(user)
+
+
+@router.post("/logout", response_model=LogoutResponse)
+def logout(
+    _: str = Depends(get_current_user_id),
+):
+    return LogoutResponse()

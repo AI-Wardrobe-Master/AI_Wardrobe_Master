@@ -64,11 +64,15 @@ class CardPackBase(BaseModel):
 
     id: UUID
     creator_id: UUID = Field(alias="creatorId")
+    creator_uid: str | None = Field(default=None, alias="creatorUid")
+    creator_username: str | None = Field(default=None, alias="creatorUsername")
     name: str
     description: str | None = None
     pack_type: str = Field(alias="type")
     status: str
     cover_image: str | None = Field(default=None, alias="coverImage")
+    wardrobe_id: UUID | None = Field(default=None, alias="wardrobeId")
+    wardrobe_wid: str | None = Field(default=None, alias="wardrobeWid")
     share_id: str | None = Field(default=None, alias="shareId")
     import_count: int = Field(alias="importCount")
     published_at: datetime | None = Field(default=None, alias="publishedAt")

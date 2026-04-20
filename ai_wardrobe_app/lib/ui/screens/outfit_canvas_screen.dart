@@ -1,10 +1,15 @@
 import 'dart:math' as math;
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../l10n/app_strings_provider.dart';
+import '../../models/wardrobe.dart';
+import '../../services/api_config.dart';
+import '../../services/wardrobe_service.dart';
 import '../../theme/app_theme.dart';
+import 'scene_preview_demo_screen.dart';
 
 const _referenceImagePath =
     'assets/visualization/source/full_body_reference.jpg';
@@ -13,7 +18,9 @@ const _previewImagePath =
 const _downloadChannel = MethodChannel('ai_wardrobe_app/downloads');
 
 class OutfitCanvasScreen extends StatefulWidget {
-  const OutfitCanvasScreen({super.key});
+  const OutfitCanvasScreen({super.key, this.showAppBar = true});
+
+  final bool showAppBar;
 
   @override
   State<OutfitCanvasScreen> createState() => _OutfitCanvasScreenState();
@@ -26,127 +33,111 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
     for (final zone in _BodyZone.values) zone: <_WornGarment>[],
   };
 
-  late final Map<_BodyZone, List<_GarmentItem>> _catalog = {
-    _BodyZone.head: const [
-      _GarmentItem(
-        id: 'head_beret',
-        title: 'Wool Beret',
-        fitNote: 'Soft crown with a classic shape',
-        material: 'Merino wool blend',
-        icon: Icons.style_rounded,
-        accent: Color(0xFF795548),
-      ),
-      _GarmentItem(
-        id: 'head_cap',
-        title: 'Minimal Cap',
-        fitNote: 'Structured everyday profile',
-        material: 'Brushed cotton twill',
-        icon: Icons.sports_baseball_rounded,
-        accent: Color(0xFF546E7A),
-      ),
-      _GarmentItem(
-        id: 'head_scarf',
-        title: 'Silk Head Scarf',
-        fitNote: 'Lightweight wrap for the crown',
-        material: 'Printed silk',
-        icon: Icons.waves_rounded,
-        accent: Color(0xFF8E24AA),
-      ),
-    ],
-    _BodyZone.upper: const [
-      _GarmentItem(
-        id: 'upper_turtleneck',
-        title: 'Ivory Turtleneck',
-        fitNote: 'Close-to-body foundation layer',
-        material: 'Fine rib knit',
-        icon: Icons.dry_cleaning_rounded,
-        accent: Color(0xFFD8C3A5),
-      ),
-      _GarmentItem(
-        id: 'upper_oxford',
-        title: 'Relaxed Oxford Shirt',
-        fitNote: 'Easy mid-layer volume',
-        material: 'Cotton poplin',
-        icon: Icons.checkroom_rounded,
-        accent: Color(0xFF64B5F6),
-      ),
-      _GarmentItem(
-        id: 'upper_jacket',
-        title: 'Dark Leather Jacket',
-        fitNote: 'Cropped outer layer',
-        material: 'Washed leather',
-        icon: Icons.auto_awesome_mosaic_rounded,
-        accent: Color(0xFF4E342E),
-      ),
-      _GarmentItem(
-        id: 'upper_trench',
-        title: 'Camel Trench Coat',
-        fitNote: 'Long outer shell',
-        material: 'Water-resistant cotton',
-        icon: Icons.shield_moon_rounded,
-        accent: Color(0xFFBCA17A),
-      ),
-    ],
-    _BodyZone.lower: const [
-      _GarmentItem(
-        id: 'lower_leggings',
-        title: 'Base Thermal Leggings',
-        fitNote: 'Closest layer for warmth',
-        material: 'Stretch jersey',
-        icon: Icons.texture_rounded,
-        accent: Color(0xFF5C6BC0),
-      ),
-      _GarmentItem(
-        id: 'lower_jeans',
-        title: 'Straight Blue Jeans',
-        fitNote: 'Classic denim outer layer',
-        material: 'Rigid denim',
-        icon: Icons.straighten_rounded,
-        accent: Color(0xFF1565C0),
-      ),
-      _GarmentItem(
-        id: 'lower_trousers',
-        title: 'Tailored Wool Trousers',
-        fitNote: 'Sharp clean drape',
-        material: 'Compact wool blend',
-        icon: Icons.view_stream_rounded,
-        accent: Color(0xFF455A64),
-      ),
-      _GarmentItem(
-        id: 'lower_skirt',
-        title: 'Pleated Midi Skirt',
-        fitNote: 'Fluid lower-body overlay',
-        material: 'Matte twill',
-        icon: Icons.change_history_rounded,
-        accent: Color(0xFFAD1457),
-      ),
-    ],
-    _BodyZone.feet: const [
-      _GarmentItem(
-        id: 'feet_boots',
-        title: 'Leather Ankle Boots',
-        fitNote: 'Low shaft with a stacked heel',
-        material: 'Burnished leather',
-        icon: Icons.hiking_rounded,
-        accent: Color(0xFF5D4037),
-      ),
-      _GarmentItem(
-        id: 'feet_sneakers',
-        title: 'White Leather Sneakers',
-        fitNote: 'Minimal low-top shape',
-        material: 'Smooth leather',
-        icon: Icons.directions_run_rounded,
-        accent: Color(0xFFB0BEC5),
-      ),
-      _GarmentItem(
-        id: 'feet_loafers',
-        title: 'Black Loafers',
-        fitNote: 'Polished clean finish',
-        material: 'Soft calf leather',
-        icon: Icons.flutter_dash_rounded,
-        accent: Color(0xFF263238),
-      ),
-    ],
+  final Map<_BodyZone, List<_GarmentItem>> _catalog = {
+    for (final zone in _BodyZone.values) zone: <_GarmentItem>[],
+  };
+  bool _loadingCatalog = true;
+  String? _catalogError;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCatalog();
+  }
+
+  Future<void> _loadCatalog() async {
+    setState(() {
+      _loadingCatalog = true;
+      _catalogError = null;
+    });
+
+    final nextCatalog = {
+      for (final zone in _BodyZone.values) zone: <_GarmentItem>[],
+    };
+    try {
+      final wardrobes = await WardrobeService.fetchWardrobes();
+      final seen = <String>{};
+
+      for (final wardrobe in wardrobes) {
+        final items = await WardrobeService.fetchWardrobeItems(wardrobe.id);
+        for (final entry in items) {
+          final clothing = entry.clothingItem;
+          if (clothing == null || !seen.add(entry.clothingItemId)) {
+            continue;
+          }
+          final zone = _zoneForClothing(clothing);
+          nextCatalog[zone]!.add(
+            _GarmentItem(
+              id: entry.clothingItemId,
+              title: clothing.name ?? entry.clothingItemId,
+              fitNote: clothing.description?.isNotEmpty == true
+                  ? clothing.description!
+                  : 'From ${wardrobe.isMain ? 'Main Wardrobe' : wardrobe.name}',
+              material: wardrobe.name,
+              icon: _iconForZone(zone),
+              accent: zone.accent,
+              imageUrl: clothing.imageUrl,
+              tags: clothing.tagValues,
+              wardrobeId: wardrobe.id,
+              wardrobeName: wardrobe.name,
+              sourceLabel: wardrobe.isMain ? 'Main Wardrobe' : 'Card Pack',
+            ),
+          );
+        }
+      }
+
+      if (!mounted) return;
+      setState(() {
+        for (final zone in _BodyZone.values) {
+          _catalog[zone]!
+            ..clear()
+            ..addAll(nextCatalog[zone]!);
+          _wornByZone[zone]!.removeWhere(
+            (worn) => !_catalog[zone]!.any((item) => item.id == worn.item.id),
+          );
+        }
+        _loadingCatalog = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _catalogError = error.toString();
+        _loadingCatalog = false;
+      });
+    }
+  }
+
+  _BodyZone _zoneForClothing(ClothingItemBrief clothing) {
+    final category = clothing.categoryTag?.toLowerCase() ?? '';
+    final tags = clothing.tagValues.join(' ').toLowerCase();
+    final combined = '$category $tags';
+    if (combined.contains('shoe') ||
+        combined.contains('boot') ||
+        combined.contains('sneaker') ||
+        combined.contains('loafer')) {
+      return _BodyZone.feet;
+    }
+    if (combined.contains('hat') ||
+        combined.contains('cap') ||
+        combined.contains('scarf') ||
+        combined.contains('head')) {
+      return _BodyZone.head;
+    }
+    if (combined.contains('pant') ||
+        combined.contains('jean') ||
+        combined.contains('skirt') ||
+        combined.contains('bottom') ||
+        combined.contains('trouser')) {
+      return _BodyZone.lower;
+    }
+    return _BodyZone.upper;
+  }
+
+  IconData _iconForZone(_BodyZone zone) => switch (zone) {
+    _BodyZone.head => Icons.style_rounded,
+    _BodyZone.upper => Icons.checkroom_rounded,
+    _BodyZone.lower => Icons.view_stream_rounded,
+    _BodyZone.feet => Icons.hiking_rounded,
   };
 
   bool get _isDark => Theme.of(context).brightness == Brightness.dark;
@@ -168,7 +159,7 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
   Widget build(BuildContext context) {
     final s = AppStringsProvider.of(context);
     return Scaffold(
-      appBar: AppBar(title: Text(s.visualizeTitle)),
+      appBar: widget.showAppBar ? AppBar(title: Text(s.visualizeTitle)) : null,
       body: SafeArea(
         child: Column(
           children: [
@@ -196,6 +187,23 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
                         color: _textSecondary,
                       ),
                     ),
+                    const SizedBox(height: 12),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: OutlinedButton.icon(
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => const ScenePreviewDemoScreen(),
+                            ),
+                          );
+                        },
+                        icon: const Icon(
+                          Icons.face_retouching_natural_outlined,
+                        ),
+                        label: const Text('Face + Scene Demo'),
+                      ),
+                    ),
                     const SizedBox(height: 16),
                     Wrap(
                       spacing: 10,
@@ -208,12 +216,47 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
                           darkText: true,
                         ),
                         _buildInfoChip(
-                          'Layered tops and bottoms',
+                          '${_catalog.values.fold<int>(0, (sum, items) => sum + items.length)} wardrobe items loaded',
                           const Color(0xFF3D5A80),
                         ),
                       ],
                     ),
                     const SizedBox(height: 18),
+                    if (_loadingCatalog)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 16),
+                        child: Row(
+                          children: [
+                            SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: _accent,
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              'Loading garments from your wardrobe...',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: _textSecondary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    if (_catalogError != null)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 16),
+                        child: Text(
+                          _catalogError!,
+                          style: const TextStyle(
+                            color: Colors.redAccent,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
                     LayoutBuilder(
                       builder: (context, constraints) {
                         final isWide = constraints.maxWidth >= 900;
@@ -1134,6 +1177,7 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
   }
 
   Widget _buildGarmentPreviewBox(_GarmentItem item) {
+    final imageUrl = item.imageUrl;
     return Container(
       width: 86,
       height: 86,
@@ -1141,16 +1185,54 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: Theme.of(context).dividerColor),
       ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(item.icon, color: item.accent, size: 26),
-          const SizedBox(height: 8),
-          Text(
-            'Image pending',
-            style: TextStyle(fontSize: 10, color: _textSecondary),
-          ),
-        ],
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(18),
+        child: imageUrl == null || imageUrl.isEmpty
+            ? Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(item.icon, color: item.accent, size: 26),
+                  const SizedBox(height: 8),
+                  Text(
+                    'No image',
+                    style: TextStyle(fontSize: 10, color: _textSecondary),
+                  ),
+                ],
+              )
+            : _buildAdaptiveGarmentImage(imageUrl, item),
+      ),
+    );
+  }
+
+  Widget _buildAdaptiveGarmentImage(String imageUrl, _GarmentItem item) {
+    if (imageUrl.startsWith('data:')) {
+      try {
+        final data = Uri.parse(imageUrl).data;
+        if (data != null) {
+          return Image.memory(
+            data.contentAsBytes(),
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) =>
+                Center(child: Icon(item.icon, color: item.accent, size: 24)),
+          );
+        }
+      } catch (_) {
+        return Center(child: Icon(item.icon, color: item.accent, size: 24));
+      }
+    }
+
+    return CachedNetworkImage(
+      imageUrl: resolveFileUrl(imageUrl),
+      httpHeaders: ApiSession.authHeaders,
+      fit: BoxFit.cover,
+      errorWidget: (_, __, ___) =>
+          Center(child: Icon(item.icon, color: item.accent, size: 24)),
+      placeholder: (_, __) => Center(
+        child: SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(strokeWidth: 2, color: item.accent),
+        ),
       ),
     );
   }
@@ -1172,8 +1254,13 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
           children: [
             _buildMetaPill(
               Icons.layers_rounded,
-              item.material,
+              item.sourceLabel,
               item.accent.withOpacity(0.12),
+            ),
+            _buildMetaPill(
+              Icons.inventory_2_outlined,
+              item.material,
+              Theme.of(context).dividerColor.withOpacity(0.2),
             ),
             if (currentLayer != null)
               Container(
@@ -1217,6 +1304,13 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
           item.fitNote,
           style: TextStyle(fontSize: 12, height: 1.4, color: _textSecondary),
         ),
+        if (item.tags.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text(
+            item.tags.take(4).join(' • '),
+            style: TextStyle(fontSize: 11, color: _textSecondary),
+          ),
+        ],
         const SizedBox(height: 10),
         _buildGarmentActionRow(
           onWear: onWear,
@@ -1384,7 +1478,7 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      'This detail entry point is now reserved for the full garment page. It currently shows the garment summary and wearing status.',
+                      'This garment now comes from your real wardrobe data, including its source wardrobe and tags.',
                       style: TextStyle(
                         fontSize: 12,
                         height: 1.5,
@@ -1891,6 +1985,22 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
   }
 
   Future<String> _savePreview() async {
+    final selectionIds = _wornByZone.values
+        .expand((items) => items.map((worn) => worn.item.id))
+        .toSet()
+        .toList();
+    if (selectionIds.isEmpty) {
+      throw PlatformException(
+        code: 'no_selection',
+        message: 'Select at least one wardrobe item before saving.',
+      );
+    }
+
+    final wardrobe = await WardrobeService.exportSelectionToWardrobe(
+      clothingItemIds: selectionIds,
+      name: 'Outfit Export',
+    );
+
     final byteData = await rootBundle.load(_previewImagePath);
     final fileName =
         'ai_wardrobe_preview_${DateTime.now().millisecondsSinceEpoch}.jpg';
@@ -1901,7 +2011,8 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
         'bytes': byteData.buffer.asUint8List(),
       },
     );
-    return savedPath ?? fileName;
+    final galleryPath = savedPath ?? fileName;
+    return 'Created ${wardrobe.name} (${wardrobe.wid}) and saved image to $galleryPath';
   }
 
   List<_WornGarment> _sortedSelections(_BodyZone zone) {
@@ -2021,6 +2132,11 @@ class _GarmentItem {
     required this.material,
     required this.icon,
     required this.accent,
+    required this.imageUrl,
+    required this.tags,
+    required this.wardrobeId,
+    required this.wardrobeName,
+    required this.sourceLabel,
   });
 
   final String id;
@@ -2029,6 +2145,11 @@ class _GarmentItem {
   final String material;
   final IconData icon;
   final Color accent;
+  final String? imageUrl;
+  final List<String> tags;
+  final String wardrobeId;
+  final String wardrobeName;
+  final String sourceLabel;
 }
 
 class _WornGarment {

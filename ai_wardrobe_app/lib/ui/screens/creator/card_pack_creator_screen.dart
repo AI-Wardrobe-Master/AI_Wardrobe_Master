@@ -6,12 +6,10 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
-import '../../../data/test_clothing_items.dart';
 import '../../../l10n/app_strings_provider.dart';
 import '../../../services/card_pack_api_service.dart';
 import '../../../services/clothing_api_service.dart';
 import '../../../services/local_card_pack_service.dart';
-import '../../../services/local_clothing_service.dart';
 import '../../../theme/app_theme.dart';
 import '../../widgets/creator/clothing_item_selector.dart';
 
@@ -26,7 +24,7 @@ class _CardPackCreatorScreenState extends State<CardPackCreatorScreen> {
   final _nameController = TextEditingController();
   final _descriptionController = TextEditingController();
 
-  List<Map<String, dynamic>> _availableItems = [];
+  List<Map<String, dynamic>> _availableItems = <Map<String, dynamic>>[];
   Set<String> _selectedItemIds = <String>{};
   File? _coverImageFile;
   Uint8List? _coverImageBytes;
@@ -53,32 +51,38 @@ class _CardPackCreatorScreenState extends State<CardPackCreatorScreen> {
       _error = null;
     });
 
-    final allItems = <Map<String, dynamic>>[];
     try {
-      allItems.addAll(await ClothingApiService.listClothingItems(limit: 100));
-    } catch (_) {}
-    try {
-      allItems.addAll(await LocalClothingService.listItems());
-    } catch (_) {}
-    if (allItems.isEmpty) {
-      allItems.addAll(TestClothingItems.getTestItems());
-    }
-
-    if (!mounted) return;
-    setState(() {
-      _availableItems = allItems;
-      _loadingItems = false;
-      if (allItems.isEmpty) {
-        _error =
-            'No clothing items found. Please add some clothes first using the "Add clothes" option.';
+      final allItems = await ClothingApiService.listClothingItems(limit: 100);
+      if (!mounted) {
+        return;
       }
-    });
+      setState(() {
+        _availableItems = allItems;
+        _loadingItems = false;
+        if (allItems.isEmpty) {
+          _error =
+              'No clothing items found. Add or seed clothes first, then create a card pack from the same wardrobe data.';
+        }
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _availableItems = <Map<String, dynamic>>[];
+        _loadingItems = false;
+        _error = 'Failed to load clothing items: $error';
+      });
+    }
   }
 
   Future<void> _pickCoverImage() async {
-    final pickedFile =
-        await ImagePicker().pickImage(source: ImageSource.gallery);
-    if (pickedFile == null) return;
+    final pickedFile = await ImagePicker().pickImage(
+      source: ImageSource.gallery,
+    );
+    if (pickedFile == null) {
+      return;
+    }
 
     if (kIsWeb) {
       final bytes = await pickedFile.readAsBytes();
@@ -103,7 +107,9 @@ class _CardPackCreatorScreenState extends State<CardPackCreatorScreen> {
       } else if (_coverImageFile != null) {
         bytes = _coverImageFile!.readAsBytesSync();
       }
-      if (bytes == null) return null;
+      if (bytes == null) {
+        return null;
+      }
       return base64Encode(bytes);
     } catch (_) {
       return null;
@@ -112,9 +118,9 @@ class _CardPackCreatorScreenState extends State<CardPackCreatorScreen> {
 
   Future<void> _savePack({required bool publish}) async {
     if (_nameController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter a name')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Please enter a name')));
       return;
     }
 
@@ -160,7 +166,9 @@ class _CardPackCreatorScreenState extends State<CardPackCreatorScreen> {
         );
       }
 
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -171,11 +179,13 @@ class _CardPackCreatorScreenState extends State<CardPackCreatorScreen> {
         ),
       );
       Navigator.pop(context, true);
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e')),
-      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error: $error')));
     } finally {
       if (mounted) {
         setState(() => _saving = false);
@@ -188,7 +198,9 @@ class _CardPackCreatorScreenState extends State<CardPackCreatorScreen> {
     final s = AppStringsProvider.of(context);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final textP = isDark ? AppColors.darkTextPrimary : AppColors.textPrimary;
-    final textS = isDark ? AppColors.darkTextSecondary : AppColors.textSecondary;
+    final textS = isDark
+        ? AppColors.darkTextSecondary
+        : AppColors.textSecondary;
 
     return Scaffold(
       appBar: AppBar(
@@ -215,6 +227,11 @@ class _CardPackCreatorScreenState extends State<CardPackCreatorScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            Text(
+              'Card pack and sub-wardrobe are treated as the same collection concept here. You are selecting only from the clothing currently in your wardrobe.',
+              style: TextStyle(fontSize: 13, color: textS),
+            ),
+            const SizedBox(height: 16),
             TextField(
               controller: _nameController,
               decoration: InputDecoration(
@@ -265,17 +282,22 @@ class _CardPackCreatorScreenState extends State<CardPackCreatorScreen> {
                         child: kIsWeb && _coverImageBytes != null
                             ? Image.memory(_coverImageBytes!, fit: BoxFit.cover)
                             : !kIsWeb && _coverImageFile != null
-                                ? Image.file(_coverImageFile!, fit: BoxFit.cover)
-                                : null,
+                            ? Image.file(_coverImageFile!, fit: BoxFit.cover)
+                            : null,
                       )
                     : Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.add_photo_alternate_outlined,
-                              size: 48, color: textS),
+                          Icon(
+                            Icons.add_photo_alternate_outlined,
+                            size: 48,
+                            color: textS,
+                          ),
                           const SizedBox(height: 8),
-                          Text('Tap to add cover image',
-                              style: TextStyle(color: textS)),
+                          Text(
+                            'Tap to add cover image',
+                            style: TextStyle(color: textS),
+                          ),
                         ],
                       ),
               ),

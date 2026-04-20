@@ -1,10 +1,8 @@
-import 'package:dio/dio.dart';
-
 import '../models/creator.dart';
 import 'api_config.dart';
 
 class CreatorApiService {
-  static final _dio = Dio(BaseOptions(baseUrl: apiBaseUrl));
+  static final _dio = buildApiDio();
 
   static Future<Creator> getCreator(String id) async {
     try {

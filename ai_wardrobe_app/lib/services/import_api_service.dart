@@ -1,9 +1,7 @@
 import 'dart:convert';
 
-import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../data/test_clothing_items.dart';
 import '../models/import_history.dart';
 import 'api_config.dart';
 import 'card_pack_api_service.dart';
@@ -11,27 +9,26 @@ import 'creator_api_service.dart';
 import 'local_card_pack_service.dart';
 import 'local_clothing_service.dart';
 import 'clothing_api_service.dart';
+import 'local_wardrobe_service.dart';
 
 class ImportApiService {
-  static final _dio = Dio(BaseOptions(baseUrl: apiBaseUrl));
+  static final _dio = buildApiDio();
 
   static const String _historyIdsKey = 'local_import_history_ids';
   static const String _historyPrefix = 'local_import_history_';
 
   static Future<Map<String, dynamic>> importCardPack(String cardPackId) async {
     try {
-      final resp = await _dio.post('/imports/card-pack', data: {
-        'cardPackId': cardPackId,
-      });
+      final resp = await _dio.post(
+        '/imports/card-pack',
+        data: {'cardPackId': cardPackId},
+      );
       return resp.data as Map<String, dynamic>;
     } catch (_) {
       // The current backend does not fully cover module 4 yet, so keep the
       // import flow testable by persisting a local import record.
       final importedRecord = await _importLocally(cardPackId);
-      return {
-        'message': 'Imported locally',
-        'data': importedRecord,
-      };
+      return {'message': 'Imported locally', 'data': importedRecord};
     }
   }
 
@@ -40,15 +37,17 @@ class ImportApiService {
     int limit = 20,
   }) async {
     try {
-      final resp = await _dio.get('/imports/history', queryParameters: {
-        'page': page,
-        'limit': limit,
-      });
+      final resp = await _dio.get(
+        '/imports/history',
+        queryParameters: {'page': page, 'limit': limit},
+      );
       final responseData = resp.data as Map<String, dynamic>;
       final data = responseData['data'] as Map<String, dynamic>;
       final imports = data['imports'] as List<dynamic>;
       return imports
-          .map((e) => ImportHistory.fromJson(Map<String, dynamic>.from(e as Map)))
+          .map(
+            (e) => ImportHistory.fromJson(Map<String, dynamic>.from(e as Map)),
+          )
           .toList();
     } catch (_) {
       final prefs = await SharedPreferences.getInstance();
@@ -80,9 +79,11 @@ class ImportApiService {
     }
 
     importedItems.sort((a, b) {
-      final aDate = DateTime.tryParse(a['createdAt'] as String? ?? '') ??
+      final aDate =
+          DateTime.tryParse(a['createdAt'] as String? ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0);
-      final bDate = DateTime.tryParse(b['createdAt'] as String? ?? '') ??
+      final bDate =
+          DateTime.tryParse(b['createdAt'] as String? ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0);
       return bDate.compareTo(aDate);
     });
@@ -94,9 +95,28 @@ class ImportApiService {
     final pack = await _resolvePack(cardPackId);
     final items = await _resolveItemsForPack(pack);
     final creator = await CreatorApiService.getCreator(pack.creatorId);
+    final targetWardrobeId =
+        await LocalWardrobeService.getDefaultTargetWardrobeId();
 
     final historyId = 'import_${DateTime.now().millisecondsSinceEpoch}';
     final importedAt = DateTime.now();
+    final ownedItems = <Map<String, dynamic>>[];
+    for (var index = 0; index < items.length; index++) {
+      final snapshot = Map<String, dynamic>.from(items[index]);
+      final generatedId = await LocalClothingService.createImportedSnapshot(
+        sourceItem: snapshot,
+        targetWardrobeId: targetWardrobeId,
+        preferredId: 'imported_${historyId}_$index',
+      );
+      ownedItems.add({
+        ...snapshot,
+        'id': generatedId,
+        'source': 'IMPORTED',
+        'wardrobeIds': <String>[targetWardrobeId],
+        'createdAt': importedAt.toIso8601String(),
+      });
+    }
+
     final history = ImportHistory(
       id: historyId,
       userId: 'local_user',
@@ -104,7 +124,7 @@ class ImportApiService {
       cardPackName: pack.name,
       creatorId: pack.creatorId,
       creatorName: creator.displayName,
-      itemCount: items.length,
+      itemCount: ownedItems.length,
       importedAt: importedAt,
     );
 
@@ -112,7 +132,8 @@ class ImportApiService {
       ...history.toJson(),
       // Store a snapshot of the imported items so the virtual wardrobe can
       // render them later without depending on a platform API.
-      'items': items,
+      'items': ownedItems,
+      'targetWardrobeId': targetWardrobeId,
     };
 
     await prefs.setString('$_historyPrefix$historyId', jsonEncode(record));
@@ -138,15 +159,20 @@ class ImportApiService {
     }
   }
 
-  static Future<List<Map<String, dynamic>>> _resolveItemsForPack(dynamic pack) async {
+  static Future<List<Map<String, dynamic>>> _resolveItemsForPack(
+    dynamic pack,
+  ) async {
     if (pack.items != null && (pack.items as List).isNotEmpty) {
       return (pack.items as List<Map<String, dynamic>>)
-          .map((item) => {
-                ...item,
-                'source': 'IMPORTED',
-                'createdAt': item['createdAt'] as String? ??
-                    DateTime.now().toIso8601String(),
-              })
+          .map(
+            (item) => {
+              ...item,
+              'source': 'IMPORTED',
+              'createdAt':
+                  item['createdAt'] as String? ??
+                  DateTime.now().toIso8601String(),
+            },
+          )
           .toList();
     }
 
@@ -157,7 +183,6 @@ class ImportApiService {
     try {
       allItems.addAll(await LocalClothingService.listItems());
     } catch (_) {}
-    allItems.addAll(TestClothingItems.getTestItems());
 
     final byId = <String, Map<String, dynamic>>{};
     for (final item in allItems) {

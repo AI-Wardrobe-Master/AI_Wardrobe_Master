@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user_id
+from app.api.deps import get_current_user_id, get_optional_current_user_id
 from app.db.session import get_db
 from app.models.blob import Blob
 from app.models.clothing_item import ClothingItem, Image, Model3D
@@ -28,6 +28,7 @@ from app.models.outfit_preview import (
     OutfitPreviewTaskItem,
 )
 from app.models.styled_generation import StyledGeneration
+from app.models.wardrobe import Wardrobe, WardrobeItem
 from app.services.blob_storage import get_blob_storage
 
 router = APIRouter()
@@ -71,6 +72,30 @@ async def _stream_blob(db: Session, blob_hash: str):
     )
 
 
+def _can_view_shared_clothing_item(
+    db: Session,
+    *,
+    item_id: UUID,
+    viewer_user_id: UUID | None,
+) -> bool:
+    item = db.query(ClothingItem).filter(ClothingItem.id == item_id).first()
+    if not item:
+        return False
+    if viewer_user_id is not None and item.user_id == viewer_user_id:
+        return True
+    shared_link = (
+        db.query(WardrobeItem.id)
+        .join(Wardrobe, Wardrobe.id == WardrobeItem.wardrobe_id)
+        .filter(
+            WardrobeItem.clothing_item_id == item_id,
+            Wardrobe.is_public.is_(True),
+            Wardrobe.kind == "SUB",
+        )
+        .first()
+    )
+    return shared_link is not None
+
+
 # ---- Clothing item files ----
 
 @router.get("/clothing-items/{item_id}/{kind}")
@@ -78,13 +103,14 @@ async def get_clothing_file(
     item_id: UUID,
     kind: str,
     db: Session = Depends(get_db),
-    user_id: UUID = Depends(get_current_user_id),
+    viewer_user_id: UUID | None = Depends(get_optional_current_user_id),
 ):
-    item = db.query(ClothingItem).filter(
-        ClothingItem.id == item_id,
-        ClothingItem.user_id == user_id,
-    ).first()
-    if not item:
+    item = db.query(ClothingItem).filter(ClothingItem.id == item_id).first()
+    if not item or not _can_view_shared_clothing_item(
+        db,
+        item_id=item_id,
+        viewer_user_id=viewer_user_id,
+    ):
         raise HTTPException(404)
 
     if kind == "model":

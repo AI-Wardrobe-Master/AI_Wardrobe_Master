@@ -7,6 +7,7 @@ celery_app = Celery(
     "ai_wardrobe_master",
     broker=settings.REDIS_URL,
     backend=settings.REDIS_URL,
+    include=["app.tasks"],
 )
 
 celery_app.conf.update(

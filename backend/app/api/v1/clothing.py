@@ -1,4 +1,5 @@
 import io
+import json
 import logging
 from typing import Optional
 from uuid import UUID, uuid4
@@ -9,7 +10,9 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user_id
 from app.core.config import settings
+from app.core.exceptions import ClassificationError
 from app.crud import clothing as crud_clothing
+from app.crud import wardrobe as crud_wardrobe
 from app.db.session import get_db
 from app.models.clothing_item import ClothingItem, Image, Model3D, ProcessingTask
 from app.schemas.clothing_item import (
@@ -41,8 +44,9 @@ def _build_image_url(item_id: UUID, kind: str) -> str:
     return f"/files/clothing-items/{item_id}/{kind}"
 
 
-def _item_to_response(item) -> dict:
-    return {
+def _item_to_response(item, *, images: list[Image] | None = None) -> dict:
+    wardrobe_ids = [str(entry.wardrobe_id) for entry in getattr(item, "wardrobe_entries", [])]
+    response = {
         "id": str(item.id),
         "userId": str(item.user_id),
         "source": item.source,
@@ -52,9 +56,27 @@ def _item_to_response(item) -> dict:
         "name": item.name,
         "description": item.description,
         "customTags": item.custom_tags or [],
+        "category": item.category,
+        "material": item.material,
+        "style": item.style,
+        "previewSvgState": item.preview_svg_state or "PLACEHOLDER",
+        "previewSvgAvailable": bool(item.preview_svg_available),
+        "syncStatus": item.sync_status or "SYNCED",
+        "wardrobeIds": wardrobe_ids,
         "createdAt": item.created_at.isoformat() if item.created_at else None,
         "updatedAt": item.updated_at.isoformat() if item.updated_at else None,
     }
+    if images is not None:
+        image_set = _build_image_set(item.id, images)
+        image_payload = image_set.model_dump(mode="python")
+        response["images"] = image_payload
+        response["imageUrl"] = (
+            image_payload.get("processedFrontUrl")
+            or image_payload.get("originalFrontUrl")
+            or image_payload.get("processedBackUrl")
+            or image_payload.get("originalBackUrl")
+        )
+    return response
 
 
 @router.post("", response_model=ClothingItemCreateResponse, status_code=202)
@@ -63,6 +85,11 @@ async def create_clothing_item(
     back_image: UploadFile | None = File(None),
     name: str | None = Form(None),
     description: str | None = Form(None),
+    custom_tags_json: str | None = Form(None),
+    category: str | None = Form(None),
+    material: str | None = Form(None),
+    style: str | None = Form(None),
+    wardrobe_id: UUID | None = Form(None),
     db: Session = Depends(get_db),
     user_id: UUID = Depends(get_current_user_id),
 ):
@@ -71,8 +98,28 @@ async def create_clothing_item(
         await _read_upload_bytes(back_image, "back_image")
         if back_image else None
     )
-    predicted_tags = AIService().classify_bytes(front_bytes)
+    try:
+        predicted_tags = AIService().classify_bytes(front_bytes)
+    except ClassificationError as exc:
+        logger.warning(
+            "Classification unavailable during local upload; continuing without predicted tags: %s",
+            exc,
+        )
+        predicted_tags = []
     predicted_tag_dicts = [_tag_to_dict(tag) for tag in predicted_tags]
+    manual_tags = _parse_custom_tags(custom_tags_json)
+    target_wardrobe = None
+    if wardrobe_id is not None:
+        target_wardrobe = crud_wardrobe.get_wardrobe(db, wardrobe_id, user_id)
+        if target_wardrobe is None:
+            raise HTTPException(404, "Target wardrobe not found")
+    final_tag_dicts = _merge_final_tags(
+        predicted_tag_dicts,
+        manual_tags,
+        category=category,
+        material=material,
+        style=style,
+    )
     blob_service = get_blob_service()
     item = ClothingItem(
         id=uuid4(),
@@ -81,8 +128,15 @@ async def create_clothing_item(
         name=name,
         description=description,
         predicted_tags=predicted_tag_dicts,
-        final_tags=list(predicted_tag_dicts),
+        final_tags=final_tag_dicts,
         is_confirmed=False,
+        custom_tags=manual_tags,
+        category=category,
+        material=material,
+        style=style,
+        preview_svg_state="PLACEHOLDER",
+        preview_svg_available=False,
+        sync_status="SYNCED",
     )
 
     try:
@@ -114,6 +168,18 @@ async def create_clothing_item(
                 blob_hash=back_blob.blob_hash,
             ))
         task = create_processing_task(db, item.id, attempt_no=1)
+        crud_wardrobe.ensure_item_in_main_wardrobe(
+            db,
+            user_id=user_id,
+            clothing_item_id=item.id,
+        )
+        if target_wardrobe is not None:
+            crud_wardrobe.ensure_item_in_wardrobe(
+                db,
+                user_id=user_id,
+                wardrobe_id=target_wardrobe.id,
+                clothing_item_id=item.id,
+            )
         db.commit()
     except Exception:
         db.rollback()
@@ -154,6 +220,13 @@ def get_clothing_item(
         name=item.name,
         description=item.description,
         customTags=item.custom_tags or [],
+        category=item.category,
+        material=item.material,
+        style=item.style,
+        previewSvgState=item.preview_svg_state or "PLACEHOLDER",
+        previewSvgAvailable=bool(item.preview_svg_available),
+        syncStatus=item.sync_status or "SYNCED",
+        wardrobeIds=[entry.wardrobe_id for entry in item.wardrobe_entries],
         createdAt=item.created_at,
         updatedAt=item.updated_at,
     )
@@ -175,10 +248,18 @@ def update_clothing_item(
         final_tags=body.final_tags,
         is_confirmed=body.is_confirmed,
         custom_tags=body.custom_tags,
+        category=body.category,
+        material=body.material,
+        style=body.style,
     )
     if not item:
         raise HTTPException(status_code=404, detail="Clothing item not found")
-    return {"success": True, "data": _item_to_response(item)}
+    if body.wardrobe_ids:
+        for wardrobe_id in body.wardrobe_ids:
+            crud_wardrobe.add_item_to_wardrobe(db, wardrobe_id, user_id, item_id)
+        db.refresh(item)
+    images = db.query(Image).filter(Image.clothing_item_id == item_id).all()
+    return {"success": True, "data": _item_to_response(item, images=images)}
 
 
 @router.delete("/{item_id}", status_code=204)
@@ -212,6 +293,7 @@ def list_clothing_items(
     tag_key: Optional[str] = Query(None, alias="tagKey"),
     tag_value: Optional[str] = Query(None, alias="tagValue"),
     search: Optional[str] = Query(None),
+    wardrobe_id: Optional[UUID] = Query(None, alias="wardrobeId"),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
 ):
@@ -222,6 +304,7 @@ def list_clothing_items(
         tag_key=tag_key,
         tag_value=tag_value,
         search=search,
+        wardrobe_id=wardrobe_id,
         page=page,
         limit=limit,
     )
@@ -231,7 +314,13 @@ def list_clothing_items(
     return {
         "success": True,
         "data": {
-            "items": [_item_to_response(i) for i in items],
+            "items": [
+                _item_to_response(
+                    i,
+                    images=db.query(Image).filter(Image.clothing_item_id == i.id).all(),
+                )
+                for i in items
+            ],
             "pagination": {
                 "page": page,
                 "limit": limit,
@@ -391,6 +480,37 @@ async def download_model(
         headers={"Content-Disposition": f"attachment; filename={item_id}.glb"},
     )
 
+
+
+def _parse_custom_tags(raw: str | None) -> list[str]:
+    if raw is None or not raw.strip():
+        return []
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        payload = [part.strip() for part in raw.split(",") if part.strip()]
+    if isinstance(payload, list):
+        return [str(value).strip() for value in payload if str(value).strip()]
+    return [str(payload).strip()] if str(payload).strip() else []
+
+
+def _merge_final_tags(
+    predicted_tags: list[dict[str, str]],
+    manual_tags: list[str],
+    *,
+    category: str | None,
+    material: str | None,
+    style: str | None,
+) -> list[dict[str, str]]:
+    merged = list(predicted_tags)
+    merged.extend({"key": "manual", "value": tag} for tag in manual_tags)
+    if category:
+        merged.append({"key": "category", "value": category})
+    if material:
+        merged.append({"key": "material", "value": material})
+    if style:
+        merged.append({"key": "style", "value": style})
+    return merged
 
 def _build_image_set(item_id: UUID, images: list[Image]) -> ImageSetResponse:
     result = ImageSetResponse(originalFrontUrl="")

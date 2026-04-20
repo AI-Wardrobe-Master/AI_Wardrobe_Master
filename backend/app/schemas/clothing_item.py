@@ -55,6 +55,13 @@ class ClothingItemResponse(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     customTags: List[str] = []
+    category: Optional[str] = None
+    material: Optional[str] = None
+    style: Optional[str] = None
+    previewSvgState: str = 'PLACEHOLDER'
+    previewSvgAvailable: bool = False
+    syncStatus: str = 'SYNCED'
+    wardrobeIds: List[UUID] = []
     createdAt: datetime
     updatedAt: datetime
 
@@ -72,10 +79,14 @@ class ClothingItemBase(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     custom_tags: List[str] = Field(default_factory=list, alias="customTags")
+    category: Optional[str] = None
+    material: Optional[str] = None
+    style: Optional[str] = None
 
 
 class ClothingItemUpdate(BaseModel):
     """PATCH /clothing-items/:id - tag confirmation and editing"""
+
     model_config = ConfigDict(extra="forbid")
 
     name: Optional[str] = None
@@ -87,3 +98,7 @@ class ClothingItemUpdate(BaseModel):
     )
     is_confirmed: Optional[bool] = Field(None, alias="isConfirmed")
     custom_tags: Optional[List[str]] = Field(None, alias="customTags")
+    category: Optional[str] = None
+    material: Optional[str] = None
+    style: Optional[str] = None
+    wardrobe_ids: Optional[List[UUID]] = Field(None, alias="wardrobeIds")

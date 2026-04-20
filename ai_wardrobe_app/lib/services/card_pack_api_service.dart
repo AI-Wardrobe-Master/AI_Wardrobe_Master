@@ -1,10 +1,8 @@
-import 'package:dio/dio.dart';
-
 import '../models/card_pack.dart';
 import 'api_config.dart';
 
 class CardPackApiService {
-  static final _dio = Dio(BaseOptions(baseUrl: apiBaseUrl));
+  static final _dio = buildApiDio();
 
   static Future<CardPack> createCardPack({
     required String name,
@@ -34,22 +32,26 @@ class CardPackApiService {
 
   static Future<List<CardPack>> listCardPacks({
     String? creatorId,
+    String? search,
     String? status,
     int page = 1,
     int limit = 20,
   }) async {
-    final queryParams = <String, dynamic>{
-      'page': page,
-      'limit': limit,
-    };
+    final queryParams = <String, dynamic>{'page': page, 'limit': limit};
     if (status != null) queryParams['status'] = status;
+    if (search != null && search.trim().isNotEmpty) {
+      queryParams['search'] = search.trim();
+    }
 
-    final endpoint =
-        creatorId != null ? '/creators/$creatorId/card-packs' : '/card-packs';
+    final endpoint = creatorId != null
+        ? '/creators/$creatorId/card-packs'
+        : '/card-packs';
     final resp = await _dio.get(endpoint, queryParameters: queryParams);
     final responseData = resp.data as Map<String, dynamic>;
     final data = responseData['data'] as Map<String, dynamic>;
-    final packs = data['packs'] as List<dynamic>? ??
+    final packs =
+        data['items'] as List<dynamic>? ??
+        data['packs'] as List<dynamic>? ??
         data['cardPacks'] as List<dynamic>? ??
         const [];
     return packs

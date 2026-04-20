@@ -24,6 +24,7 @@ class CreatorCapabilities(BaseModel):
 
 class MeData(BaseModel):
     id: UUID
+    uid: str
     username: str
     email: str
     user_type: str = Field(alias="type")

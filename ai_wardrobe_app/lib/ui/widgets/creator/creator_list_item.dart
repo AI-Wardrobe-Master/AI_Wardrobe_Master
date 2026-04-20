@@ -36,9 +36,8 @@ class CreatorListItem extends StatelessWidget {
                 backgroundColor: textS.withValues(alpha: 0.1),
                 backgroundImage: creator.avatarUrl != null
                     ? CachedNetworkImageProvider(
-                        creator.avatarUrl!.startsWith('http')
-                            ? creator.avatarUrl!
-                            : '$fileBaseUrl${creator.avatarUrl}',
+                        resolveFileUrl(creator.avatarUrl!),
+                        headers: ApiSession.authHeaders,
                       )
                     : null,
                 child: creator.avatarUrl == null

@@ -2,10 +2,14 @@ from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException
+from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.crud import wardrobe as crud_wardrobe
 from app.models.creator import CardPack, CardPackItem, CreatorItem
+from app.models.user import User
+from app.models.wardrobe import Wardrobe
 
 
 def get_owned_card_pack(
@@ -36,6 +40,41 @@ def get_public_card_pack(
     if share_id is not None:
         query = query.filter(CardPack.share_id == share_id)
     return query.first()
+
+
+def list_public_card_packs(
+    db: Session,
+    *,
+    search: str | None = None,
+    page: int = 1,
+    limit: int = 20,
+):
+    query = (
+        db.query(CardPack)
+        .join(User, User.id == CardPack.creator_id)
+        .outerjoin(Wardrobe, Wardrobe.id == CardPack.wardrobe_id)
+        .filter(CardPack.status == "PUBLISHED")
+    )
+    normalized_search = (search or "").strip()
+    if normalized_search:
+        pattern = f"%{normalized_search}%"
+        query = query.filter(
+            or_(
+                CardPack.name.ilike(pattern),
+                CardPack.description.ilike(pattern),
+                User.uid.ilike(pattern),
+                User.username.ilike(pattern),
+                Wardrobe.wid.ilike(pattern),
+            )
+        )
+    total = query.count()
+    packs = (
+        query.order_by(CardPack.published_at.desc(), CardPack.created_at.desc())
+        .offset((page - 1) * limit)
+        .limit(limit)
+        .all()
+    )
+    return packs, total
 
 
 def list_creator_card_packs(
@@ -162,6 +201,94 @@ def _lock_pack_creator_items(db: Session, *, pack: CardPack) -> dict[UUID, Creat
     return {item.id: item for item in locked_items}
 
 
+def _dedupe_strings(values: list[str | None]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for value in values:
+        if value is None:
+            continue
+        normalized = value.strip()
+        if not normalized:
+            continue
+        key = normalized.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        ordered.append(normalized)
+    return ordered
+
+
+def _build_pack_share_tags(pack: CardPack, creator: User | None) -> list[str]:
+    return _dedupe_strings(
+        [
+            pack.name,
+            creator.uid if creator else None,
+            creator.username if creator else None,
+            pack.share_id,
+            f"pack:{pack.id}",
+        ]
+    )
+
+
+def _ensure_pack_share_wardrobe(db: Session, *, pack: CardPack) -> Wardrobe:
+    creator = db.get(User, pack.creator_id)
+    main_wardrobe = crud_wardrobe.get_main_wardrobe(db, pack.creator_id)
+    if main_wardrobe is None:
+        main_wardrobe = Wardrobe(
+            id=uuid4(),
+            wid=crud_wardrobe._generate_wid(db),
+            user_id=pack.creator_id,
+            name="My Wardrobe",
+            kind="MAIN",
+            type="REGULAR",
+            source="MANUAL",
+            description="Default main wardrobe",
+            auto_tags=[],
+            manual_tags=[],
+            is_public=False,
+        )
+        db.add(main_wardrobe)
+        db.flush()
+    wardrobe = db.get(Wardrobe, pack.wardrobe_id) if pack.wardrobe_id else None
+    if wardrobe is None:
+        wardrobe = Wardrobe(
+            id=uuid4(),
+            wid=crud_wardrobe._generate_wid(db),
+            user_id=pack.creator_id,
+            parent_wardrobe_id=main_wardrobe.id,
+            name=pack.name,
+            kind="SUB",
+            type="VIRTUAL",
+            source="CARD_PACK",
+            description=pack.description,
+            cover_image_url=(
+                f"/files/card-packs/{pack.id}/cover"
+                if pack.cover_image_blob_hash
+                else None
+            ),
+            auto_tags=_build_pack_share_tags(pack, creator),
+            manual_tags=[],
+            is_public=True,
+        )
+        db.add(wardrobe)
+        db.flush()
+        pack.wardrobe_id = wardrobe.id
+    else:
+        wardrobe.user_id = pack.creator_id
+        wardrobe.parent_wardrobe_id = wardrobe.parent_wardrobe_id or main_wardrobe.id
+        wardrobe.name = pack.name
+        wardrobe.kind = "SUB"
+        wardrobe.type = "VIRTUAL"
+        wardrobe.source = "CARD_PACK"
+        wardrobe.description = pack.description
+        wardrobe.cover_image_url = (
+            f"/files/card-packs/{pack.id}/cover" if pack.cover_image_blob_hash else None
+        )
+        wardrobe.auto_tags = _build_pack_share_tags(pack, creator)
+        wardrobe.is_public = True
+    return wardrobe
+
+
 def create_card_pack(
     db: Session,
     *,
@@ -231,6 +358,8 @@ def update_card_pack(
             item_ids=item_ids,
         )
         _sync_pack_items(db, pack=pack, creator_items=items)
+    if pack.status == "PUBLISHED" or pack.wardrobe_id is not None:
+        _ensure_pack_share_wardrobe(db, pack=pack)
     pack.updated_at = now
     _commit_or_raise_conflict(
         db,
@@ -262,6 +391,7 @@ def publish_card_pack(db: Session, pack: CardPack):
         pack.share_id = uuid4().hex
     pack.status = "PUBLISHED"
     pack.published_at = now
+    _ensure_pack_share_wardrobe(db, pack=pack)
     pack.updated_at = now
     _commit_or_raise_conflict(
         db,
@@ -277,6 +407,10 @@ def archive_card_pack(db: Session, pack: CardPack):
     now = datetime.now(timezone.utc)
     pack.status = "ARCHIVED"
     pack.archived_at = now
+    if pack.wardrobe_id:
+        wardrobe = db.get(Wardrobe, pack.wardrobe_id)
+        if wardrobe is not None:
+            wardrobe.is_public = False
     pack.updated_at = now
     _commit_or_raise_conflict(
         db,
@@ -287,6 +421,10 @@ def archive_card_pack(db: Session, pack: CardPack):
 
 
 def delete_card_pack(db: Session, pack: CardPack) -> None:
+    if pack.wardrobe_id:
+        linked_wardrobe = db.get(Wardrobe, pack.wardrobe_id)
+        if linked_wardrobe is not None:
+            db.delete(linked_wardrobe)
     db.delete(pack)
     _commit_or_raise_conflict(
         db,

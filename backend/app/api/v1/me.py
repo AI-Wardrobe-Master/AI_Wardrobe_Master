@@ -28,6 +28,7 @@ def get_me(
     return MeResponse(
         data=MeData(
             id=user.id,
+            uid=user.uid,
             username=user.username,
             email=user.email,
             type=user.user_type,

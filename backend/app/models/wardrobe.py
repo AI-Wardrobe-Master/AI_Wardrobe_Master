@@ -6,6 +6,8 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import (
+    ARRAY,
+    Boolean,
     CheckConstraint,
     Column,
     DateTime,
@@ -25,15 +27,34 @@ class Wardrobe(Base):
     __tablename__ = "wardrobes"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    wid = Column(String(32), unique=True, nullable=False, index=True)
     user_id = Column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
+    parent_wardrobe_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("wardrobes.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    outfit_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("outfits.id", ondelete="SET NULL"),
+        nullable=True,
+        unique=True,
+    )
     name = Column(String(100), nullable=False)
+    kind = Column(String(20), nullable=False, default="SUB")
     type = Column(String(20), nullable=False, default="REGULAR")
+    source = Column(String(30), nullable=False, default="MANUAL")
     description = Column(Text, nullable=True)
+    cover_image_url = Column(Text, nullable=True)
+    auto_tags = Column(ARRAY(String), nullable=False, default=list)
+    manual_tags = Column(ARRAY(String), nullable=False, default=list)
+    is_public = Column(Boolean, nullable=False, default=False)
     created_at = Column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -44,8 +65,20 @@ class Wardrobe(Base):
     )
 
     __table_args__ = (
+        CheckConstraint("kind IN ('MAIN', 'SUB')", name="ck_wardrobe_kind"),
         CheckConstraint("type IN ('REGULAR', 'VIRTUAL')", name="ck_wardrobe_type"),
+        CheckConstraint(
+            "source IN ('MANUAL', 'OUTFIT_EXPORT', 'IMPORTED', 'CARD_PACK')",
+            name="ck_wardrobe_source",
+        ),
         Index("idx_wardrobes_user", "user_id"),
+        Index("idx_wardrobes_parent", "parent_wardrobe_id"),
+        Index(
+            "uq_wardrobes_user_main",
+            "user_id",
+            unique=True,
+            postgresql_where=(kind == "MAIN"),
+        ),
     )
 
     items = relationship(
@@ -54,10 +87,17 @@ class Wardrobe(Base):
         cascade="all, delete-orphan",
         order_by="WardrobeItem.display_order, WardrobeItem.added_at",
     )
+    owner = relationship("User", backref="wardrobes")
+    parent_wardrobe = relationship(
+        "Wardrobe",
+        remote_side=[id],
+        backref="child_wardrobes",
+    )
 
 
 class WardrobeItem(Base):
     """Junction: which clothing item is in which wardrobe. No duplication of clothing data."""
+
     __tablename__ = "wardrobe_items"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

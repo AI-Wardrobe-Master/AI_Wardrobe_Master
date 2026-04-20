@@ -39,6 +39,12 @@ class ClothingItem(Base):
     name = Column(String(200))
     description = Column(Text)
     custom_tags = Column(ARRAY(String), default=[])
+    category = Column(String(100), nullable=True)
+    material = Column(String(100), nullable=True)
+    style = Column(String(100), nullable=True)
+    preview_svg_state = Column(String(20), nullable=False, default="PLACEHOLDER")
+    preview_svg_available = Column(Boolean, nullable=False, default=False)
+    sync_status = Column(String(20), nullable=False, default="SYNCED")
 
     imported_from_card_pack_id = Column(
         UUID(as_uuid=True),
@@ -67,6 +73,14 @@ class ClothingItem(Base):
         Index("idx_clothing_final_tags", "final_tags", postgresql_using="gin"),
         Index("idx_clothing_custom_tags", "custom_tags", postgresql_using="gin"),
         Index("idx_clothing_items_imported_from_pack", "imported_from_card_pack_id"),
+        CheckConstraint(
+            "preview_svg_state IN ('PLACEHOLDER','GENERATED','FAILED')",
+            name="ck_clothing_preview_svg_state",
+        ),
+        CheckConstraint(
+            "sync_status IN ('SYNCED','LOCAL_ONLY','PENDING_SYNC')",
+            name="ck_clothing_sync_status",
+        ),
     )
 
     images = relationship(

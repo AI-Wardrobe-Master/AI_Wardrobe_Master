@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_strings_provider.dart';
+import '../../services/api_config.dart';
 import '../../theme/app_theme.dart';
+import '../root_shell.dart';
 import 'login_screen.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -36,12 +38,15 @@ class _SplashScreenState extends State<SplashScreen>
     );
     _controller.forward();
 
-    // Navigate to login after a short delay.
+    // Restore the previous session when a saved token is available.
     Timer(const Duration(milliseconds: 1500), () {
       if (!mounted) return;
+      final destination = ApiSession.hasToken
+          ? const RootShell()
+          : const LoginScreen();
       Navigator.of(context).pushReplacement(
         MaterialPageRoute<void>(
-          builder: (_) => const LoginScreen(),
+          builder: (_) => destination,
         ),
       );
     });
