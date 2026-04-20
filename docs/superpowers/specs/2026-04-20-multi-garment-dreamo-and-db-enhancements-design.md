@@ -1,40 +1,36 @@
-# Multi-Garment DreamO + Database Hardening + View Counts — Design
+# Multi-Garment DreamO + CreatorItem/ClothingItem Merge + DB Hardening + View Counts — Design
 
 **Date:** 2026-04-20
 **Owner:** gch (backend)
-**Status:** Draft for review
+**Status:** Draft for review (v2: added CreatorItem↔ClothingItem merge + 3-tier delete lifecycle)
 
 ---
 
 ## 1. Motivation
 
-Three related backend improvements:
+Four related backend improvements:
 
 1. **Multi-garment styled generation.** Today `POST /styled-generations` only accepts one clothing item. DreamO's native `pre_condition` already supports a list of reference images with mixed tasks (`id`, `ip`, `style`), but our server wrapper, HTTP client, pipeline, DB model, and prompt builder all hard-code a single garment. We need face + gender + 1–4 garments (one per slot: `HAT`/`TOP`/`PANTS`/`SHOES`) + scene prompt → composed prompt → single generated portrait.
-2. **Database correctness fixes.** Four concrete defects in the existing CAS + styled-generation code (blob leak on retry, missing advisory lock in `release()`, no lease reaper for stuck styled generations, orphan physical files on rollback).
-3. **Platform view counts & popular card packs.** Creators' published items and card packs need a view counter so the app can surface the top 10 most-viewed packs on the discovery screen instead of listing everything.
+2. **CreatorItem → ClothingItem merge.** `documents/DATA_MODEL.md` specifies a single canonical `ClothingItem` entity; the implementation drifted to two parallel tables (`clothing_items` for consumers, `creator_items` for publishers) with duplicated columns, duplicated pipelines (`clothing_pipeline` vs `creator_pipeline`), and duplicated image/model_3d tables. This refactor consolidates back to one entity so that the "publish my own wardrobe item" flow is a single attribute change instead of re-uploading the same image. It also unblocks requirement 4 (3-tier delete lifecycle on ClothingItem, as user requested).
+3. **Database correctness fixes.** Four concrete defects in the existing CAS + styled-generation code (blob leak on retry, missing advisory lock in `release()`, no lease reaper for stuck styled generations, orphan physical files on rollback). Plus 18 additional defects surfaced by the backend audit (see §13).
+4. **Platform view counts & popular card packs + 3-tier ClothingItem delete.** Published items and card packs need a view counter so the app can surface the top 10 most-viewed packs on the discovery screen. ClothingItem deletion also needs to respect the publish/download graph: a published item that has downloaders must tombstone instead of hard-deleting, so downloaders keep working.
 
 ---
 
 ## 2. Scope
 
 In scope:
-- `DreamO/server.py` — accept multiple garment images.
-- `backend/app/services/dreamo_client_service.py` — send list of garment bytes.
-- `backend/app/services/prompt_builder_service.py` — build gender-aware, multi-garment prompt.
-- `backend/app/services/styled_generation_pipeline.py` — fetch multiple garments, populate new lease fields.
-- `backend/app/models/styled_generation.py` + new association model — add `gender`, lease fields, junction table.
-- `backend/app/api/v1/styled_generation.py` + schemas — new request shape.
-- `backend/app/services/blob_service.py` — advisory lock in `release()`.
-- `backend/app/tasks.py` — reap-stuck task, orphan file GC, increment view count helper.
-- `backend/app/models/creator.py` — `view_count` column on `creator_items` and `card_packs`.
-- `backend/app/api/v1/creator_items.py`, `backend/app/api/v1/card_packs.py` — increment on detail GET, new `/card-packs/popular` endpoint.
-- New Alembic migration `20260420_000015_multi_garment_gender_view_counts.py`.
+- **DreamO flow:** `DreamO/server.py`, `backend/app/services/dreamo_client_service.py`, `backend/app/services/prompt_builder_service.py`, `backend/app/services/styled_generation_pipeline.py`, `backend/app/models/styled_generation.py` + new association model, `backend/app/api/v1/styled_generation.py` + schemas.
+- **Merge:** `backend/app/models/clothing_item.py` (new columns from CreatorItem), drop `backend/app/models/creator.py` Creator{Item,ItemImage,Model3D,ProcessingTask} classes (keep `CreatorProfile` + `CardPack` + `CardPackItem`); `backend/app/api/v1/creator_items.py` folded into `backend/app/api/v1/clothing.py` (or kept as a thin alias for backward compat, see §4.6); `backend/app/crud/creator_item.py` folded into `backend/app/crud/clothing.py`; `backend/app/services/creator_pipeline.py` folded into `backend/app/services/clothing_pipeline.py`; `backend/app/api/v1/imports.py` rewritten to snapshot from ClothingItem; `backend/app/api/v1/card_packs.py` updated to reference `clothing_items`; schemas updated.
+- **DB hardening:** `backend/app/services/blob_service.py` advisory lock in `release()`; `backend/app/tasks.py` reap-stuck + orphan file GC; `backend/app/core/celery_app.py` beat schedule entries; fixes from §14.
+- **View counts & delete lifecycle:** `view_count` on `clothing_items` (merged) and `card_packs`; detail-GET increment helpers; `GET /card-packs/popular`; `deleted_at` tombstone column; 3-tier `DELETE /clothing-items/{id}` logic (§4.7); cascade cleanup in consumer un-import.
+- **Alembic:** single big migration `20260420_000015_consolidate_and_enhance.py` covering: junction table, gender, lease fields on styled_generations, view_count, deleted_at, merge (data + schema), drop creator_* tables. Non-trivial; see §4.4.
 
 Out of scope:
-- Flutter changes (the frontend owner adapts separately; we will keep the old `clothing_item_id` field accepted for one release as a transitional shim — see §5.1).
+- Flutter changes (the frontend owner adapts separately; we will keep the old `/creator-items/*` endpoints as thin shims for one release if needed; we will keep the old `clothing_item_id` single-form field accepted for one release, see §5.1).
 - Personalized recommendations beyond a raw top-N-by-views list.
-- View counts on private `clothing_items`.
+- View counts on unpublished `clothing_items`.
+- Refactoring `outfit_preview`, `creator_profile`, search/classification services — those keep their current shape.
 
 ---
 
@@ -96,37 +92,152 @@ Rationale:
 
 `source_clothing_item_id` is retained (as user requested) but is treated as a deprecated, redundant pointer to the `TOP` row in the junction table. Reads ignore it; writes only update it when the new pipeline inserts the first TOP-slot row (for dashboard queries that may still use it).
 
-### 4.3 `creator_items` and `card_packs` — view count
+### 4.3 View count — on merged `clothing_items` and `card_packs`
+
+After the merge (§4.6), `clothing_items` carries the publish flag (`catalog_visibility`). View count is added to the merged table:
 
 ```sql
-ALTER TABLE creator_items ADD COLUMN view_count INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE card_packs    ADD COLUMN view_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE clothing_items ADD COLUMN view_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE card_packs     ADD COLUMN view_count INTEGER NOT NULL DEFAULT 0;
 
-CREATE INDEX idx_creator_items_view_count  ON creator_items (view_count DESC);
+CREATE INDEX idx_clothing_items_popular
+    ON clothing_items (view_count DESC, created_at DESC)
+    WHERE catalog_visibility IN ('PACK_ONLY','PUBLIC')
+      AND deleted_at IS NULL;
+
 CREATE INDEX idx_card_packs_popular
     ON card_packs (view_count DESC, created_at DESC)
     WHERE status = 'PUBLISHED';
 ```
 
-`clothing_items` gets no change — private user wardrobe items are not counted, per requirement.
+The partial index on `clothing_items` means only "publishable" items participate in popular queries; private wardrobe items are excluded from the ordering, per requirement.
 
-### 4.4 Alembic migration: `20260420_000015_multi_garment_gender_view_counts.py`
+### 4.4 Alembic migration: `20260420_000015_consolidate_and_enhance.py`
 
 Revises: `20260420_000014_link_card_packs_to_public_wardrobes`.
 
-Upgrade steps, in order:
+This is one large migration because the merge (§4.6) requires touching many tables at once; splitting it into 3–4 migrations would leave the schema in inconsistent intermediate states that production databases should not pass through.
 
-1. Create `styled_generation_clothing_items` (schema above).
-2. Backfill: for every existing `styled_generations` row with a non-NULL `source_clothing_item_id`, insert a junction row `(generation_id=sg.id, clothing_item_id=sg.source_clothing_item_id, slot='TOP', position=0)`.
-3. Add `gender` NULLABLE with no default, run `UPDATE styled_generations SET gender='FEMALE' WHERE gender IS NULL`, then `ALTER COLUMN ... SET NOT NULL` and add the CHECK constraint. (`'FEMALE'` is arbitrary; we have no better signal for legacy rows. In-flight PENDING/PROCESSING rows keep running — see §4.5.)
-4. Add `started_at`, `lease_expires_at`, `worker_id` (all nullable).
-5. Add `view_count` NOT NULL DEFAULT 0 to `creator_items` and `card_packs`, plus the two indexes.
+Upgrade steps, in order (each step wraps in its own transaction via `op.get_bind()`):
 
-Downgrade reverses: drop view_count indexes + columns, drop lease columns, drop gender constraint+column, drop junction table.
+**A. Add columns to `clothing_items` that currently live on `creator_items`:**
+1. `catalog_visibility VARCHAR(20) NOT NULL DEFAULT 'PRIVATE'` + CHECK constraint `IN ('PRIVATE','PACK_ONLY','PUBLIC')`.
+2. `deleted_at TIMESTAMPTZ NULL`.
+3. `view_count INTEGER NOT NULL DEFAULT 0`.
+4. Rename `imported_from_creator_item_id` → `imported_from_clothing_item_id` (keeps existing data; it currently points into `creator_items.id`, which we will rewrite in step D).
+
+**B. Add columns to `card_packs`:**
+5. `view_count INTEGER NOT NULL DEFAULT 0`.
+
+**C. Add columns to `styled_generations`:**
+6. `gender VARCHAR(10)` NULLABLE (for backfill first).
+7. `started_at`, `lease_expires_at`, `worker_id` (all nullable).
+
+**D. Merge `creator_items` → `clothing_items` (data migration):**
+8. For each `creator_items` row `ci`:
+   - INSERT into `clothing_items` a new row with `id=ci.id` (reuse UUID so FK from `card_pack_items` doesn't need rewriting), `user_id=ci.creator_id`, `source='OWNED'`, `catalog_visibility=ci.catalog_visibility`, name/description/tags/etc. copied.
+   - For each `creator_item_images` row → INSERT into `images` with same `blob_hash`, same `image_type`, same `angle`, `clothing_item_id=ci.id`.
+   - For each `creator_models_3d` row → INSERT into `models_3d` with same fields.
+9. `card_pack_items`: rename column `creator_item_id` → `clothing_item_id`, retarget FK from `creator_items.id` → `clothing_items.id`. (IDs are preserved so data need not change.)
+10. `clothing_items.imported_from_clothing_item_id` already points into the correct ID space (we reused IDs in step 8); FK retargets from `creator_items.id` → `clothing_items.id`.
+11. DROP `creator_processing_tasks`, `creator_models_3d`, `creator_item_images`, `creator_items` (in that order to respect FKs).
+
+**E. Styled generation junction + gender backfill:**
+12. CREATE `styled_generation_clothing_items` (schema in §4.1).
+13. For every `styled_generations` with non-NULL `source_clothing_item_id`, INSERT `(generation_id=sg.id, clothing_item_id=sg.source_clothing_item_id, slot='TOP', position=0)`.
+14. `UPDATE styled_generations SET gender='FEMALE' WHERE gender IS NULL` (arbitrary default; legacy prompts didn't use gender), then `ALTER COLUMN gender SET NOT NULL` + `CHECK IN ('MALE','FEMALE')`.
+
+**F. Indexes:**
+15. `idx_clothing_items_popular` (partial, see §4.3).
+16. `idx_card_packs_popular` (partial).
+17. `idx_clothing_items_deleted_at` on `(deleted_at)` `WHERE deleted_at IS NULL` — speeds up the ubiquitous `deleted_at IS NULL` filter added to every query.
+18. `idx_clothing_items_catalog_visibility` on `(user_id, catalog_visibility)` for creator-catalog queries.
+
+**G. Concurrency-fix columns from audit (see §14):**
+19. CHECK constraint `card_packs.import_count >= 0` (§14 item 7).
+
+Downgrade reverses in strict opposite order. Tombstones (rows with `deleted_at IS NOT NULL`) are restored as active `creator_items` during downgrade — acceptable because downgrade is only used in local dev.
 
 ### 4.5 In-flight task compatibility
 
-Before running the pipeline change, existing `PENDING`/`PROCESSING` rows would have no junction rows — but the migration's backfill step inserts one per row, so the new pipeline's query `SELECT ... FROM styled_generation_clothing_items WHERE generation_id=?` returns exactly one `TOP`-slot entry. Legacy tasks therefore continue to produce a single-garment result using the new code path. Gender defaults to `'FEMALE'` — acceptable because (a) the old prompt template didn't use gender anyway, so fidelity is not regressing, and (b) the user can delete & retry if unhappy.
+Before running the pipeline change, existing `PENDING`/`PROCESSING` `styled_generations` rows would have no junction rows — step 13 of the migration backfills one per row, so the new pipeline's query returns exactly one `TOP`-slot entry. Legacy tasks therefore continue to produce a single-garment result using the new code path. Gender defaults to `'FEMALE'` — acceptable because (a) the old prompt template didn't use gender anyway, (b) the user can delete & retry if unhappy.
+
+In-flight `creator_processing_tasks` at migration time will be lost (tables dropped). Because these are asynchronous upload-processing jobs with retry semantics, the practical impact is: a creator with a half-processed upload will see a FAILED status after migration. We accept this because (a) this is dev/single-tenant, and (b) the frontend already has retry logic for FAILED tasks. If the DB has any active creator processing tasks at migration time, the ops runbook says: drain those first (or accept they'll fail).
+
+### 4.6 CreatorItem → ClothingItem merge — semantics
+
+After merge, there is one "piece of clothing" entity: `clothing_items`. A ClothingItem now carries:
+
+- `user_id` — the owner. For items that came from the old `creator_items`, `user_id = creator_id`.
+- `source` — `'OWNED'` (user uploaded themselves, or they were a creator who used to upload via `/creator-items`) or `'IMPORTED'` (downloaded from a CardPack).
+- `catalog_visibility` — `'PRIVATE'` (never exposed) / `'PACK_ONLY'` (only visible inside CardPacks the user publishes) / `'PUBLIC'` (also listable individually). Default for new uploads stays `'PRIVATE'` to preserve today's "your wardrobe is yours" default; switching to `'PACK_ONLY'` or `'PUBLIC'` is the "publish" action.
+- `imported_from_card_pack_id` + `imported_from_clothing_item_id` — provenance for IMPORTED items.
+- `deleted_at` — tombstone marker (see §4.7).
+
+**`POST /clothing-items`**: the current upload endpoint stays. It always creates a `source='OWNED'`, `catalog_visibility='PRIVATE'` ClothingItem.
+
+**Publishing**: `PATCH /clothing-items/{id}` already supports editing metadata; we extend its body with a `catalogVisibility` field. Setting it to `'PACK_ONLY'` or `'PUBLIC'` is "publish"; setting back to `'PRIVATE'` is "unpublish" (only allowed if not currently in any PUBLISHED pack — same guard as current creator_items has).
+
+**CardPack composition**: `card_pack_items.clothing_item_id` replaces `creator_item_id`. `POST /card-packs` and `PATCH /card-packs/{id}` bodies take `itemIds: list[UUID]` pointing to ClothingItems the creator owns (`user_id = current_user.id` and `catalog_visibility != 'PRIVATE'`).
+
+**Imports** (`POST /imports/card-pack`): rewritten. For each `CardPackItem` in the pack, snapshot the referenced `ClothingItem` into a new row with `source='IMPORTED'`, blobs shared via refcount (unchanged mechanism). `imported_from_clothing_item_id` points to the canonical (publisher's) row.
+
+**Old `/creator-items/*` endpoints**: keep as thin shims (one-release deprecation) that translate:
+- `POST /creator-items` → delegates to clothing upload with `catalog_visibility='PACK_ONLY'` default.
+- `GET /creator-items/{id}` → 302 redirect to `GET /clothing-items/{id}` (or return the same body inline, simpler).
+- `PATCH /creator-items/{id}` → `PATCH /clothing-items/{id}`.
+- `DELETE /creator-items/{id}` → `DELETE /clothing-items/{id}` (picks up new 3-tier logic).
+
+**Old pipeline**: `creator_pipeline.py` merged into `clothing_pipeline.py`. The processing stages are already nearly identical; the minor differences (where creator pipeline skipped some consumer-specific hooks) are reconciled by adding conditional branches based on `source`/`catalog_visibility`.
+
+**Queries to update**: every `SELECT ... FROM clothing_items` gains `AND deleted_at IS NULL`. We do this via a SQLAlchemy `@declared_attr` base-class filter OR by updating each CRUD call site. Recommended: explicit filter at each call site (easier to audit and to selectively break when we need to see tombstones, e.g. admin / cleanup tools). Count of touch points is ~12 (all in `backend/app/crud/clothing.py`, `creator_item.py` soon-to-be-folded, and direct queries in API handlers).
+
+### 4.7 ClothingItem 3-tier delete lifecycle
+
+`DELETE /clothing-items/{id}` becomes:
+
+```
+# Transaction: SELECT FOR UPDATE on the item, then:
+import_count = count(clothing_items WHERE imported_from_clothing_item_id = self.id)
+in_published_pack = EXISTS(
+    card_pack_items JOIN card_packs
+    WHERE card_pack_items.clothing_item_id = self.id
+      AND card_packs.status = 'PUBLISHED'
+)
+
+if not in_published_pack:
+    # Case 1: never published (or only in DRAFT/ARCHIVED packs)
+    HARD_DELETE()
+elif import_count == 0:
+    # Case 2: published but no one downloaded
+    HARD_DELETE()
+else:
+    # Case 3: published and has downloads
+    TOMBSTONE()
+```
+
+Where:
+
+- **HARD_DELETE:**
+  1. Collect all `images.blob_hash` + `models_3d.blob_hash` for this item.
+  2. Delete `wardrobe_items` rows linking it.
+  3. Delete `card_pack_items` rows referencing it (from any DRAFT/ARCHIVED packs — none PUBLISHED by precondition).
+  4. `db.delete(item)` — cascades drop `images`, `models_3d`, `processing_tasks` via `cascade="all, delete-orphan"`.
+  5. Release each blob (now with lock per §14 item 1).
+- **TOMBSTONE:**
+  1. `item.deleted_at = now()`.
+  2. Delete `wardrobe_items` rows linking it (creator no longer "owns" it in any wardrobe view).
+  3. Delete `card_pack_items` rows referencing it (remove from all packs — future importers won't see it). Note: existing PUBLISHED packs become shorter; if a pack ends up empty that's the creator's problem.
+  4. Delete `images` and `models_3d` belonging to this item; release their blobs. Consumer-side IMPORTED ClothingItems have *their own* `images` rows holding independent blob refs, so blobs don't get physically deleted as long as ≥1 importer still holds them.
+  5. Keep the ClothingItem row itself (with `deleted_at` set, `images=[]`, `models_3d=None`). It serves only as an anchor for `imported_from_clothing_item_id` backlinks.
+
+**Query behavior on tombstones:** all `GET` and `PATCH` paths for ClothingItem filter `deleted_at IS NULL`; tombstones are invisible to the creator, cannot be published or edited. Only the implicit `imported_from_clothing_item_id` JOIN (when rendering an IMPORTED ClothingItem's detail with provenance info) can touch a tombstone — and we display it as "creator removed this item" rather than returning its fields.
+
+**Tombstone cleanup** (deferred GC): when consumer runs `DELETE /clothing-items/{id}` on an IMPORTED item, or `DELETE /imports/card-pack/{pack_id}`, we additionally check: for each `imported_from_clothing_item_id` that was released, if the target row has `deleted_at IS NOT NULL` AND there are no other ClothingItems pointing to it → hard-delete it now. This keeps tombstones from accumulating forever.
+
+**Concurrency:** the whole 3-tier logic runs inside a transaction that holds `SELECT ... FOR UPDATE` on the ClothingItem. The `import_count` query and `in_published_pack` EXISTS must also be inside that transaction. Concurrent importer: would need to SELECT the pack, then INSERT `clothing_items` IMPORTED row. The importer should also take a pack-level advisory lock to serialize with delete — see §14 for the matching fix.
+
+**Creator account deletion** (`users.id` CASCADE'd): a cascade delete of the creator's ClothingItem rows would break IMPORTED items' backlinks (set to NULL via `ondelete=SET NULL` in §4.6's schema). Consumer wardrobe still works, just loses provenance. Acceptable; matches current behavior for creator_items.
 
 ---
 
@@ -191,9 +302,11 @@ Apply to these endpoints:
 
 | Endpoint                                    | Target table    | Increment condition |
 |---------------------------------------------|-----------------|---------------------|
-| `GET /api/v1/creator-items/{item_id}`       | `creator_items` | `catalog_visibility != 'PRIVATE'` AND (not authenticated OR `viewer_user_id != creator_id`) |
+| `GET /api/v1/clothing-items/{item_id}`      | `clothing_items`| `catalog_visibility != 'PRIVATE'` AND `deleted_at IS NULL` AND (not authenticated OR `viewer_user_id != user_id`) |
 | `GET /api/v1/card-packs/{pack_id}`          | `card_packs`    | `status = 'PUBLISHED'` AND (not authenticated OR `viewer_user_id != creator_id`) |
 | `GET /api/v1/card-packs/share/{share_id}`   | `card_packs`    | `status = 'PUBLISHED'` AND (not authenticated OR `viewer_user_id != creator_id`) |
+
+(The legacy `GET /api/v1/creator-items/{item_id}` shim endpoint forwards to the clothing-items one and inherits its increment behavior.)
 
 Increment statement (atomic — avoids the read-modify-write race that would otherwise happen under concurrency):
 
@@ -325,7 +438,9 @@ async def call_dreamo_generate(
 
 ---
 
-## 9. Database Hardening Fixes
+## 9. Database Hardening Fixes (Core Four)
+
+See §13 for the additional defects found during the audit pass; they are equally in-scope for this change.
 
 ### 9.1 Retry blob-ref leak (`styled_generation.py::retry_styled_generation`)
 
@@ -436,7 +551,40 @@ Rollback: migration has a downgrade; revert backend + DreamO images; old code ig
 
 ---
 
-## 13. Known Limitations / Follow-ups
+## 13. Additional Defects Surfaced by Audit
+
+Audit pass over `backend/app/` turned up 18 new issues (beyond the 4 already called out in §9). All are folded into this spec's implementation scope. Ranked by severity:
+
+### High
+
+1. **`card_packs.import_count` unprotected RMW** — `backend/app/api/v1/imports.py:124` and `:157` read-then-write `pack.import_count` without `SELECT ... FOR UPDATE`. Concurrent imports/unimports can double-count or miss decrements. **Fix**: fetch `pack` with `.with_for_update()` in both handlers before touching the counter. Also add CHECK `import_count >= 0` (migration step 19).
+2. **`DELETE /card-packs/{pack_id}` TOCTOU on import count** — `backend/app/api/v1/card_packs.py:191` counts imports before issuing the delete, but the row isn't locked for the duration. A concurrent `POST /imports/card-pack` between the count and the delete bypasses the guard. **Fix**: take `FOR UPDATE` on the pack row and re-verify count under the lock; import endpoint also takes `FOR UPDATE` on the target pack before inserting the `CardPackImport` row.
+3. **`ProcessingTask.attempt_no` / retry race** — `backend/app/api/v1/clothing.py` retry path reads `attempt_no`, increments, then writes without FOR UPDATE; two concurrent retries on the same failed task can collide. **Fix**: lock the task row (or re-use `uq_processing_tasks_active_item` to reject the 2nd retry with 409). Also gate retry with `status != 'PENDING'` check inside the lock.
+4. **`SECRET_KEY` default ships as literal**: `backend/app/core/config.py:49` sets `SECRET_KEY: str = "CHANGE-ME-in-production"`. A misconfigured deploy leaves this value in use and all JWTs forgeable. **Fix**: raise at `Settings.__init__` if the value equals the default string; add a clear startup log otherwise.
+
+### Medium
+
+5. **`import_count` rollback leak in import loop** — `backend/app/api/v1/imports.py:104` loops `blob_service.addref()` per image. If the 5th addref fails, the prior 4 are still in the transaction; commit fails → rollback → both the CardPackImport row AND the 4 addref increments roll back. Actually the current code is *correct* on rollback, but there's a subtle bug: `addref` requires the blob to exist; if a creator hard-deleted their side's images during an in-flight import, `addref` throws `BlobNotFoundError` and the whole import dies. **Fix**: upgrade the error to a user-friendly 409 "Pack contents changed during import, try again", not a 500.
+6. **`_update_progress` commits per microstep** — `backend/app/services/clothing_pipeline.py` and `styled_generation_pipeline.py` commit on every progress tick. This is fine for visibility but (a) multiplies transaction overhead, (b) each commit releases row locks we may want to hold. **Fix**: batch progress updates to at most N per second, OR keep per-tick commits but explicitly re-fetch with FOR UPDATE where locking matters. Accept the small perf cost for progress visibility; don't actually batch — just document the trade-off and ensure no logic depends on cross-tick locking.
+7. **`outfit_preview` / `creator_pipeline` task-dispatch-failure orphan** — when `celery.apply_async` fails after the DB row is committed, the row is stuck at `PENDING` forever. Same pattern as `styled_generations` but on additional services. **Fix**: the stuck-task reaper task (§9.3) is extended to also cover `outfit_preview_tasks` and (post-merge) `processing_tasks`. Creator pipeline goes away with the merge.
+8. **N+1 in `GET /wardrobes`** — `backend/app/api/v1/wardrobe.py:108-112` calls `crud_wardrobe.get_item_count(w.id)` once per wardrobe. On a user with 50 wardrobes, 51 queries. **Fix**: replace with one `SELECT wardrobe_id, COUNT(*) FROM wardrobe_items WHERE wardrobe_id IN (...) GROUP BY wardrobe_id`, zip results.
+9. **N+1 in `GET /wardrobes/public`** — same pattern at `backend/app/api/v1/wardrobe.py:128-131`.
+10. **`GET /files/card-packs/{id}/cover` potentially unauthenticated** — if a creator has a DRAFT pack with a cover already uploaded, the cover blob is servable by any unauthenticated user that knows the pack ID. **Fix**: in `backend/app/api/v1/files.py`, require the pack is `status='PUBLISHED'` OR the authenticated user is the creator.
+11. **`get_optional_current_user_id` used for logic branching** — `backend/app/api/v1/card_packs.py:82-95` returns different data depending on whether an anonymous visitor or the creator is reading. If the JWT-validation path has any bug that silently returns `None` instead of a specific user, the creator could read others' DRAFT packs. **Fix**: already partially defended (falls back to `get_public_card_pack`), but add an explicit test for this scenario.
+12. **`processing_task_service.claim_task` race** — same "read-then-update" pattern as retry; two workers can both claim a PENDING task. **Fix**: use `UPDATE ... SET status='PROCESSING' WHERE id=? AND status='PENDING' RETURNING id` (atomic compare-and-swap) instead of read-modify-write.
+
+### Low
+
+13. **Missing boundary size check on clothing-item upload** — `backend/app/api/v1/clothing.py` relies on `ingest_upload`'s internal `max_size`, not an explicit API-boundary 413. Harmless today but inconsistent with `styled_generation.py:114`. **Fix**: add `if len(front_bytes) > settings.MAX_UPLOAD_SIZE_BYTES: raise 413` at API layer.
+14. **`backend/app/api/deps.py` uses `db.get(User, user_id)`** — pulls from identity map if present, missing a freshly-deactivated user. **Fix**: use `.filter().first()` or explicit `db.expire(user)` before check.
+15. **`outfit_preview_service` release swallow** — in the exception handler, failed `blob_service.release` is caught and passed. **Fix**: upgrade to `logger.error` and emit a metric so orphan blobs get noticed.
+16. **Generic 500 where 404/409 is clearer** — `DELETE /clothing-items/{id}` raises generic errors for "item locked by processing task" vs "not found". **Fix**: distinct status codes.
+17. **ALGORITHM hardcoded HS256** — `config.py:50`. Acceptable for now (single-tenant), add to follow-ups list.
+18. **`outfit_preview` list N+1** (suspected, not confirmed by reading code) — ensure `selectinload(OutfitPreviewTask.items)` on list queries. Quick verification during implementation.
+
+---
+
+## 14. Known Limitations / Follow-ups
 
 - Article grammar in prompt is best-effort, not perfect English.
 - Multi-item same slot (e.g. jacket + t-shirt) unsupported by the unique constraint — future work.
