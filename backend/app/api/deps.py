@@ -38,7 +38,7 @@ def get_current_user_id(
     except (JWTError, ValueError) as exc:
         raise credentials_error from exc
 
-    user = db.get(User, user_id)
+    user = db.query(User).filter(User.id == user_id).first()
     if user is None or not user.is_active:
         raise credentials_error
 
