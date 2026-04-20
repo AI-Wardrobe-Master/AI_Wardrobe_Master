@@ -1,5 +1,6 @@
 from typing import List, Optional
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -75,6 +76,22 @@ class Settings(BaseSettings):
     SELFIE_TARGET_RESOLUTION: int = 1024
 
     BACKEND_CORS_ORIGINS: List[str] = ["*"]
+
+    @model_validator(mode="after")
+    def _reject_default_secret_key_in_prod(self):
+        if self.SECRET_KEY == "CHANGE-ME-in-production":
+            import os
+            env = os.getenv("ENV", "development").lower()
+            if env in ("production", "prod"):
+                raise ValueError(
+                    "SECRET_KEY must be overridden via environment in production. "
+                    "Current value is the placeholder default."
+                )
+            import logging
+            logging.getLogger(__name__).warning(
+                "SECRET_KEY is the default placeholder. Override via .env before deploying."
+            )
+        return self
 
     class Config:
         env_file = ".env"
