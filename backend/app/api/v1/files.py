@@ -217,10 +217,13 @@ async def get_styled_generation_file(
 async def get_card_pack_cover(
     pack_id: UUID,
     db: Session = Depends(get_db),
+    current_user_id: UUID | None = Depends(get_optional_current_user_id),
 ):
     pack = db.query(CardPack).filter(CardPack.id == pack_id).first()
-    if not pack or not pack.cover_image_blob_hash:
-        raise HTTPException(404)
+    if pack is None or pack.cover_image_blob_hash is None:
+        raise HTTPException(404, "not found")
+    if pack.status != "PUBLISHED" and pack.creator_id != current_user_id:
+        raise HTTPException(404, "not found")
     return await _stream_blob(db, pack.cover_image_blob_hash)
 
 
