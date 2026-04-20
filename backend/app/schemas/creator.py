@@ -66,6 +66,8 @@ class CreatorDetail(BaseModel):
     avatar_url: str | None = Field(default=None, alias="avatarUrl")
     website_url: str | None = Field(default=None, alias="websiteUrl")
     social_links: dict[str, str] = Field(default_factory=dict, alias="socialLinks")
+    follower_count: int = Field(default=0, alias="followerCount")
+    pack_count: int = Field(default=0, alias="packCount")
     is_verified: bool = Field(alias="isVerified")
     verified_at: datetime | None = Field(default=None, alias="verifiedAt")
     created_at: datetime = Field(alias="createdAt")

@@ -10,11 +10,16 @@ pytestmark = pytest.mark.skip(
 import unittest
 from datetime import datetime, timezone
 from uuid import uuid4
+from unittest.mock import patch
 
 from fastapi import HTTPException
 
 from app.api.deps import get_current_creator_user_id
-from app.api.v1.creators import update_creator_profile
+from app.api.v1.creators import (
+    get_my_creator_profile,
+    router as creators_router,
+    update_creator_profile,
+)
 from app.api.v1.me import get_me
 from app.crud import creator as crud_creator
 from app.models.creator import CreatorProfile
@@ -145,6 +150,40 @@ class CreatorFoundationTests(unittest.TestCase):
         self.assertEqual(response.data.creator_profile.status, "ACTIVE")
         self.assertTrue(response.data.capabilities.can_publish_items)
         self.assertTrue(response.data.capabilities.can_create_card_packs)
+
+    @patch(
+        "app.api.v1.creators.crud_card_pack.count_published_card_packs_by_creator",
+        return_value=4,
+    )
+    def test_get_my_creator_profile_returns_profile_with_count_fields(self, _mock_count):
+        user_id = uuid4()
+        profile = make_profile(user_id)
+        user = make_user(user_id)
+        db = FakeSession([user], [profile])
+
+        response = get_my_creator_profile(db, user_id)
+
+        self.assertEqual(response.data.id, user_id)
+        self.assertEqual(response.data.username, user.username)
+        self.assertEqual(response.data.follower_count, 0)
+        self.assertEqual(response.data.pack_count, 4)
+        data_payload = response.model_dump(by_alias=True)["data"]
+        self.assertEqual(data_payload["followerCount"], 0)
+        self.assertEqual(data_payload["packCount"], 4)
+
+    def test_get_my_creator_profile_returns_404_without_profile(self):
+        user_id = uuid4()
+        db = FakeSession([make_user(user_id)], [])
+
+        with self.assertRaises(HTTPException) as ctx:
+            get_my_creator_profile(db, user_id)
+        self.assertEqual(ctx.exception.status_code, 404)
+
+    def test_creators_router_registers_me_profile_before_dynamic_id_path(self):
+        paths = [route.path for route in creators_router.routes]
+        me_index = paths.index("/creators/me/profile")
+        dynamic_index = paths.index("/creators/{creator_id}")
+        self.assertLess(me_index, dynamic_index)
 
     def test_update_creator_profile_requires_ownership(self):
         owner_id = uuid4()

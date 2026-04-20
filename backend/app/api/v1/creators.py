@@ -66,6 +66,18 @@ def list_creators(
     )
 
 
+@router.get("/me/profile", response_model=CreatorProfileResponse)
+def get_my_creator_profile(
+    db: Session = Depends(get_db),
+    current_user_id: UUID = Depends(get_current_user_id),
+):
+    profile = crud_creator.get_by_user_id(db, current_user_id)
+    if profile is None:
+        raise HTTPException(404, "Creator profile not found")
+    user = db.get(User, current_user_id)
+    return CreatorProfileResponse(data=_to_creator_detail(db, profile, user.username))
+
+
 @router.get("/{creator_id}", response_model=CreatorProfileResponse)
 def get_creator_profile(
     creator_id: UUID,
@@ -75,7 +87,7 @@ def get_creator_profile(
     if row is None:
         raise HTTPException(404, "Creator not found")
     profile, user = row
-    return CreatorProfileResponse(data=_to_creator_detail(profile, user.username))
+    return CreatorProfileResponse(data=_to_creator_detail(db, profile, user.username))
 
 
 @router.patch("/{creator_id}", response_model=CreatorProfileResponse)
@@ -102,7 +114,7 @@ def update_creator_profile(
         social_links=body.social_links,
     )
     user = db.get(User, creator_id)
-    return CreatorProfileResponse(data=_to_creator_detail(updated, user.username))
+    return CreatorProfileResponse(data=_to_creator_detail(db, updated, user.username))
 
 
 @router.get("/{creator_id}/card-packs", response_model=CardPackListResponse)
@@ -147,7 +159,7 @@ def _bio_summary(bio: str | None) -> str | None:
     return f"{trimmed[:117]}..."
 
 
-def _to_creator_detail(profile, username: str) -> CreatorDetail:
+def _to_creator_detail(db: Session, profile, username: str) -> CreatorDetail:
     return CreatorDetail(
         id=profile.user_id,
         username=username,
@@ -159,6 +171,11 @@ def _to_creator_detail(profile, username: str) -> CreatorDetail:
         avatarUrl=None,
         websiteUrl=profile.website_url,
         socialLinks=profile.social_links or {},
+        followerCount=0,
+        packCount=crud_card_pack.count_published_card_packs_by_creator(
+            db,
+            creator_id=profile.user_id,
+        ),
         isVerified=profile.is_verified,
         verifiedAt=profile.verified_at,
         createdAt=profile.created_at,
