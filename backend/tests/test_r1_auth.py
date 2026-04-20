@@ -192,7 +192,8 @@ class R1AuthTests(unittest.TestCase):
 
     @unittest.skip(
         "Pre-existing test; register now honors userType field "
-        "(behavior changed, no longer clamps to CONSUMER). Tracked in follow-ups."
+        "(behavior changed, no longer clamps to CONSUMER). "
+        "Tracked as FU-T05 in groupmembers'markdown/gch.md (2026-04-20 §8)."
     )
     def test_register_ignores_requested_user_type_for_now(self):
         response = register(
