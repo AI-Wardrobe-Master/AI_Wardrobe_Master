@@ -130,3 +130,56 @@ def gc_sweep() -> None:
             logger.info("GC swept %d orphaned blobs", deleted_count)
     finally:
         db.close()
+
+
+@celery_app.task(name="styled_generation.reap_stuck")
+def reap_stuck_styled_generations() -> int:
+    """Mark PROCESSING styled_generations with expired lease as FAILED."""
+    from app.db.session import SessionLocal
+    from sqlalchemy import text
+
+    db = SessionLocal()
+    try:
+        result = db.execute(text("""
+            UPDATE styled_generations
+            SET status='FAILED',
+                failure_reason='Worker timeout (lease expired)',
+                updated_at=now(),
+                lease_expires_at=NULL
+            WHERE status='PROCESSING'
+              AND lease_expires_at IS NOT NULL
+              AND lease_expires_at < now()
+        """))
+        count = result.rowcount
+        db.commit()
+        if count:
+            logger.info("Reaped %d stuck styled_generations", count)
+        return count
+    finally:
+        db.close()
+
+
+@celery_app.task(name="processing_tasks.reap_stuck")
+def reap_stuck_processing_tasks() -> int:
+    """Mark PROCESSING processing_tasks with expired lease as FAILED."""
+    from app.db.session import SessionLocal
+    from sqlalchemy import text
+
+    db = SessionLocal()
+    try:
+        result = db.execute(text("""
+            UPDATE processing_tasks
+            SET status='FAILED',
+                error_message='Worker timeout (lease expired)',
+                lease_expires_at=NULL
+            WHERE status='PROCESSING'
+              AND lease_expires_at IS NOT NULL
+              AND lease_expires_at < now()
+        """))
+        count = result.rowcount
+        db.commit()
+        if count:
+            logger.info("Reaped %d stuck processing_tasks", count)
+        return count
+    finally:
+        db.close()
