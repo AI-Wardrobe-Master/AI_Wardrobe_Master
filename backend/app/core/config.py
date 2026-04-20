@@ -1,12 +1,19 @@
+import logging
 from typing import List, Optional
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings
 
+_DEFAULT_SECRET_KEY_PLACEHOLDER = "CHANGE-ME-in-production"
+
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "AI Wardrobe Master"
     API_V1_STR: str = "/api/v1"
+
+    # Deployment environment — set via ENV env var. Accepts 'development'
+    # (default), 'production'/'prod', 'staging', 'test', etc.
+    ENV: str = "development"
 
     # Database
     POSTGRES_SERVER: str = "localhost"
@@ -47,7 +54,7 @@ class Settings(BaseSettings):
     S3_PUBLIC_URL: Optional[str] = None
 
     # Security
-    SECRET_KEY: str = "CHANGE-ME-in-production"
+    SECRET_KEY: str = _DEFAULT_SECRET_KEY_PLACEHOLDER
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7
 
@@ -79,15 +86,12 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _reject_default_secret_key_in_prod(self):
-        if self.SECRET_KEY == "CHANGE-ME-in-production":
-            import os
-            env = os.getenv("ENV", "development").lower()
-            if env in ("production", "prod"):
+        if self.SECRET_KEY == _DEFAULT_SECRET_KEY_PLACEHOLDER:
+            if self.ENV.lower() in ("production", "prod"):
                 raise ValueError(
                     "SECRET_KEY must be overridden via environment in production. "
                     "Current value is the placeholder default."
                 )
-            import logging
             logging.getLogger(__name__).warning(
                 "SECRET_KEY is the default placeholder. Override via .env before deploying."
             )
