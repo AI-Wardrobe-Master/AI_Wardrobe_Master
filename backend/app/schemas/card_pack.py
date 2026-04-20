@@ -48,7 +48,7 @@ class CardPackItemSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    creator_item_id: UUID = Field(alias="creatorItemId")
+    clothing_item_id: UUID = Field(alias="clothingItemId")
     sort_order: int = Field(alias="sortOrder")
     name: str | None = None
     description: str | None = None
@@ -56,6 +56,7 @@ class CardPackItemSummary(BaseModel):
     processing_status: str = Field(alias="processingStatus")
     cover_url: str | None = Field(default=None, alias="coverUrl")
     final_tags: list[Tag] = Field(default_factory=list, alias="finalTags")
+    view_count: int = Field(default=0, alias="viewCount")
     created_at: datetime = Field(alias="createdAt")
 
 
@@ -75,6 +76,7 @@ class CardPackBase(BaseModel):
     wardrobe_wid: str | None = Field(default=None, alias="wardrobeWid")
     share_id: str | None = Field(default=None, alias="shareId")
     import_count: int = Field(alias="importCount")
+    view_count: int = Field(default=0, alias="viewCount")
     published_at: datetime | None = Field(default=None, alias="publishedAt")
     archived_at: datetime | None = Field(default=None, alias="archivedAt")
     item_count: int = Field(alias="itemCount")

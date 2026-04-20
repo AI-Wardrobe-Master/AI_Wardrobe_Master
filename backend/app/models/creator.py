@@ -75,6 +75,7 @@ class CardPack(Base):
     )
     share_id = Column(String(64), nullable=True, unique=True)
     import_count = Column(Integer, nullable=False, default=0)
+    view_count = Column(Integer, nullable=False, server_default="0", default=0)
     published_at = Column(DateTime(timezone=True), nullable=True)
     archived_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(
