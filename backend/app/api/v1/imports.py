@@ -5,10 +5,10 @@ import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user_id
+from app.crud import wardrobe as crud_wardrobe
 from app.db.session import get_db
 from app.models.card_pack_import import CardPackImport
 from app.models.clothing_item import ClothingItem, Image, Model3D
@@ -16,7 +16,7 @@ from app.models.creator import CardPack, CardPackItem
 from app.models.wardrobe import WardrobeItem
 from app.schemas.imports import ImportCardPackRequest, ImportCardPackResponse
 from app.services.blob_service import get_blob_service
-from app.crud import wardrobe as crud_wardrobe
+from app.services.blob_storage import BlobNotFoundError
 
 router = APIRouter(prefix="/imports", tags=["Imports"])
 logger = logging.getLogger(__name__)
@@ -52,6 +52,7 @@ def import_card_pack(
     pack = (
         db.query(CardPack)
         .filter(CardPack.id == body.card_pack_id, CardPack.status == "PUBLISHED")
+        .with_for_update()
         .first()
     )
     if not pack:
@@ -67,7 +68,7 @@ def import_card_pack(
 
     blob_service = get_blob_service()
     main_wardrobe = crud_wardrobe.ensure_main_wardrobe(db, user_id)
-    imported_item_ids = []
+    imported_item_ids: list[str] = []
 
     pack_items = (
         db.query(CardPackItem)
@@ -77,49 +78,65 @@ def import_card_pack(
     )
 
     for pi in pack_items:
-        ci = pi.creator_item
+        canonical = pi.clothing_item
+        if canonical is None or canonical.deleted_at is not None:
+            # Tombstoned or missing canonical item - skip silently.
+            continue
 
-        clothing_item = ClothingItem(
+        new_item = ClothingItem(
             user_id=user_id,
             source="IMPORTED",
-            name=ci.name,
-            description=ci.description,
-            predicted_tags=list(ci.predicted_tags) if ci.predicted_tags else [],
-            final_tags=list(ci.final_tags) if ci.final_tags else [],
+            name=canonical.name,
+            description=canonical.description,
+            predicted_tags=list(canonical.predicted_tags) if canonical.predicted_tags else [],
+            final_tags=list(canonical.final_tags) if canonical.final_tags else [],
             is_confirmed=True,
             custom_tags=[],
+            catalog_visibility="PRIVATE",
             imported_from_card_pack_id=pack.id,
-            imported_from_creator_item_id=ci.id,
+            imported_from_clothing_item_id=canonical.id,
         )
-        db.add(clothing_item)
+        db.add(new_item)
         db.flush()
 
-        for ci_img in ci.images:
+        for img in canonical.images:
             db.add(Image(
-                clothing_item_id=clothing_item.id,
-                image_type=ci_img.image_type,
-                angle=ci_img.angle,
-                blob_hash=ci_img.blob_hash,
+                clothing_item_id=new_item.id,
+                image_type=img.image_type,
+                angle=img.angle,
+                blob_hash=img.blob_hash,
             ))
-            blob_service.addref(db, ci_img.blob_hash)
+            try:
+                blob_service.addref(db, img.blob_hash)
+            except BlobNotFoundError:
+                raise HTTPException(
+                    409,
+                    "Pack contents changed during import; retry.",
+                )
 
-        if ci.model_3d:
+        if canonical.model_3d:
             db.add(Model3D(
-                clothing_item_id=clothing_item.id,
-                model_format=ci.model_3d.model_format,
-                blob_hash=ci.model_3d.blob_hash,
-                vertex_count=ci.model_3d.vertex_count,
-                face_count=ci.model_3d.face_count,
+                clothing_item_id=new_item.id,
+                model_format=canonical.model_3d.model_format,
+                blob_hash=canonical.model_3d.blob_hash,
+                vertex_count=canonical.model_3d.vertex_count,
+                face_count=canonical.model_3d.face_count,
             ))
-            blob_service.addref(db, ci.model_3d.blob_hash)
+            try:
+                blob_service.addref(db, canonical.model_3d.blob_hash)
+            except BlobNotFoundError:
+                raise HTTPException(
+                    409,
+                    "Pack contents changed during import; retry.",
+                )
 
         crud_wardrobe.ensure_item_in_wardrobe(
             db,
             user_id=user_id,
             wardrobe_id=main_wardrobe.id,
-            clothing_item_id=clothing_item.id,
+            clothing_item_id=new_item.id,
         )
-        imported_item_ids.append(str(clothing_item.id))
+        imported_item_ids.append(str(new_item.id))
 
     pack.import_count = (pack.import_count or 0) + 1
     db.commit()
@@ -136,6 +153,13 @@ def unimport_card_pack(
     db: Session = Depends(get_db),
     user_id: UUID = Depends(get_current_user_id),
 ):
+    pack = (
+        db.query(CardPack)
+        .filter_by(id=pack_id)
+        .with_for_update()
+        .first()
+    )
+
     record = db.query(CardPackImport).filter_by(
         user_id=user_id, card_pack_id=pack_id,
     ).first()
@@ -147,13 +171,35 @@ def unimport_card_pack(
         ClothingItem.imported_from_card_pack_id == pack_id,
     ).all()
 
+    # Remember which canonical items these imports pointed at, so we can
+    # hard-delete stale tombstones once the last import disappears.
+    stale_canonicals = {
+        item.imported_from_clothing_item_id
+        for item in items
+        if item.imported_from_clothing_item_id is not None
+    }
+
     for item in items:
         _delete_clothing_item_internal(db, item)
 
     db.delete(record)
 
-    pack = db.query(CardPack).filter_by(id=pack_id).first()
-    if pack and (pack.import_count or 0) > 0:
+    if pack is not None and (pack.import_count or 0) > 0:
         pack.import_count -= 1
+
+    # Cascade: if any canonical item the unimported items pointed to was a
+    # tombstoned clothing item with no remaining imports referencing it,
+    # hard-delete it so its blobs can be GC'd.
+    for canonical_id in stale_canonicals:
+        canonical = db.query(ClothingItem).filter_by(id=canonical_id).first()
+        if canonical is None or canonical.deleted_at is None:
+            continue
+        remaining = (
+            db.query(ClothingItem)
+            .filter_by(imported_from_clothing_item_id=canonical_id)
+            .count()
+        )
+        if remaining == 0:
+            _delete_clothing_item_internal(db, canonical)
 
     db.commit()

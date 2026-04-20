@@ -147,3 +147,113 @@
 ##### 7. 涉及文件统计
   - 新增 9 个文件，修改 ~28 个文件，删除 1 个文件
   - 总计 +4604 / -499 行
+
+### 2026.4.20
+#### 多件衣物 DreamO + 创作者/消费者衣物表合并 + 三档删除 + 浏览量 + 数据库健壮性
+
+##### 1. 多件衣物 DreamO 支持
+  - `POST /api/v1/styled-generations` 不再只接受单件衣物：
+    - 新增 `gender` 字段（required，`"male" | "female"`）
+    - 新增 `clothing_items` 字段（required，JSON string，编码 1~4 件衣物数组，每项含 `id` + `slot ∈ {HAT,TOP,PANTS,SHOES}`，slot 全局唯一）
+    - 旧 `clothing_item_id` 字段保留一个版本作为 DEPRECATED 兼容 shim
+  - 响应新增 `gender` 和 `garments: [{id, slot, name, imageUrl}]` 字段，按 HAT→TOP→PANTS→SHOES 顺序返回
+  - 新增 `styled_generation_clothing_items` 多对多 junction 表（`generation_id`, `clothing_item_id`, `slot`, `sort_order`），`unique(generation_id, slot)` 防同 slot 冲突
+  - `styled_generations` 新增 `gender VARCHAR(10)` 列
+  - Pipeline 改为：按 slot 顺序从 junction 表批量拉取 garments → 校验每件都有 `PROCESSED_FRONT` → 组装 gender-aware prompt → 组装 `garment_images: [...]` → 调 DreamO
+  - DreamO 服务端 + 客户端都改为 `garment_images` 列表；旧 `garment_image` 单数作为 deprecated shim 保留
+  - Prompt builder 新增 gender-aware 基础短语和 HAT→TOP→PANTS→SHOES 按槽位拼装的多件衣物模板
+
+##### 2. 创作者/消费者衣物表合并
+  - `creator_items` 表完全合入 `clothing_items`，系统只剩一张 canonical 衣物表
+  - 所有衣物（OWNED / IMPORTED / 创作者原创）都走同一张表，通过 `catalog_visibility ∈ {PRIVATE, PACK_ONLY, PUBLIC}` 控制发布可见性
+  - `card_pack_items.clothing_item_id` 直接引用合并后的 `clothing_items.id`，不再有独立的 `creator_item_id`
+  - `/creator-items/*` 这批旧端点改为薄 legacy shim，内部委托给统一的 `/clothing-items/*`
+  - `imported_from_creator_item_id` 改名为 `imported_from_clothing_item_id`（自引用 FK）
+  - Alembic 迁移 `20260420_000015` 负责数据搬迁：`creator_items` → `clothing_items`（含 blob 引用、origin 字段）、更新 `card_pack_items` FK、重命名 `imported_from_*` 列、回填 `catalog_visibility`
+
+##### 3. 三档删除生命周期（spec §4.7）
+  - Tier 1：`catalog_visibility = PRIVATE` OR 从未发布 → 硬删，release 全部 blob
+  - Tier 2：已发布但 0 下游消费者导入 → 硬删
+  - Tier 3：已发布且存在下游 `imported_from_clothing_item_id` 引用 → tombstone（设 `deleted_at`，从所有列表/搜索端点隐藏，但保留行以便 backlink 解析）
+  - 消费者卸载卡包（un-import）时会级联将其拥有的 tombstone 副本硬删并 release blob
+  - `clothing_items` 新增 `deleted_at TIMESTAMPTZ` 列，所有列表/搜索 query 增加 `deleted_at IS NULL` 过滤
+
+##### 4. 浏览量 + Top10
+  - `clothing_items` 和 `card_packs` 都新增 `view_count INTEGER NOT NULL DEFAULT 0` 列
+  - 详情 GET 走 `UPDATE ... SET view_count = view_count + 1 RETURNING view_count` 原子自增，返回值即为响应字段
+  - 只有 `PUBLISHED` 状态的卡包累积浏览量；创作者本人访问自己的卡包/衣物不计数（short-circuit）
+  - 新增 `GET /api/v1/card-packs/popular?limit=10` 端点：返回 `PUBLISHED` 卡包按 `view_count DESC, published_at DESC` 排序，响应 shape 同 `GET /card-packs`
+  - 详情响应（`GET /clothing-items/:id`, `GET /creator-items/:id`, `GET /card-packs/:id`）均包含 `viewCount: int`
+  - 新增 `(status, view_count DESC)` 复合索引加速 popular 查询
+
+##### 5. 数据库健壮性
+  - `BlobService.release()` 现在先拿 `pg_advisory_xact_lock(hash)` 再递减 `ref_count`，消除与并发 ingest / GC 的 double-decrement 竞态
+  - `StyledGeneration` / `ProcessingTask` 的 retry 路径在重新入队前显式 release 上一次失败产生的 blob，防止失败循环导致 blob 泄漏
+  - `card_pack.import_count` 的硬删前检查改走 `SELECT ... FOR UPDATE`，修掉原先 "检查时 0 但实际已被别人 +1" 的 TOCTOU
+  - 新增 CHECK 约束 `ck_card_pack_import_count_nonneg` 防下溢
+  - 新增 Celery beat 任务每小时 reap-stuck：扫描 `styled_generations` 和 `processing_tasks` 中 `PROCESSING` 超过 `lease_expires_at` 的行，翻成 `FAILED`
+  - 新增每周 orphan-file GC sweep（本地存储专用），对账磁盘字节 vs `blobs` 注册表，删除孤儿文件；S3 存储继续沿用现有 `gc_sweep`
+  - `SECRET_KEY` 新增生产环境校验器：`ENV=production` 时禁止使用 dev 默认值，启动即报错
+  - 修掉 wardrobe 列表端点的 N+1：之前每个 `wardrobe_items` 行单独拉 `clothing_items`，改成一次 joinedload
+  - `files.py` 卡包封面路由加鉴权 guard：`DRAFT` / `ARCHIVED` 卡包的封面对非 owner 返回 404（之前按 blob hash 直读，泄漏 DRAFT 封面字节）
+
+##### 6. 审计发现与决策
+
+  - **`/auth/register` userType 行为**（2026-04-20 确认）：
+    - 当前行为：后端**尊重前端传入**的 `userType`。传 `CREATOR` 则直接创建 CREATOR 账号并立即获得全部 creator capabilities；传 `CONSUMER` 或不传则创建 CONSUMER 账号；不合法值返回 422。
+    - 历史背景：更早的某个迭代里曾存在"静默 clamp 为 CONSUMER"的逻辑，但那个 clamp 在最近的某次提交被意外去掉且未文档化。本轮重构发现了这个已经事实上存在的行为漂移。
+    - **决策**：保持当前行为（尊重前端输入）。理由：
+      1. 简化后端——无需维护一条后续的"CONSUMER 升级为 CREATOR"的路径，gating 留给前端处理；
+      2. 与 `CreatorProfile` 的生命周期解耦——创建账号即可决定身份，不需要额外的申请 + 审批状态机；
+      3. 对前端影响可控——前端可通过 UI 门槛（邀请码、审核链接等）控制谁能看到 `userType=CREATOR` 选项。
+    - 对应文档已同步：`documents/API_CONTRACT.md` §1.1 详细列出了 userType 字段、可选值、默认回退、错误码矩阵，以及明确的 "Product implication: enforce the gate on the frontend" 注解。
+    - 测试：原先检查 clamp 行为的 `test_register_ignores_requested_user_type_for_now` 与新行为矛盾，已删除（FU-T05 标记为 resolved）。
+
+##### 7. 变更范围（按模块）
+  - backend：styled_generations pipeline + schema + API + prompt builder + DreamO client
+  - backend：clothing_items 表加 `catalog_visibility` / `deleted_at` / `view_count` / 重命名 `imported_from_*`
+  - backend：card_packs 加 `view_count` + popular 端点
+  - backend：3-tier delete dispatcher + tombstone 过滤
+  - backend：release() advisory lock、TOCTOU fix、reap-stuck beat、orphan GC、SECRET_KEY validator、N+1 fix、files.py 鉴权 guard
+  - DreamO：server.py + client 接受 `garment_images` 列表
+  - 迁移：`20260420_000015`（合并 creator_items、新列、新约束、新索引）
+  - 文档：`API_CONTRACT.md`、`BACKEND_ARCHITECTURE.md`、`DATA_MODEL.md`、`DREAMO_INTEGRATION.md` 同步更新
+
+##### 8. Follow-ups — 测试重写清单 <a id="fu-test-rewrites"></a>
+
+合并后以下测试文件被 quarantine（module-level `pytest.skip` + 具体理由）。每个单独列一个重写 TODO 以便后续认领。Skip 消息里引用本节锚点 `gch.md #fu-test-rewrites`。
+
+- **`backend/tests/test_card_pack_flow.py`** — FU-T01：改写对齐合并后的 `ClothingItem` schema。原测试 import 已删除的 `CreatorItem`/`CreatorItemImage`。覆盖范围高（CRUD + share/publish 全流程），建议优先重写。
+- **`backend/tests/test_outfit_preview_flow.py`** — FU-T02：改写对齐 CAS schema。原测试用已删除的 `_absolute_storage_url` helper 和 `storage_path=...` 字段；现在要走 `blob_hash=...`。覆盖 outfit 预览端到端 + 保存流程，目前空白。
+- **`backend/tests/test_clothing_processing.py`** — FU-T03：改写对齐 `blob_hash`。原测试构造 `Image(storage_path=...)` 全文要替换。覆盖上传 + 后台流水线 + retry，核心流程。
+- **`backend/tests/test_creator_foundation.py`** — FU-T04：补齐 User fixture 的 `uid` 字段 + 改写 `/me` 响应断言。小范围。
+- ~~**`backend/tests/test_r1_auth.py::test_register_ignores_requested_user_type_for_now`** — FU-T05~~：✅ **已解决（2026-04-20）**。产品决策保留"尊重前端 userType"的新行为（见 §6），原测试与新行为矛盾，已从 `test_r1_auth.py` 删除。
+
+##### 9. 本轮最终清理 + 文档同步（2026-04-20 晚间）
+
+Final code review 后收到 4 处改进建议，选"B 方案"全部落地（+ 额外的文档更新）：
+
+1. **Race fix（spec §4.7 concurrency）**：`delete_with_lifecycle` 先前仅 `FOR UPDATE` 锁 ClothingItem 行，未锁引用它的 PUBLISHED pack。并发 `POST /imports/card-pack`（锁了 pack 行但没锁 items）理论上能跟 publisher 的删除交错。
+   - 修复：把 `in_published_pack` 的 `EXISTS` 查询换成 `JOIN + FOR UPDATE + .all()`，同时拿到所有引用本 item 的 PUBLISHED pack 行锁。
+   - 结果：publisher 的 delete 和 importer 的 snapshot 现在必然串行化通过 pack 行锁。
+
+2. **死代码清理**：合并后 `app/schemas/creator.py` 里 8 个 `CreatorItem*` 类（`CreatorItemCreateResponseData`、`CreatorItemCreateResponse`、`CreatorItemUpdate`、`CreatorItemDetail`、`CreatorItemResponse`、`PublicCreatorItem`、`CreatorItemListData`、`CreatorItemListResponse`）已无任何 importer，删掉；同步移除 `ImageSetResponse, Tag` 的 unused import。文件从 169 行缩到 100 行。
+
+3. **`SECRET_KEY` validator 严格化**：原先只匹配字面量 `production` / `prod`，`ENV=Prod-EU` 或 `ENV=' production '`（带空格）会静默漏过，让 dev 默认 key 流入生产。
+   - 修复：先 `.strip().lower()`，然后用 `startswith("prod") or startswith("stag") or == "live"` 匹配——prod 系和 staging 系都硬拦住。
+   - 验证：`ENV=production` / `ENV=Prod-EU` / `ENV='  staging  '` 全部 raise；`ENV=development`（默认）照常 warn 通过。
+
+4. **Quarantine 指针化**：原来 4 个被 quarantine 的测试文件 skip 消息都以"Tracked in follow-ups"结尾，没有具体定位。改成引用 `gch.md §8 FU-T01..T05`，每个 FU 列有独立的改写范围、阻塞点。其中 FU-T05 本轮即已 resolved。
+
+5. **`/auth/register` userType 语义文档化**：
+   - `documents/API_CONTRACT.md` §1.1 重写：加字段表（类型、是否必须、默认值、合法值）、明确"backend 不做 gating、前端控制入口"的产品含义、补 CONSUMER 与 CREATOR 两种成功响应示例、列错误码矩阵（409 重复、422 不合法）。
+   - 删除与新行为矛盾的旧测试 `test_register_ignores_requested_user_type_for_now`。
+
+涉及 commits（按时间）：
+  - `ac3a50a` — fix(clothing): lock PUBLISHED packs in delete_with_lifecycle
+  - `aa8d833` — refactor(schemas): prune unused CreatorItem schemas after merge
+  - `18f5b63` — fix(config): tighten ENV validator — strip + prefix match prod/stag/live
+  - `b83ccd9` — docs(followups): link quarantined tests to FU-T01..FU-T05 in gch.md
+  - 本 commit：API_CONTRACT.md userType 语义 + gch.md §6/§8/§9 更新 + 删除过时测试
+
+测试状态：**60 passed, 22 skipped, 0 failed**。原 skip 掉的 `test_register_ignores_requested_user_type_for_now` 被改写成 `test_register_honors_requested_user_type`（断言新行为），比上轮多 1 个 passing 测试、少 1 个 skip。

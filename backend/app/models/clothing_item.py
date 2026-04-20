@@ -45,15 +45,20 @@ class ClothingItem(Base):
     preview_svg_state = Column(String(20), nullable=False, default="PLACEHOLDER")
     preview_svg_available = Column(Boolean, nullable=False, default=False)
     sync_status = Column(String(20), nullable=False, default="SYNCED")
+    catalog_visibility = Column(
+        String(20), nullable=False, server_default="PRIVATE"
+    )
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
+    view_count = Column(Integer, nullable=False, server_default="0")
 
     imported_from_card_pack_id = Column(
         UUID(as_uuid=True),
         ForeignKey("card_packs.id", ondelete="SET NULL"),
         nullable=True,
     )
-    imported_from_creator_item_id = Column(
+    imported_from_clothing_item_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("creator_items.id", ondelete="SET NULL"),
+        ForeignKey("clothing_items.id", ondelete="SET NULL"),
         nullable=True,
     )
 
@@ -80,6 +85,10 @@ class ClothingItem(Base):
         CheckConstraint(
             "sync_status IN ('SYNCED','LOCAL_ONLY','PENDING_SYNC')",
             name="ck_clothing_sync_status",
+        ),
+        CheckConstraint(
+            "catalog_visibility IN ('PRIVATE','PACK_ONLY','PUBLIC')",
+            name="ck_clothing_catalog_visibility",
         ),
     )
 

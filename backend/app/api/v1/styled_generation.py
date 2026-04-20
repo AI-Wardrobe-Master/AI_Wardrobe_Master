@@ -9,6 +9,7 @@ DELETE /styled-generations/{id}     Delete a generation
 """
 
 import io
+import json
 import logging
 import math
 from uuid import UUID, uuid4
@@ -30,9 +31,13 @@ from app.crud import clothing as crud_clothing
 from app.crud import styled_generation as crud_sg
 from app.db.session import get_db
 from app.models.clothing_item import Image as ClothingImage
-from app.models.styled_generation import StyledGeneration
+from app.models.styled_generation import (
+    StyledGeneration,
+    StyledGenerationClothingItem,
+)
 from app.schemas.styled_generation import (
     StyledGenerationCreateResponse,
+    StyledGenerationGarmentSummary,
     StyledGenerationResponse,
 )
 from app.services.blob_service import get_blob_service
@@ -46,6 +51,18 @@ logger = logging.getLogger(__name__)
 
 
 def _to_response(gen: StyledGeneration) -> dict:
+    garments_list = [
+        {
+            "id": jr.clothing_item_id,
+            "slot": jr.slot,
+            "name": jr.clothing_item.name if jr.clothing_item else None,
+            "imageUrl": (
+                f"/files/clothing-items/{jr.clothing_item_id}/processed-front"
+                if jr.clothing_item else None
+            ),
+        }
+        for jr in gen.garments
+    ]
     return StyledGenerationResponse(
         id=gen.id,
         userId=gen.user_id,
@@ -71,6 +88,8 @@ def _to_response(gen: StyledGeneration) -> dict:
         seed=gen.seed,
         width=gen.width,
         height=gen.height,
+        gender=gen.gender,
+        garments=garments_list,
         createdAt=gen.created_at,
         updatedAt=gen.updated_at,
     ).model_dump()
@@ -90,8 +109,10 @@ def _dispatch(gen_id: UUID) -> None:
 @router.post("", status_code=202)
 async def create_styled_generation(
     selfie_image: UploadFile = File(...),
-    clothing_item_id: str = Form(...),
+    gender: str = Form(...),
     scene_prompt: str = Form(...),
+    clothing_items: str | None = Form(None),        # NEW: JSON string
+    clothing_item_id: str | None = Form(None),      # DEPRECATED: single-item shim
     negative_prompt: str | None = Form(None),
     guidance_scale: float = Form(4.5),
     seed: int = Form(-1),
@@ -101,7 +122,7 @@ async def create_styled_generation(
     user_id: UUID = Depends(get_current_user_id),
 ):
     """Create a new DreamO styled generation task."""
-    # Validate selfie upload
+    # Selfie validation (preserved from existing code).
     if (
         not selfie_image.content_type
         or not selfie_image.content_type.startswith("image/")
@@ -114,40 +135,72 @@ async def create_styled_generation(
     if len(selfie_bytes) > settings.SELFIE_MAX_UPLOAD_SIZE_BYTES:
         raise HTTPException(413, "selfie_image exceeds size limit (10 MB)")
 
-    # Validate clothing item
-    try:
-        item_uuid = UUID(clothing_item_id)
-    except ValueError:
-        raise HTTPException(422, "clothing_item_id must be a valid UUID")
+    # Gender validation.
+    gender_norm = gender.strip().upper()
+    if gender_norm not in ("MALE", "FEMALE"):
+        raise HTTPException(422, "gender must be 'male' or 'female'")
 
-    item = crud_clothing.get(db, item_uuid, user_id)
-    if not item:
-        raise HTTPException(404, "Clothing item not found")
+    # Parse clothing_items (new) or fall back to clothing_item_id (legacy).
+    if clothing_items:
+        try:
+            items_parsed = json.loads(clothing_items)
+        except json.JSONDecodeError:
+            raise HTTPException(422, "clothing_items must be valid JSON")
+    elif clothing_item_id:
+        items_parsed = [{"id": clothing_item_id, "slot": "TOP"}]
+    else:
+        raise HTTPException(422, "clothing_items is required")
 
-    # Check garment has PROCESSED_FRONT image
-    processed_front = (
-        db.query(ClothingImage)
-        .filter(
-            ClothingImage.clothing_item_id == item_uuid,
-            ClothingImage.image_type == "PROCESSED_FRONT",
+    if not isinstance(items_parsed, list) or not (1 <= len(items_parsed) <= 4):
+        raise HTTPException(422, "clothing_items must be a JSON array of 1 to 4 items")
+
+    seen_slots: set[str] = set()
+    parsed: list[tuple[UUID, str]] = []
+    for entry in items_parsed:
+        if not isinstance(entry, dict):
+            raise HTTPException(422, "each clothing_items entry must be an object")
+        raw_id = entry.get("id")
+        raw_slot = entry.get("slot")
+        if raw_id is None or raw_slot is None:
+            raise HTTPException(422, "each clothing_items entry needs id and slot")
+        try:
+            item_uuid = UUID(str(raw_id))
+        except ValueError:
+            raise HTTPException(422, f"clothing_item id {raw_id!r} is not a UUID")
+        slot = str(raw_slot).strip().upper()
+        if slot not in ("HAT", "TOP", "PANTS", "SHOES"):
+            raise HTTPException(422, f"unknown slot {slot}")
+        if slot in seen_slots:
+            raise HTTPException(422, f"duplicate slot {slot} in clothing_items")
+        seen_slots.add(slot)
+        parsed.append((item_uuid, slot))
+
+    # Ensure each item belongs to the user, not tombstoned, and has PROCESSED_FRONT.
+    for item_uuid, slot in parsed:
+        item = crud_clothing.get(db, item_uuid, user_id)
+        if not item:
+            raise HTTPException(404, f"Clothing item {item_uuid} not found")
+
+        processed_front = (
+            db.query(ClothingImage)
+            .filter(
+                ClothingImage.clothing_item_id == item_uuid,
+                ClothingImage.image_type == "PROCESSED_FRONT",
+            )
+            .first()
         )
-        .first()
-    )
-    if not processed_front:
-        raise HTTPException(
-            409,
-            "Clothing item has not finished processing. "
-            "Please wait until background removal is complete before "
-            "creating a styled generation.",
-        )
+        if not processed_front:
+            raise HTTPException(
+                409,
+                f"Clothing item {item_uuid} (slot {slot}) has not finished processing",
+            )
 
-    # Validate dimensions
     if width < 768 or width > 1024 or height < 768 or height > 1024:
         raise HTTPException(
             422, "width and height must be between 768 and 1024"
         )
 
-    # Store selfie original via CAS blob service
+    # Store selfie via CAS.
     blob_service = get_blob_service()
     gen_id = uuid4()
     selfie_blob = await blob_service.ingest_upload(
@@ -156,15 +209,20 @@ async def create_styled_generation(
         max_size=settings.SELFIE_MAX_UPLOAD_SIZE_BYTES,
     )
 
-    # Create DB record
+    # Create the StyledGeneration row.
+    # Keep source_clothing_item_id pointing at TOP (if any) for legacy compat.
+    top_item_id: UUID | None = next(
+        (iid for iid, slt in parsed if slt == "TOP"), None
+    )
     gen = StyledGeneration(
         id=gen_id,
         user_id=user_id,
-        source_clothing_item_id=item_uuid,
+        source_clothing_item_id=top_item_id,
         selfie_original_blob_hash=selfie_blob.blob_hash,
         scene_prompt=scene_prompt,
         negative_prompt=negative_prompt,
         dreamo_version=settings.DREAMO_DEFAULT_VERSION,
+        gender=gender_norm,
         guidance_scale=guidance_scale,
         seed=seed,
         width=width,
@@ -173,9 +231,18 @@ async def create_styled_generation(
         progress=0,
     )
     db.add(gen)
+
+    # Insert junction rows.
+    for position, (item_uuid, slot) in enumerate(parsed):
+        db.add(StyledGenerationClothingItem(
+            generation_id=gen_id,
+            clothing_item_id=item_uuid,
+            slot=slot,
+            position=position,
+        ))
     db.commit()
 
-    # Dispatch Celery task
+    # Dispatch.
     try:
         _dispatch(gen_id)
     except Exception as exc:
@@ -240,15 +307,18 @@ def retry_styled_generation(
     if not gen:
         raise HTTPException(404, "Styled generation not found")
     if gen.status != "FAILED":
-        raise HTTPException(
-            400, "Only failed generations can be retried"
-        )
+        raise HTTPException(400, "Only failed generations can be retried")
+
+    blob_service = get_blob_service()
+    for hash_col in ("result_image_blob_hash", "selfie_processed_blob_hash"):
+        h = getattr(gen, hash_col)
+        if h:
+            blob_service.release(db, h)
+            setattr(gen, hash_col, None)
 
     gen.status = "PENDING"
     gen.progress = 0
     gen.failure_reason = None
-    gen.result_image_blob_hash = None
-    gen.selfie_processed_blob_hash = None
     db.commit()
 
     try:

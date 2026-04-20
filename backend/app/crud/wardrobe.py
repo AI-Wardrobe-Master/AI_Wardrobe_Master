@@ -249,6 +249,21 @@ def get_item_count(db: Session, wardrobe_id: UUID) -> int:
     return db.query(func.count(WardrobeItem.id)).filter(WardrobeItem.wardrobe_id == wardrobe_id).scalar() or 0
 
 
+def count_items_by_wardrobe_ids(
+    db: Session, wardrobe_ids: list[UUID],
+) -> dict[UUID, int]:
+    """Batch fetch item counts for multiple wardrobes. Returns {id: count}."""
+    if not wardrobe_ids:
+        return {}
+    rows = (
+        db.query(WardrobeItem.wardrobe_id, func.count(WardrobeItem.id))
+        .filter(WardrobeItem.wardrobe_id.in_(wardrobe_ids))
+        .group_by(WardrobeItem.wardrobe_id)
+        .all()
+    )
+    return {wid: cnt for wid, cnt in rows}
+
+
 def list_wardrobe_items(
     db: Session, wardrobe_id: UUID, user_id: UUID
 ) -> List[Tuple[WardrobeItem, ClothingItem]]:

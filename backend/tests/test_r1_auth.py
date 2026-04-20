@@ -15,7 +15,7 @@ from app.api.v1 import wardrobe as wardrobe_api
 from app.core.security import create_access_token, get_password_hash, verify_password
 from app.models.clothing_item import ClothingItem
 from app.models.user import User
-from app.models.wardrobe import WardrobeItem
+from app.models.wardrobe import Wardrobe, WardrobeItem
 from app.schemas.auth import LoginRequest, RegisterRequest
 from app.schemas.clothing_item import ClothingItemUpdate
 from app.schemas.wardrobe import WardrobeItemAdd
@@ -58,7 +58,9 @@ class FakeQuery:
 class FakeSession:
     def __init__(self, users):
         self.users = {user.id: user for user in users}
+        self.wardrobes = {}
         self._pending_user = None
+        self._pending_wardrobes = []
 
     def get(self, model, key):
         if model is User:
@@ -68,12 +70,17 @@ class FakeSession:
     def query(self, model):
         if model is User:
             return FakeQuery(self.users.values())
+        if model is Wardrobe:
+            return FakeQuery(self.wardrobes.values())
         raise AssertionError(f"Unexpected query model: {model}")
 
     def add(self, instance):
-        if not isinstance(instance, User):
+        if isinstance(instance, User):
+            self._pending_user = instance
+        elif isinstance(instance, Wardrobe):
+            self._pending_wardrobes.append(instance)
+        else:
             raise AssertionError(f"Unexpected add model: {type(instance)}")
-        self._pending_user = instance
 
     def commit(self):
         if self._pending_user is not None:
@@ -83,6 +90,13 @@ class FakeSession:
                 self._pending_user.created_at = datetime.now(timezone.utc)
             self.users[self._pending_user.id] = self._pending_user
             self._pending_user = None
+        for wardrobe in self._pending_wardrobes:
+            if wardrobe.id is None:
+                wardrobe.id = uuid4()
+            if wardrobe.created_at is None:
+                wardrobe.created_at = datetime.now(timezone.utc)
+            self.wardrobes[wardrobe.id] = wardrobe
+        self._pending_wardrobes = []
 
     def refresh(self, instance):
         return instance
@@ -91,6 +105,7 @@ class FakeSession:
 def make_user(*, user_id: UUID, email: str, password: str, active: bool = True) -> User:
     return User(
         id=user_id,
+        uid=f"USR-{str(user_id)[:8].upper()}",
         username=email.split("@")[0],
         email=email,
         hashed_password=get_password_hash(password),
@@ -175,7 +190,9 @@ class R1AuthTests(unittest.TestCase):
 
         self.assertEqual(response.data.user.user_type, "CONSUMER")
 
-    def test_register_ignores_requested_user_type_for_now(self):
+    def test_register_honors_requested_user_type(self):
+        """As of 2026-04-20 /auth/register honors the client-supplied
+        userType. See gch.md §6 for the product decision."""
         response = register(
             RegisterRequest(
                 username="creator_user",
@@ -186,7 +203,7 @@ class R1AuthTests(unittest.TestCase):
             FakeSession([]),
         )
 
-        self.assertEqual(response.data.user.user_type, "CONSUMER")
+        self.assertEqual(response.data.user.user_type, "CREATOR")
 
     def test_register_validates_email(self):
         with self.assertRaises(ValidationError):

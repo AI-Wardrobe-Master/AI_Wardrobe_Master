@@ -105,10 +105,8 @@ def list_wardrobes(
     user_id: UUID = Depends(get_current_user_id),
 ):
     wardrobes = crud_wardrobe.list_wardrobes(db, user_id)
-    out = []
-    for w in wardrobes:
-        count = crud_wardrobe.get_item_count(db, w.id)
-        out.append(_wardrobe_to_response(db, w, count))
+    counts = crud_wardrobe.count_items_by_wardrobe_ids(db, [w.id for w in wardrobes])
+    out = [_wardrobe_to_response(db, w, counts.get(w.id, 0)) for w in wardrobes]
     return {"items": out}
 
 
@@ -125,9 +123,10 @@ def list_public_wardrobes(
         page=page,
         limit=limit,
     )
+    counts = crud_wardrobe.count_items_by_wardrobe_ids(db, [w.id for w in wardrobes])
     items = [
-        _wardrobe_to_response(db, wardrobe, crud_wardrobe.get_item_count(db, wardrobe.id))
-        for wardrobe in wardrobes
+        _wardrobe_to_response(db, w, counts.get(w.id, 0))
+        for w in wardrobes
     ]
     return {
         "items": items,

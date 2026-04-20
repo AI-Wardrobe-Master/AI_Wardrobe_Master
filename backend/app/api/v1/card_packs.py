@@ -24,6 +24,7 @@ from app.schemas.card_pack import (
     CardPackUpdate,
 )
 from app.services.blob_service import get_blob_service
+from app.services.view_count_service import increment_card_pack_view
 
 router = APIRouter(prefix="/card-packs", tags=["card-packs"])
 
@@ -75,6 +76,25 @@ def create_card_pack(
     return CardPackDetailResponse(data=_to_card_pack_detail(db, pack))
 
 
+@router.get("/popular", response_model=CardPackListResponse)
+def list_popular_card_packs(
+    limit: int = Query(10, ge=1, le=50),
+    db: Session = Depends(get_db),
+):
+    packs = crud_card_pack.list_popular_card_packs(db, limit=limit)
+    return CardPackListResponse(
+        data=CardPackListData(
+            items=[_to_card_pack_list_item(db, pack) for pack in packs],
+            pagination={
+                "page": 1,
+                "limit": limit,
+                "total": len(packs),
+                "totalPages": 1,
+            },
+        )
+    )
+
+
 @router.get("/{pack_id}", response_model=CardPackDetailResponse)
 def get_card_pack(
     pack_id: UUID,
@@ -92,18 +112,27 @@ def get_card_pack(
         pack = crud_card_pack.get_public_card_pack(db, pack_id=pack_id)
     if pack is None:
         raise HTTPException(404, "Card pack not found")
-    return CardPackDetailResponse(data=_to_card_pack_detail(db, pack))
+    response = CardPackDetailResponse(data=_to_card_pack_detail(db, pack))
+    # Increment after response is built; skip creator self-views.
+    if pack.creator_id != current_user_id:
+        increment_card_pack_view(db, pack.id)
+    return response
 
 
 @router.get("/share/{share_id}", response_model=CardPackDetailResponse)
 def get_card_pack_by_share_id(
     share_id: str,
     db: Session = Depends(get_db),
+    current_user_id: UUID | None = Depends(get_optional_current_user_id),
 ):
     pack = crud_card_pack.get_public_card_pack(db, share_id=share_id)
     if pack is None:
         raise HTTPException(404, "Card pack not found")
-    return CardPackDetailResponse(data=_to_card_pack_detail(db, pack))
+    response = CardPackDetailResponse(data=_to_card_pack_detail(db, pack))
+    # Any viewer except the creator counts (anonymous viewers count).
+    if pack.creator_id != current_user_id:
+        increment_card_pack_view(db, pack.id)
+    return response
 
 
 @router.patch("/{pack_id}", response_model=CardPackDetailResponse)
@@ -188,7 +217,12 @@ def delete_card_pack(
     )
     if pack is None:
         raise HTTPException(404, "Card pack not found")
-    import_count = db.query(CardPackImport).filter_by(card_pack_id=pack_id).count()
+    import_count = (
+        db.query(CardPackImport)
+        .filter_by(card_pack_id=pack_id)
+        .with_for_update()
+        .count()
+    )
     if import_count > 0:
         raise HTTPException(409, f"{import_count} user(s) have imported this pack")
     cover_blob_hash = pack.cover_image_blob_hash
@@ -217,6 +251,7 @@ def _to_card_pack_list_item(db: Session, pack) -> CardPackListItem:
         wardrobeWid=linked_wardrobe.wid if linked_wardrobe else None,
         shareId=pack.share_id,
         importCount=pack.import_count,
+        viewCount=pack.view_count or 0,
         publishedAt=pack.published_at,
         archivedAt=pack.archived_at,
         itemCount=len(pack.items),
@@ -229,7 +264,7 @@ def _to_card_pack_detail(db: Session, pack) -> CardPackDetail:
     creator = db.get(User, pack.creator_id)
     linked_wardrobe = getattr(pack, "linked_wardrobe", None)
     items = [
-        _to_card_pack_item_summary(pack_item)
+        _to_card_pack_item_summary(db, pack_item)
         for pack_item in pack.items
     ]
     return CardPackDetail(
@@ -246,6 +281,7 @@ def _to_card_pack_detail(db: Session, pack) -> CardPackDetail:
         wardrobeWid=linked_wardrobe.wid if linked_wardrobe else None,
         shareId=pack.share_id,
         importCount=pack.import_count,
+        viewCount=pack.view_count or 0,
         publishedAt=pack.published_at,
         archivedAt=pack.archived_at,
         itemCount=len(items),
@@ -256,28 +292,38 @@ def _to_card_pack_detail(db: Session, pack) -> CardPackDetail:
 
 
 def _to_card_pack_item_summary(
+    db: Session,
     pack_item: CardPackItem,
 ) -> CardPackItemSummary:
-    creator_item = pack_item.creator_item
+    from app.services.processing_task_service import get_latest_task
+
+    clothing_item = pack_item.clothing_item
     cover_url = None
-    if creator_item is not None:
+    processing_status = "PENDING"
+    if clothing_item is not None:
         has_processed = any(
             image.image_type == "PROCESSED_FRONT"
-            for image in creator_item.images
+            for image in clothing_item.images
         )
         if has_processed:
-            cover_url = f"/files/creator-items/{creator_item.id}/processed-front"
-        elif any(image.image_type == "ORIGINAL_FRONT" for image in creator_item.images):
-            cover_url = f"/files/creator-items/{creator_item.id}/original-front"
+            cover_url = f"/files/clothing-items/{clothing_item.id}/processed-front"
+        elif any(image.image_type == "ORIGINAL_FRONT" for image in clothing_item.images):
+            cover_url = f"/files/clothing-items/{clothing_item.id}/original-front"
+        latest_task = get_latest_task(db, clothing_item.id)
+        if latest_task is not None:
+            processing_status = latest_task.status
+        elif clothing_item.images:
+            processing_status = "COMPLETED"
     return CardPackItemSummary(
         id=pack_item.id,
-        creatorItemId=pack_item.creator_item_id,
+        clothingItemId=pack_item.clothing_item_id,
         sortOrder=pack_item.sort_order,
-        name=creator_item.name if creator_item else None,
-        description=creator_item.description if creator_item else None,
-        catalogVisibility=creator_item.catalog_visibility if creator_item else "PACK_ONLY",
-        processingStatus=creator_item.processing_status if creator_item else "PENDING",
+        name=clothing_item.name if clothing_item else None,
+        description=clothing_item.description if clothing_item else None,
+        catalogVisibility=clothing_item.catalog_visibility if clothing_item else "PACK_ONLY",
+        processingStatus=processing_status,
         coverUrl=cover_url,
-        finalTags=(creator_item.final_tags or []) if creator_item else [],
+        finalTags=(clothing_item.final_tags or []) if clothing_item else [],
+        viewCount=(clothing_item.view_count or 0) if clothing_item else 0,
         createdAt=pack_item.created_at,
     )

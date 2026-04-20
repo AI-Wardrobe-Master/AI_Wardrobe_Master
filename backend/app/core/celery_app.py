@@ -26,8 +26,26 @@ celery_app.conf.update(
 from celery.schedules import crontab
 
 celery_app.conf.beat_schedule = {
+    # Pre-existing: hourly sweep of blobs with ref_count=0 past 24h grace.
     "blob-gc-sweep": {
         "task": "blobs.gc_sweep",
         "schedule": crontab(minute=17),
     },
+    # Orphan-file sweeper: weekly scan of local storage for unreferenced
+    # files older than 24h. No-op on non-local backends.
+    "blobs-gc-orphan-files": {
+        "task": "blobs.gc_orphan_files",
+        "schedule": 604800.0,  # weekly
+    },
+    # Reap-stuck beats: mark PROCESSING rows FAILED when their lease expired.
+    "reap-stuck-styled-gen": {
+        "task": "styled_generation.reap_stuck",
+        "schedule": 3600.0,
+    },
+    "reap-stuck-processing-tasks": {
+        "task": "processing_tasks.reap_stuck",
+        "schedule": 3600.0,
+    },
+    # NOTE: outfit_preview_tasks has no lease_expires_at column, so no
+    # reaper is registered for it (see Phase 8.2 concerns).
 }

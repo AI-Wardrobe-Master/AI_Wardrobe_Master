@@ -15,6 +15,7 @@ from app.crud import clothing as crud_clothing
 from app.crud import wardrobe as crud_wardrobe
 from app.db.session import get_db
 from app.models.clothing_item import ClothingItem, Image, Model3D, ProcessingTask
+from app.models.creator import CardPack, CardPackItem
 from app.schemas.clothing_item import (
     AngleViewsResponse,
     ClothingItemCreateResponse,
@@ -34,6 +35,7 @@ from app.services.processing_task_service import (
 from app.services.search_service import SearchService
 from app.services.blob_service import get_blob_service
 from app.services.blob_storage import get_blob_storage
+from app.services.view_count_service import increment_clothing_item_view
 from app.tasks import process_pipeline
 
 router = APIRouter(prefix="/clothing-items", tags=["clothing"])
@@ -62,6 +64,9 @@ def _item_to_response(item, *, images: list[Image] | None = None) -> dict:
         "previewSvgState": item.preview_svg_state or "PLACEHOLDER",
         "previewSvgAvailable": bool(item.preview_svg_available),
         "syncStatus": item.sync_status or "SYNCED",
+        "catalogVisibility": item.catalog_visibility or "PRIVATE",
+        "viewCount": item.view_count or 0,
+        "deletedAt": item.deleted_at.isoformat() if item.deleted_at else None,
         "wardrobeIds": wardrobe_ids,
         "createdAt": item.created_at.isoformat() if item.created_at else None,
         "updatedAt": item.updated_at.isoformat() if item.updated_at else None,
@@ -79,6 +84,9 @@ def _item_to_response(item, *, images: list[Image] | None = None) -> dict:
     return response
 
 
+_VALID_CATALOG_VISIBILITY = {"PRIVATE", "PACK_ONLY", "PUBLIC"}
+
+
 @router.post("", response_model=ClothingItemCreateResponse, status_code=202)
 async def create_clothing_item(
     front_image: UploadFile = File(...),
@@ -90,14 +98,24 @@ async def create_clothing_item(
     material: str | None = Form(None),
     style: str | None = Form(None),
     wardrobe_id: UUID | None = Form(None),
+    catalog_visibility: str = Form("PRIVATE", alias="catalogVisibility"),
     db: Session = Depends(get_db),
     user_id: UUID = Depends(get_current_user_id),
 ):
+    if catalog_visibility not in _VALID_CATALOG_VISIBILITY:
+        raise HTTPException(
+            422,
+            f"catalogVisibility must be one of {sorted(_VALID_CATALOG_VISIBILITY)}",
+        )
     front_bytes = await _read_upload_bytes(front_image, "front_image")
     back_bytes = (
         await _read_upload_bytes(back_image, "back_image")
         if back_image else None
     )
+    if len(front_bytes) > settings.MAX_UPLOAD_SIZE_BYTES:
+        raise HTTPException(413, "front_image exceeds size limit")
+    if back_bytes and len(back_bytes) > settings.MAX_UPLOAD_SIZE_BYTES:
+        raise HTTPException(413, "back_image exceeds size limit")
     try:
         predicted_tags = AIService().classify_bytes(front_bytes)
     except ClassificationError as exc:
@@ -137,6 +155,7 @@ async def create_clothing_item(
         preview_svg_state="PLACEHOLDER",
         preview_svg_available=False,
         sync_status="SYNCED",
+        catalog_visibility=catalog_visibility,
     )
 
     try:
@@ -208,7 +227,7 @@ def get_clothing_item(
     model = db.query(Model3D).filter(Model3D.clothing_item_id == item_id).first()
 
     image_set = _build_image_set(item_id, images)
-    return ClothingItemResponse(
+    response = ClothingItemResponse(
         id=item.id,
         userId=item.user_id,
         source=item.source,
@@ -226,10 +245,22 @@ def get_clothing_item(
         previewSvgState=item.preview_svg_state or "PLACEHOLDER",
         previewSvgAvailable=bool(item.preview_svg_available),
         syncStatus=item.sync_status or "SYNCED",
+        catalogVisibility=item.catalog_visibility or "PRIVATE",
+        viewCount=item.view_count or 0,
+        deletedAt=item.deleted_at,
         wardrobeIds=[entry.wardrobe_id for entry in item.wardrobe_entries],
         createdAt=item.created_at,
         updatedAt=item.updated_at,
     )
+
+    # Increment AFTER response is built so the viewer sees the pre-increment
+    # value. Skip self-views. The crud_clothing.get() filter restricts to
+    # owned items today, so this guard is effectively a safety net for any
+    # future non-owner GET path.
+    if item.user_id != user_id:
+        increment_clothing_item_view(db, item.id)
+
+    return response
 
 
 @router.patch("/{item_id}")
@@ -239,6 +270,28 @@ def update_clothing_item(
     db: Session = Depends(get_db),
     user_id: UUID = Depends(get_current_user_id),
 ):
+    if body.catalog_visibility is not None:
+        if body.catalog_visibility not in _VALID_CATALOG_VISIBILITY:
+            raise HTTPException(
+                422,
+                f"catalogVisibility must be one of {sorted(_VALID_CATALOG_VISIBILITY)}",
+            )
+        if body.catalog_visibility == "PRIVATE":
+            in_published_pack = (
+                db.query(CardPackItem)
+                .join(CardPack, CardPack.id == CardPackItem.card_pack_id)
+                .filter(
+                    CardPackItem.clothing_item_id == item_id,
+                    CardPack.status == "PUBLISHED",
+                )
+                .first()
+                is not None
+            )
+            if in_published_pack:
+                raise HTTPException(
+                    409,
+                    "Cannot unpublish item while it belongs to a published card pack",
+                )
     item = crud_clothing.update(
         db,
         item_id,
@@ -251,6 +304,7 @@ def update_clothing_item(
         category=body.category,
         material=body.material,
         style=body.style,
+        catalog_visibility=body.catalog_visibility,
     )
     if not item:
         raise HTTPException(status_code=404, detail="Clothing item not found")
@@ -268,12 +322,7 @@ def delete_clothing_item(
     db: Session = Depends(get_db),
     user_id: UUID = Depends(get_current_user_id),
 ):
-    from app.api.v1.imports import _delete_clothing_item_internal
-
-    item = crud_clothing.get(db, item_id, user_id)
-    if not item:
-        raise HTTPException(404, "Clothing item not found")
-
+    # Refuse if processing is active.
     active = db.query(ProcessingTask).filter(
         ProcessingTask.clothing_item_id == item_id,
         ProcessingTask.status.in_(["PENDING", "PROCESSING"]),
@@ -281,7 +330,31 @@ def delete_clothing_item(
     if active:
         raise HTTPException(409, "Cannot delete while processing")
 
-    _delete_clothing_item_internal(db, item)
+    blob_service = get_blob_service()
+
+    # Capture provenance for cascade cleanup before the delete happens.
+    current = db.query(ClothingItem).filter_by(id=item_id, user_id=user_id).first()
+    if not current:
+        raise HTTPException(404, "Clothing item not found")
+    imported_from = current.imported_from_clothing_item_id
+
+    outcome = crud_clothing.delete_with_lifecycle(
+        db, item_id=item_id, user_id=user_id, blob_service=blob_service,
+    )
+    if outcome is None:
+        raise HTTPException(404, "Clothing item not found")
+
+    # Cascade: if the deleted item was an IMPORTED copy of a tombstoned canonical,
+    # and no other imports remain, hard-delete the tombstone.
+    if imported_from is not None:
+        canonical = db.query(ClothingItem).filter_by(id=imported_from).first()
+        if canonical and canonical.deleted_at is not None:
+            remaining = db.query(ClothingItem).filter_by(
+                imported_from_clothing_item_id=canonical.id
+            ).count()
+            if remaining == 0:
+                crud_clothing._hard_delete(db, canonical, blob_service)
+
     db.commit()
 
 

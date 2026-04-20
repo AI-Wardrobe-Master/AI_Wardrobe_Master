@@ -33,18 +33,17 @@ This document defines the data model for the AI Wardrobe Master application Phas
                         │ (Position)   │
                         └──────────────┘
 
-┌─────────────┐         ┌──────────────┐
-│  Creator    │────────<│  CardPack    │>────────┐
-└─────────────┘         └──────────────┘         │
-                               │                  │
-                               └──────────────────┘
-                                        │
-                                        ▼
-                                 ┌─────────────┐
-                                 │  Clothing   │
-                                 │   Item      │
-                                 └─────────────┘
+┌─────────────┐         ┌──────────────┐         ┌─────────────┐
+│  Creator    │────────<│  CardPack    │>────────│  Clothing   │
+└─────────────┘         └──────────────┘         │   Item      │
+                                                  └─────────────┘
 ```
+
+**Merged clothing table.** As of 2026-04-20, there is a single canonical
+`ClothingItem` table. The former intermediate `CreatorItem` entity has been
+folded into `ClothingItem` and is no longer a distinct type in the model.
+`CardPack` references `ClothingItem` directly via `CardPackItem`; publishability
+is expressed on the `ClothingItem` row through `catalog_visibility`.
 
 ---
 
@@ -312,12 +311,14 @@ enum TargetAudience {
 - JSONB GIN Index: `predicted_tags` for analytics
 
 **Backend persistence fields for `clothing_items`:**
-- `catalog_visibility`: `PRIVATE` / `PACK_ONLY` / `PUBLIC` for creator catalog exposure
-- `origin_clothing_item_id`: source creator item for imported copies
-- `origin_creator_id`: source creator for imported copies
-- `origin_card_pack_id`: source pack for imported copies
-- `origin_import_history_id`: import batch reference for imported copies
-- `imported_at`: import completion timestamp for imported copies
+- `catalog_visibility`: `PRIVATE` / `PACK_ONLY` / `PUBLIC` for creator catalog exposure. Transition back to `PRIVATE` is blocked (409) while the item is in any `PUBLISHED` card pack.
+- `deleted_at`: tombstone marker for the 3-tier delete lifecycle (see "Clothing Item Lifecycle" below). When set, the row is hidden from all list/discovery endpoints but remains for backlink resolution from existing consumer imports.
+- `view_count`: integer lifetime detail-view counter, atomically incremented on each non-owner detail GET. Drives `/card-packs/popular`-style ranking via the parent pack and is surfaced to the API as `viewCount`.
+- `imported_from_clothing_item_id`: self-referential FK to the source clothing item for imported copies (renamed from the old `imported_from_creator_item_id` now that the `creator_items` table has been merged into `clothing_items`).
+- `origin_creator_id`: source creator for imported copies.
+- `origin_card_pack_id`: source pack for imported copies.
+- `origin_import_history_id`: import batch reference for imported copies.
+- `imported_at`: import completion timestamp for imported copies.
 
 ---
 
@@ -483,6 +484,10 @@ enum PackStatus {
 - Foreign Key: `creatorId`
 - Index: `status` for published packs
 - Index: `shareId` for import lookups
+- Index: `(status, viewCount DESC)` for the `/card-packs/popular` ranking query
+
+**Additional persistence fields on `card_packs`:**
+- `view_count INTEGER NOT NULL DEFAULT 0` — atomically incremented on every non-creator detail GET of a `PUBLISHED` pack. Self-views by the creator are excluded. Used by the `/card-packs/popular` ranking endpoint.
 
 ### 7.1 CardPackItem
 
@@ -695,6 +700,7 @@ enum ProcessingStatus {
    - Deleting ClothingItem removes all WardrobeItem references
    - Failed clothing processing keeps original uploads and task history, but not derived outputs
    - At most one `PENDING` or `PROCESSING` task may exist per clothing item
+   - **3-tier delete** (spec §4.7): hard-delete when `catalog_visibility = PRIVATE` OR when no consumer imports trace back to the item; tombstone (`deleted_at` set, row kept for backlink resolution) when the item is published AND has downstream importers. Consumer un-import cascades tombstones into hard deletes for downstream copies.
 
 2. **Source Isolation**
    - `source = OWNED`: Must have `provenance = null`

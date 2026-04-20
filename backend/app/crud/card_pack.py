@@ -7,7 +7,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.crud import wardrobe as crud_wardrobe
-from app.models.creator import CardPack, CardPackItem, CreatorItem
+from app.models.clothing_item import ClothingItem
+from app.models.creator import CardPack, CardPackItem
 from app.models.user import User
 from app.models.wardrobe import Wardrobe
 
@@ -114,22 +115,23 @@ def _load_creator_items(
     *,
     creator_id,
     item_ids: list[UUID],
-) -> list[CreatorItem]:
+) -> list[ClothingItem]:
     if not item_ids:
         raise HTTPException(status_code=422, detail="itemIds must not be empty")
     if len(item_ids) != len(set(item_ids)):
         raise HTTPException(status_code=409, detail="itemIds must be unique")
 
     items = (
-        db.query(CreatorItem)
+        db.query(ClothingItem)
         .filter(
-            CreatorItem.creator_id == creator_id,
-            CreatorItem.id.in_(item_ids),
+            ClothingItem.user_id == creator_id,
+            ClothingItem.id.in_(item_ids),
+            ClothingItem.deleted_at.is_(None),
         )
         .all()
     )
     items_by_id = {item.id: item for item in items}
-    ordered_items: list[CreatorItem] = []
+    ordered_items: list[ClothingItem] = []
     missing_ids: list[UUID] = []
     for item_id in item_ids:
         item = items_by_id.get(item_id)
@@ -138,7 +140,7 @@ def _load_creator_items(
             continue
         ordered_items.append(item)
     if missing_ids:
-        raise HTTPException(status_code=404, detail="Creator item not found")
+        raise HTTPException(status_code=404, detail="Clothing item not found")
     return ordered_items
 
 
@@ -146,7 +148,7 @@ def _sync_pack_items(
     db: Session,
     *,
     pack: CardPack,
-    creator_items: list[CreatorItem],
+    clothing_items: list[ClothingItem],
 ) -> CardPack:
     now = datetime.now(timezone.utc)
     pack.items.clear()
@@ -158,15 +160,15 @@ def _sync_pack_items(
         db.pack_items = [
             item for item in db.pack_items if item.card_pack_id != pack.id
         ]
-    for sort_order, creator_item in enumerate(creator_items):
+    for sort_order, clothing_item in enumerate(clothing_items):
         pack_item = CardPackItem(
             id=uuid4(),
             card_pack_id=pack.id,
-            creator_item_id=creator_item.id,
+            clothing_item_id=clothing_item.id,
             sort_order=sort_order,
             created_at=now,
         )
-        pack_item.creator_item = creator_item
+        pack_item.clothing_item = clothing_item
         pack.items.append(pack_item)
         db.add(pack_item)
     return pack
@@ -188,13 +190,13 @@ def _commit_or_raise_conflict(db: Session, *, detail: str) -> None:
         raise HTTPException(status_code=409, detail=detail) from exc
 
 
-def _lock_pack_creator_items(db: Session, *, pack: CardPack) -> dict[UUID, CreatorItem]:
-    creator_item_ids = [pack_item.creator_item_id for pack_item in pack.items]
-    if not creator_item_ids:
+def _lock_pack_clothing_items(db: Session, *, pack: CardPack) -> dict[UUID, ClothingItem]:
+    clothing_item_ids = [pack_item.clothing_item_id for pack_item in pack.items]
+    if not clothing_item_ids:
         return {}
     locked_items = (
-        db.query(CreatorItem)
-        .filter(CreatorItem.id.in_(creator_item_ids))
+        db.query(ClothingItem)
+        .filter(ClothingItem.id.in_(clothing_item_ids))
         .with_for_update()
         .all()
     )
@@ -318,7 +320,7 @@ def create_card_pack(
         db,
         detail="Card pack conflicts with current database state",
     )
-    _sync_pack_items(db, pack=pack, creator_items=items)
+    _sync_pack_items(db, pack=pack, clothing_items=items)
     _commit_or_raise_conflict(
         db,
         detail="Card pack conflicts with current database state",
@@ -357,7 +359,7 @@ def update_card_pack(
             creator_id=pack.creator_id,
             item_ids=item_ids,
         )
-        _sync_pack_items(db, pack=pack, creator_items=items)
+        _sync_pack_items(db, pack=pack, clothing_items=items)
     if pack.status == "PUBLISHED" or pack.wardrobe_id is not None:
         _ensure_pack_share_wardrobe(db, pack=pack)
     pack.updated_at = now
@@ -375,12 +377,20 @@ def publish_card_pack(db: Session, pack: CardPack):
     if not pack.items:
         raise HTTPException(status_code=409, detail="Pack must contain at least one item")
 
-    locked_items = _lock_pack_creator_items(db, pack=pack)
+    from app.services.processing_task_service import get_latest_task
+
+    locked_items = _lock_pack_clothing_items(db, pack=pack)
     for pack_item in pack.items:
-        creator_item = locked_items.get(pack_item.creator_item_id) or pack_item.creator_item
-        if creator_item is None:
+        clothing_item = locked_items.get(pack_item.clothing_item_id) or pack_item.clothing_item
+        if clothing_item is None:
             raise HTTPException(status_code=422, detail="Pack item data is corrupted")
-        if creator_item.processing_status != "COMPLETED":
+        if clothing_item.deleted_at is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="Pack contains deleted clothing items",
+            )
+        latest_task = get_latest_task(db, clothing_item.id)
+        if latest_task is not None and latest_task.status != "COMPLETED":
             raise HTTPException(
                 status_code=409,
                 detail="All pack items must be processed before publishing",
@@ -432,13 +442,27 @@ def delete_card_pack(db: Session, pack: CardPack) -> None:
     )
 
 
-def has_published_pack_reference(db: Session, *, creator_item_id) -> bool:
+def has_published_pack_reference(db: Session, *, clothing_item_id) -> bool:
     for pack_item in (
         db.query(CardPackItem)
-        .filter(CardPackItem.creator_item_id == creator_item_id)
+        .filter(CardPackItem.clothing_item_id == clothing_item_id)
         .all()
     ):
         pack = pack_item.card_pack or db.get(CardPack, pack_item.card_pack_id)
         if pack is not None and pack.status == "PUBLISHED":
             return True
     return False
+
+
+def list_popular_card_packs(
+    db: Session,
+    *,
+    limit: int = 10,
+) -> list[CardPack]:
+    return (
+        db.query(CardPack)
+        .filter(CardPack.status == "PUBLISHED")
+        .order_by(CardPack.view_count.desc(), CardPack.created_at.desc())
+        .limit(limit)
+        .all()
+    )

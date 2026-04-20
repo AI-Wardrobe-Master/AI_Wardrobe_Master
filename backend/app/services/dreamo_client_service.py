@@ -10,14 +10,14 @@ logger = logging.getLogger(__name__)
 
 class DreamOServiceError(Exception):
     """Raised when the DreamO inference service returns an error."""
-
     pass
 
 
 async def call_dreamo_generate(
     *,
     id_image_bytes: bytes | None = None,
-    garment_image_bytes: bytes | None = None,
+    garment_images_bytes: list[bytes] | None = None,
+    garment_image_bytes: bytes | None = None,  # DEPRECATED: single-garment shim
     prompt: str,
     negative_prompt: str = "",
     guidance_scale: float = 4.5,
@@ -29,22 +29,8 @@ async def call_dreamo_generate(
     """
     Call the isolated DreamO service POST /generate endpoint.
 
-    Args:
-        id_image_bytes: Preprocessed selfie image (white bg) for face ID.
-        garment_image_bytes: Processed garment image (no bg) for try-on.
-        prompt: Assembled generation prompt.
-        negative_prompt: Negative prompt for quality control.
-        guidance_scale: Classifier-free guidance strength.
-        seed: Random seed (-1 for random).
-        width: Output image width (768-1024).
-        height: Output image height (768-1024).
-        num_inference_steps: Denoising steps.
-
-    Returns:
-        Tuple of (result_image_bytes, seed_used).
-
-    Raises:
-        DreamOServiceError on HTTP or inference failure.
+    Returns (result_image_bytes, seed_used).
+    Raises DreamOServiceError on HTTP or inference failure.
     """
     payload: dict = {
         "prompt": prompt,
@@ -58,10 +44,17 @@ async def call_dreamo_generate(
 
     if id_image_bytes:
         payload["id_image"] = base64.b64encode(id_image_bytes).decode()
+
+    # Merge the two sources into one list. `garment_images_bytes` takes
+    # precedence; `garment_image_bytes` is a deprecated shim.
+    garments: list[bytes] = list(garment_images_bytes or [])
     if garment_image_bytes:
-        payload["garment_image"] = base64.b64encode(
-            garment_image_bytes
-        ).decode()
+        garments.append(garment_image_bytes)
+
+    if garments:
+        payload["garment_images"] = [
+            base64.b64encode(b).decode() for b in garments
+        ]
 
     url = f"{settings.DREAMO_SERVICE_URL}/generate"
     timeout = settings.DREAMO_GENERATE_TIMEOUT_SECONDS
@@ -85,9 +78,7 @@ async def call_dreamo_generate(
 
     data = resp.json()
     if not data.get("success"):
-        raise DreamOServiceError(
-            data.get("error", "Unknown DreamO error")
-        )
+        raise DreamOServiceError(data.get("error", "Unknown DreamO error"))
 
     result_bytes = base64.b64decode(data["output_image"])
     seed_used = data.get("seed_used", seed)

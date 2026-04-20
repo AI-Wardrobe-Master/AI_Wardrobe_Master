@@ -10,10 +10,6 @@ from app.models.clothing_item import ClothingItem, Image, Model3D, ProcessingTas
 from app.models.creator import (  # noqa: F401
     CardPack,
     CardPackItem,
-    CreatorItem,
-    CreatorItemImage,
-    CreatorItemModel3D,
-    CreatorProcessingTask,
     CreatorProfile,
 )
 from app.models.outfit_preview import (  # noqa: F401
