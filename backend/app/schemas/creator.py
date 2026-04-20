@@ -4,8 +4,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.schemas.clothing_item import ImageSetResponse, Tag
-
 
 class CreatorProfileSummary(BaseModel):
     exists: bool
@@ -99,70 +97,3 @@ class CreatorListResponse(BaseModel):
 class CreatorProfileResponse(BaseModel):
     success: bool = True
     data: CreatorDetail
-
-
-class CreatorItemCreateResponseData(BaseModel):
-    id: UUID
-    processing_task_id: UUID = Field(alias="processingTaskId")
-    status: str
-    catalog_visibility: str = Field(alias="catalogVisibility")
-    created_at: datetime = Field(alias="createdAt")
-
-
-class CreatorItemCreateResponse(BaseModel):
-    success: bool = True
-    data: CreatorItemCreateResponseData
-
-
-class CreatorItemUpdate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str | None = None
-    description: str | None = None
-    final_tags: list[Tag] | None = Field(default=None, alias="finalTags")
-    custom_tags: list[str] | None = Field(default=None, alias="customTags")
-    catalog_visibility: str | None = Field(default=None, alias="catalogVisibility")
-
-
-class CreatorItemDetail(BaseModel):
-    id: UUID
-    creator_id: UUID = Field(alias="creatorId")
-    catalog_visibility: str = Field(alias="catalogVisibility")
-    processing_status: str = Field(alias="processingStatus")
-    images: ImageSetResponse
-    model3d_url: str | None = Field(default=None, alias="model3dUrl")
-    predicted_tags: list[Tag] = Field(default_factory=list, alias="predictedTags")
-    final_tags: list[Tag] = Field(default_factory=list, alias="finalTags")
-    is_confirmed: bool = Field(alias="isConfirmed")
-    name: str | None = None
-    description: str | None = None
-    custom_tags: list[str] = Field(default_factory=list, alias="customTags")
-    created_at: datetime = Field(alias="createdAt")
-    updated_at: datetime = Field(alias="updatedAt")
-
-
-class CreatorItemResponse(BaseModel):
-    success: bool = True
-    data: CreatorItemDetail
-
-
-class PublicCreatorItem(BaseModel):
-    id: UUID
-    creator_id: UUID = Field(alias="creatorId")
-    catalog_visibility: str = Field(alias="catalogVisibility")
-    processing_status: str = Field(alias="processingStatus")
-    name: str | None = None
-    description: str | None = None
-    cover_url: str | None = Field(default=None, alias="coverUrl")
-    final_tags: list[Tag] = Field(default_factory=list, alias="finalTags")
-    created_at: datetime = Field(alias="createdAt")
-
-
-class CreatorItemListData(BaseModel):
-    items: list[PublicCreatorItem]
-    pagination: Pagination
-
-
-class CreatorItemListResponse(BaseModel):
-    success: bool = True
-    data: CreatorItemListData
