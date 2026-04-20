@@ -24,6 +24,7 @@ from app.schemas.card_pack import (
     CardPackUpdate,
 )
 from app.services.blob_service import get_blob_service
+from app.services.view_count_service import increment_card_pack_view
 
 router = APIRouter(prefix="/card-packs", tags=["card-packs"])
 
@@ -111,18 +112,27 @@ def get_card_pack(
         pack = crud_card_pack.get_public_card_pack(db, pack_id=pack_id)
     if pack is None:
         raise HTTPException(404, "Card pack not found")
-    return CardPackDetailResponse(data=_to_card_pack_detail(db, pack))
+    response = CardPackDetailResponse(data=_to_card_pack_detail(db, pack))
+    # Increment after response is built; skip creator self-views.
+    if pack.creator_id != current_user_id:
+        increment_card_pack_view(db, pack.id)
+    return response
 
 
 @router.get("/share/{share_id}", response_model=CardPackDetailResponse)
 def get_card_pack_by_share_id(
     share_id: str,
     db: Session = Depends(get_db),
+    current_user_id: UUID | None = Depends(get_optional_current_user_id),
 ):
     pack = crud_card_pack.get_public_card_pack(db, share_id=share_id)
     if pack is None:
         raise HTTPException(404, "Card pack not found")
-    return CardPackDetailResponse(data=_to_card_pack_detail(db, pack))
+    response = CardPackDetailResponse(data=_to_card_pack_detail(db, pack))
+    # Any viewer except the creator counts (anonymous viewers count).
+    if pack.creator_id != current_user_id:
+        increment_card_pack_view(db, pack.id)
+    return response
 
 
 @router.patch("/{pack_id}", response_model=CardPackDetailResponse)

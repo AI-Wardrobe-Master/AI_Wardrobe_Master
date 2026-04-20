@@ -35,6 +35,7 @@ from app.services.processing_task_service import (
 from app.services.search_service import SearchService
 from app.services.blob_service import get_blob_service
 from app.services.blob_storage import get_blob_storage
+from app.services.view_count_service import increment_clothing_item_view
 from app.tasks import process_pipeline
 
 router = APIRouter(prefix="/clothing-items", tags=["clothing"])
@@ -226,7 +227,7 @@ def get_clothing_item(
     model = db.query(Model3D).filter(Model3D.clothing_item_id == item_id).first()
 
     image_set = _build_image_set(item_id, images)
-    return ClothingItemResponse(
+    response = ClothingItemResponse(
         id=item.id,
         userId=item.user_id,
         source=item.source,
@@ -251,6 +252,15 @@ def get_clothing_item(
         createdAt=item.created_at,
         updatedAt=item.updated_at,
     )
+
+    # Increment AFTER response is built so the viewer sees the pre-increment
+    # value. Skip self-views. The crud_clothing.get() filter restricts to
+    # owned items today, so this guard is effectively a safety net for any
+    # future non-owner GET path.
+    if item.user_id != user_id:
+        increment_clothing_item_view(db, item.id)
+
+    return response
 
 
 @router.patch("/{item_id}")
