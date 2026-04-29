@@ -2,9 +2,10 @@
 """Card pack import and un-import endpoints."""
 
 import logging
+import math
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user_id
@@ -12,9 +13,16 @@ from app.crud import wardrobe as crud_wardrobe
 from app.db.session import get_db
 from app.models.card_pack_import import CardPackImport
 from app.models.clothing_item import ClothingItem, Image, Model3D
-from app.models.creator import CardPack, CardPackItem
+from app.models.creator import CardPack, CardPackItem, CreatorProfile
+from app.models.user import User
 from app.models.wardrobe import WardrobeItem
-from app.schemas.imports import ImportCardPackRequest, ImportCardPackResponse
+from app.schemas.imports import (
+    ImportCardPackRequest,
+    ImportCardPackResponse,
+    ImportHistoryData,
+    ImportHistoryItem,
+    ImportHistoryResponse,
+)
 from app.services.blob_service import get_blob_service
 from app.services.blob_storage import BlobNotFoundError
 
@@ -41,6 +49,35 @@ def _delete_clothing_item_internal(db: Session, item: ClothingItem) -> None:
 
     for h in blob_hashes:
         blob_service.release(db, h)
+
+
+@router.get("/history", response_model=ImportHistoryResponse)
+def list_import_history(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    user_id: UUID = Depends(get_current_user_id),
+):
+    query = db.query(CardPackImport).filter(CardPackImport.user_id == user_id)
+    total = query.count()
+    records = (
+        query.order_by(CardPackImport.imported_at.desc())
+        .offset((page - 1) * limit)
+        .limit(limit)
+        .all()
+    )
+
+    return ImportHistoryResponse(
+        data=ImportHistoryData(
+            imports=[_to_import_history_item(db, record) for record in records],
+            pagination={
+                "page": page,
+                "limit": limit,
+                "total": total,
+                "totalPages": math.ceil(total / limit) if total else 0,
+            },
+        )
+    )
 
 
 @router.post("/card-pack", status_code=201)
@@ -144,6 +181,39 @@ def import_card_pack(
     return ImportCardPackResponse(
         cardPackId=str(pack.id),
         importedItemIds=imported_item_ids,
+    )
+
+
+def _to_import_history_item(
+    db: Session,
+    record: CardPackImport,
+) -> ImportHistoryItem:
+    pack = db.get(CardPack, record.card_pack_id)
+    creator_id = getattr(pack, "creator_id", None)
+    creator_name = ""
+    if creator_id is not None:
+        profile = db.get(CreatorProfile, creator_id)
+        user = db.get(User, creator_id)
+        creator_name = (
+            getattr(profile, "display_name", None)
+            or getattr(user, "username", None)
+            or str(creator_id)
+        )
+
+    item_count = db.query(ClothingItem).filter(
+        ClothingItem.user_id == record.user_id,
+        ClothingItem.imported_from_card_pack_id == record.card_pack_id,
+    ).count()
+
+    return ImportHistoryItem(
+        id=str(record.id),
+        userId=str(record.user_id),
+        cardPackId=str(record.card_pack_id),
+        cardPackName=getattr(pack, "name", None) or "Unknown card pack",
+        creatorId=str(creator_id or ""),
+        creatorName=creator_name,
+        itemCount=item_count,
+        importedAt=record.imported_at,
     )
 
 

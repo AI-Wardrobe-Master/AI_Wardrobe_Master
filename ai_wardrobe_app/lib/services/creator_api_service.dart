@@ -35,7 +35,10 @@ class CreatorApiService {
       final resp = await _dio.get('/creators', queryParameters: queryParams);
       final responseData = resp.data as Map<String, dynamic>;
       final data = responseData['data'] as Map<String, dynamic>;
-      final creators = data['creators'] as List<dynamic>;
+      final creators =
+          data['items'] as List<dynamic>? ??
+          data['creators'] as List<dynamic>? ??
+          const <dynamic>[];
       return creators
           .map((e) => Creator.fromJson(Map<String, dynamic>.from(e as Map)))
           .toList();
@@ -50,6 +53,26 @@ class CreatorApiService {
             (creator.bio?.toLowerCase().contains(query) ?? false);
       }).toList();
     }
+  }
+
+  static Future<Creator> updateCreator(
+    String id, {
+    String? displayName,
+    String? brandName,
+    String? bio,
+    String? websiteUrl,
+    Map<String, String>? socialLinks,
+  }) async {
+    final body = <String, dynamic>{
+      if (displayName != null) 'displayName': displayName,
+      if (brandName != null) 'brandName': brandName,
+      if (bio != null) 'bio': bio,
+      if (websiteUrl != null) 'websiteUrl': websiteUrl,
+      if (socialLinks != null) 'socialLinks': socialLinks,
+    };
+    final resp = await _dio.patch('/creators/$id', data: body);
+    final responseData = resp.data as Map<String, dynamic>;
+    return Creator.fromJson(responseData['data'] as Map<String, dynamic>);
   }
 
   static final List<Creator> _localCreators = [

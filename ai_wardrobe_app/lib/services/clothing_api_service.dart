@@ -140,6 +140,7 @@ class ClothingApiService {
     await _dio.post('/clothing-items/$itemId/retry');
   }
 
+  /// PATCH /clothing-items/:id - 更新标签、名称等（2.3.3, 2.4）
   static Future<Map<String, dynamic>> updateClothingItem(
     String itemId, {
     String? name,
@@ -187,6 +188,47 @@ class ClothingApiService {
       wardrobeIds: wardrobeIds ?? const <String>[],
     );
     return data;
+  }
+
+  /// GET /attributes/options - 获取 style/season/audience 等预定义选项（2.3.1）
+  static Future<Map<String, List<String>>> getAttributeOptions() async {
+    final resp = await _dio.get('/attributes/options');
+    final data = resp.data as Map<String, dynamic>;
+    final inner = data['data'] as Map<String, dynamic>;
+    return Map.fromEntries(
+      inner.entries.map(
+        (e) => MapEntry(
+          e.key,
+          (e.value as List).cast<String>(),
+        ),
+      ),
+    );
+  }
+
+  static Future<List<Map<String, dynamic>>> searchClothingItems({
+    required String query,
+    Map<String, dynamic>? filters,
+    int page = 1,
+    int limit = 20,
+  }) async {
+    final resp = await _dio.post(
+      '/clothing-items/search',
+      data: {
+        'query': query,
+        if (filters != null) 'filters': filters,
+        'page': page,
+        'limit': limit,
+      },
+    );
+    final responseData = resp.data as Map<String, dynamic>;
+    final data = responseData['data'] as Map<String, dynamic>;
+    return (data['items'] as List<dynamic>? ?? const <dynamic>[])
+        .map((entry) => Map<String, dynamic>.from(entry as Map))
+        .toList();
+  }
+
+  static String getModelUrl(String itemId) {
+    return '$apiBaseUrl/clothing-items/$itemId/model';
   }
 
   static Future<List<Map<String, dynamic>>> listClothingItems({

@@ -28,16 +28,19 @@ class Creator {
   });
 
   factory Creator.fromJson(Map<String, dynamic> json) {
+    final socialLinksRaw = json['socialLinks'];
     return Creator(
-      userId: json['userId'] as String,
+      userId: (json['userId'] ?? json['id']) as String,
       username: json['username'] as String,
       displayName: json['displayName'] as String,
       brandName: json['brandName'] as String?,
-      bio: json['bio'] as String?,
+      bio: json['bio'] as String? ?? json['bioSummary'] as String?,
       avatarUrl: json['avatarUrl'] as String?,
       websiteUrl: json['websiteUrl'] as String?,
-      socialLinks: json['socialLinks'] != null
-          ? Map<String, String>.from(json['socialLinks'] as Map)
+      socialLinks: socialLinksRaw is Map
+          ? socialLinksRaw.map(
+              (key, value) => MapEntry(key.toString(), value.toString()),
+            )
           : null,
       followerCount: json['followerCount'] as int? ?? 0,
       packCount: json['packCount'] as int? ?? 0,
