@@ -1,374 +1,230 @@
 # AI Wardrobe Master - User Stories
 
 ## Overview
-This document contains user stories for the AI Wardrobe Master application Phase 1, organized by module and user type.
 
----
+本文档保留 Phase 1 用户故事视角，但已同步当前实际落地的共享、Discover、个人页与可视化补充能力。
 
 ## User Types
 
-### Consumer (普通用户)
-End users who manage their personal clothing items, import creator content, and create outfit combinations.
+### Consumer
 
-### Creator (内容创作者/主播)
-Content creators who upload clothing assets, create outfit collections, and share them with consumers.
+管理自己的衣物、子衣柜、共享内容与可视化预览。
 
----
+### Creator
 
-## Module 1: Clothing Digitalization and Registration
+发布可公开浏览的衣物与 card pack，并在 Discover 中被其他用户发现。
 
-### US-1.1: Capture Clothing Images
-**As a** Consumer  
-**I want to** capture front and back view images of my clothing using my mobile device camera  
-**So that** I can digitize my physical wardrobe items into the app
+## Legacy Phase-1 Scope
 
-**Acceptance Criteria:**
-- User can access device camera from within the app
-- User can capture front view image of clothing item
-- User can capture back view image of clothing item
-- System provides visual guidance for optimal photo capture
-- Captured images are temporarily stored for processing
+本文件仍然保留原有五大模块视角，只是在这些模块之上补充本轮真正落地的共享和个人页能力：
 
----
+1. 衣物数字化与录入
+2. 自动分类与搜索
+3. 衣柜管理
+4. 平台内容与创作者内容
+5. 搭配可视化
 
-### US-1.2: Background Removal
-**As a** Consumer  
-**I want to** have backgrounds automatically removed from my clothing photos  
-**So that** my clothing items appear as clean, isolated assets
+当前新增的用户故事主要落在模块 1、3、4、5 的交叉位置，例如：
 
-**Acceptance Criteria:**
-- System automatically processes captured images to remove background
-- Both original and processed (background-removed) images are stored
-- User can view the processed result
-- Processing completes within reasonable time (<10 seconds per image)
+- `/me` 驱动的个人页状态
+- 公开子衣柜分享
+- Discover 中公开共享内容的统一浏览
+- 共享衣物只读详情
+- `Face + Scene` demo 可视化入口
 
----
+## Module 1: Authentication and User Context
 
-### US-1.3: Multi-Angle View Generation
-**As a** Consumer  
-**I want to** see my clothing items from multiple angles (every 45 degrees)  
-**So that** I can better visualize how items look from different perspectives
+### US-1.1 Register and bootstrap account
 
-**Acceptance Criteria:**
-- System generates 8 angle views (0°, 45°, 90°, 135°, 180°, 225°, 270°, 315°)
-- Generated images maintain consistent quality across all angles
-- All angle-specific images are stored with the clothing record
-- User can browse through different angle views in the UI
+**As a** new user  
+**I want to** register once and immediately enter a usable app state  
+**So that** I do not need extra setup before seeing my wardrobe
 
----
+**Acceptance Criteria**
 
-### US-1.4: Persistent Storage
-**As a** Consumer  
-**I want to** have my clothing items permanently saved in the app  
-**So that** I can access them anytime, even after closing and reopening the app
+- Register returns a valid login token
+- System generates a stable `uid`
+- System ensures the user has a main wardrobe
+- User can enter the app shell immediately after registration
 
-**Acceptance Criteria:**
-- Clothing records are stored in persistent local database
-- All associated images (original, processed, multi-angle) are linked to the record
-- Data persists across app restarts
-- Data integrity is maintained (no corruption or loss)
+### US-1.2 Show correct signed-in profile
 
----
-
-## Module 2: Automated Classification and Search Support
-
-### US-2.1: Automatic Classification
-**As a** Consumer  
-**I want to** have my clothing items automatically classified with tags  
-**So that** I don't have to manually categorize each item
-
-**Acceptance Criteria:**
-- System uses AI/ML to classify clothing and return Tag[] (e.g., category)
-- Tags are returned as `{key: string, value: string}` pairs
-- No confidence scores are displayed to the user
-- Classification happens synchronously during image upload, before 3D generation starts
-- Predicted tags are stored separately from user-confirmed tags
-- **Phase 1**: Only `category` tag is auto-predicted (9 basic types: t-shirt, shirt, longsleeve, pants, shorts, outwear, dress, shoes, hat)
-- **Future phases**: Additional attributes (color, pattern, style) will be auto-predicted
-
----
-
-### US-2.2: Color and Pattern Detection
-**As a** Consumer  
-**I want to** have colors and patterns automatically detected for my clothing  
-**So that** I can search and filter by these attributes
-
-**Acceptance Criteria:**
-- System detects primary and secondary colors from clothing images
-- System identifies patterns (solid, striped, floral, geometric, etc.)
-- Color and pattern attributes are stored with the clothing record
-- User can manually edit detected colors and patterns if incorrect
-
----
-
-### US-2.3: Additional Attributes
-**As a** Consumer  
-**I want to** assign additional attributes like style, season, and target audience to my clothing  
-**So that** I can organize and search my wardrobe more effectively
-
-**Acceptance Criteria:**
-- System provides predefined categories for: style, season, target audience
-- User can select/edit these attributes for each clothing item
-- Attributes are stored with the clothing record
-- UI provides intuitive selection interface (dropdowns, chips, etc.)
-
----
-
-### US-2.4: Manual Correction
-**As a** Consumer  
-**I want to** review and correct automatic classification results  
-**So that** my clothing database is accurate
-
-**Acceptance Criteria:**
-- User can view all predicted tags (predictedTags)
-- User can edit tags to create final confirmed tags (finalTags)
-- Manual corrections are stored separately from predicted tags
-- Predicted tags remain immutable for reference
-- Changes are immediately reflected in search results (which use finalTags only)
-
----
-
-### US-2.5: Fast Search
-**As a** Consumer  
-**I want to** search my clothing items by tags and keywords in under 1 second  
-**So that** I can quickly find what I'm looking for
-
-**Acceptance Criteria:**
-- Search returns results in <1 second for databases up to 1000 items
-- Search uses finalTags only (not predictedTags)
-- Search supports filtering by tag key-value pairs (e.g., category=T_SHIRT, color=blue)
-- Search supports multiple filters simultaneously
-- Search results can be filtered by source (Owned vs Imported)
-
----
-
-## Module 3: Wardrobe Management
-
-### US-3.1: Create Wardrobe
-**As a** Consumer  
-**I want to** create multiple wardrobes (e.g., "Summer", "Work", "Casual")  
-**So that** I can organize my clothing into logical collections
-
-**Acceptance Criteria:**
-- User can create new wardrobe with custom name
-- User can rename existing wardrobe
-- User can delete wardrobe (without deleting clothing items)
-- System supports unlimited number of wardrobes
-
----
-
-### US-3.2: Manage Wardrobe Items
-**As a** Consumer  
-**I want to** add and remove clothing items from my wardrobes  
-**So that** I can organize items across different collections
-
-**Acceptance Criteria:**
-- User can add existing clothing item to any wardrobe
-- Same clothing item can exist in multiple wardrobes simultaneously
-- User can remove item from wardrobe (item still exists in database)
-- Removing item from all wardrobes doesn't delete the item entity
-
----
-
-### US-3.3: Virtual Wardrobe
-**As a** Consumer  
-**I want to** have a separate virtual wardrobe for imported creator content  
-**So that** I can keep platform content separate from my owned items
-
-**Acceptance Criteria:**
-- System automatically creates "Virtual Wardrobe" for imported items
-- Virtual wardrobe is visually distinguished from owned wardrobes
-- Items in virtual wardrobe are marked as "not owned"
-- User can browse virtual wardrobe like regular wardrobes
-
----
-
-## Module 4: Platform Content and Outfit Collections
-
-### US-4.0: Capability-Driven Unified Role Experience
 **As a** signed-in user  
-**I want** the app to expose creator capabilities based on my current status  
-**So that** the same shell can support consumers, creators under review, active creators, and restricted creators without splitting the product
+**I want** my profile page to reflect my real account state  
+**So that** I do not see `not signed in` after a successful login
 
-**Acceptance Criteria:**
-- App keeps a unified `Wardrobe / Discover / Outfit / Profile` shell for all users
-- User state is driven by capability and creator profile status, not only by a coarse `type`
-- Profile shows the correct creator state card: not enabled, pending, active, or suspended
-- Discover and Profile reveal or disable creator entry points based on capability
-- Frontend can derive display state from a lightweight user context endpoint
+**Acceptance Criteria**
 
----
+- Profile reads current state from `/me`
+- Profile shows `uid`, username, email, type
+- Creator capability cards reflect current backend state
 
-### US-4.1: Creator Upload
-**As a** Creator  
-**I want to** upload clothing items to the platform  
-**So that** I can share my fashion content with consumers
+## Module 2: Wardrobe Management
 
-**Acceptance Criteria:**
-- Creator can upload clothing images (same process as consumer)
-- Creator can add detailed descriptions and tags
-- Uploaded items are stored with creator attribution
-- Creator can edit or delete their uploaded items
+### US-2.1 Manage main wardrobe vs sub wardrobe
 
----
+**As a** user  
+**I want** main wardrobe and sub wardrobe actions to behave differently  
+**So that** delete does not accidentally mean the wrong thing
 
-### US-4.2: Create Card Pack
-**As a** Creator  
-**I want to** create and publish outfit collections (Card Packs)  
-**So that** I can share curated clothing combinations with my audience
+**Acceptance Criteria**
 
-**Acceptance Criteria:**
-- Creator can select multiple clothing items to create a pack
-- Creator can name and describe the pack
-- Creator can generate shareable link for the pack
-- Pack includes all selected items and metadata
+- Main wardrobe long-press delete removes the clothing entity
+- Main wardrobe delete clears local cache
+- Sub wardrobe long-press only removes wardrobe association
+- Removing from a sub wardrobe does not delete the clothing entity
 
----
+### US-2.2 Share a sub wardrobe publicly
 
-### US-4.3: Browse Creator Content
-**As a** Consumer  
-**I want to** browse available creator content and outfit collections  
-**So that** I can discover new fashion inspiration
+**As a** user  
+**I want** to share one sub wardrobe instead of my whole account  
+**So that** I can publish a curated subset of my clothing cards
 
-**Acceptance Criteria:**
-- User can view list of available creators
-- User can browse creator's published card packs
-- User can preview items in a pack before importing
-- User can see pack metadata (name, description, item count)
+**Acceptance Criteria**
 
----
+- User can see a share action while viewing a sub wardrobe
+- If the sub wardrobe is not public yet, sharing makes it public first
+- Shared wardrobe exposes a stable `wid`
+- Other users can open the shared result by `wid`
 
-### US-4.4: Import Card Pack
-**As a** Consumer  
-**I want to** import creator card packs with one click  
-**So that** I can quickly add curated content to my virtual wardrobe
+### US-2.3 Search shared wardrobes
 
-**Acceptance Criteria:**
-- User can import pack via shareable link
-- All items in pack are added to virtual wardrobe
-- Items are marked with source/provenance information (creator, date)
-- Imported items are kept separate from owned items
-- Import process completes in <5 seconds for packs up to 20 items
+**As a** user  
+**I want** to search shared wardrobes by publisher and wardrobe code  
+**So that** I can find a specific public share quickly
 
----
+**Acceptance Criteria**
 
-## Module 5: Outfit Visualization
+- Discover supports searching by wardrobe name
+- Discover supports searching by `wid`
+- Discover supports searching by publisher `uid`
+- Discover supports searching by publisher username
 
-### US-5.1: Start Outfit Preview Task
-**As a** Consumer  
-**I want to** submit a selfie and selected clothing items for outfit preview  
-**So that** I can generate a preview before deciding whether to save the look
+## Module 3: Discover and Public Content
 
-**Acceptance Criteria:**
-- User can browse both owned and virtual wardrobes
-- User can submit one selfie plus one item or a supported full outfit combination
-- Frontend validates supported combinations before calling backend
-- Preview request is created as an asynchronous task
-- The task keeps references to the selected wardrobe items instead of detached uploads
+### US-3.1 Merge packs and wardrobes in Discover
 
----
+**As a** user  
+**I want** public packs and shared wardrobes to appear in one wardrobe browse surface  
+**So that** I do not need to understand backend source differences
 
-### US-5.2: Track Outfit Preview Progress
-**As a** Consumer  
-**I want to** see the status of my preview generation request  
-**So that** I know whether the preview is pending, processing, completed, or failed
+**Acceptance Criteria**
 
-**Acceptance Criteria:**
-- System returns preview task status and timestamps
-- Completed tasks expose a generated preview image
-- Failed tasks expose a readable error message
-- User can review past preview tasks from the app
+- Discover has a `Wardrobes` tab for public shared wardrobes
+- Published card packs also appear in the same public wardrobe list
+- UI can distinguish `Card Pack` vs `Shared Wardrobe` by label
+- Both items remain searchable through the same search box
 
----
+### US-3.2 Open shared wardrobe details
 
-### US-5.3: Save Successful Preview as Outfit
-**As a** Consumer  
-**I want to** save a successful preview as an outfit  
-**So that** I can quickly access my favorite looks later
+**As a** user  
+**I want** to open a shared wardrobe and browse its clothing cards  
+**So that** I can inspect public content before deciding what to do next
 
-**Acceptance Criteria:**
-- Only completed preview tasks can be saved as outfits
-- Saved outfit keeps a reference to the source preview task
-- Saved outfit stores the final preview image and related clothing items
-- Saved outfit can optionally be named by the user
+**Acceptance Criteria**
 
----
+- Tapping a public wardrobe opens a detail page
+- Detail page shows wardrobe metadata including `wid`
+- Detail page shows clothing cards belonging to that wardrobe
 
-### US-5.4: Manage Saved Outfits
-**As a** Consumer  
-**I want to** view, rename, and delete my saved outfits  
-**So that** I can manage my outfit collection
+### US-3.3 Open shared clothing card details
 
-**Acceptance Criteria:**
-- User can view thumbnail previews of all saved outfits
-- User can rename saved outfit
-- User can delete saved outfit
-- Deleting outfit doesn't delete the clothing items
-- Saved outfit management is separate from preview task execution
+**As a** user  
+**I want** shared clothing cards to be tappable  
+**So that** I can inspect the item instead of only seeing a grid preview
 
----
+**Acceptance Criteria**
 
-## Cross-Cutting User Stories
+- Shared wardrobe item cards are tappable
+- Tapping opens a read-only shared clothing detail screen
+- Shared detail screen shows image, description, wardrobe WID and publisher UID
+- Shared detail screen does not expose private delete/edit actions
 
-### US-X.1: Data Integrity
-**As a** Consumer  
-**I want to** have my clothing items remain intact regardless of wardrobe operations  
-**So that** I never lose my digitized clothing data
+### US-3.4 View shared images across accounts
 
-**Acceptance Criteria:**
-- Deleting wardrobe doesn't delete clothing items
-- Removing item from wardrobe doesn't delete the item
-- Clothing entity is stored once, referenced by multiple wardrobes
-- System prevents orphaned or corrupted data
+**As a** second account viewing a public share  
+**I want** to see the actual clothing images, not just names  
+**So that** the public share is useful
 
----
+**Acceptance Criteria**
 
-### US-X.2: Source Isolation
-**As a** Consumer  
-**I want to** keep imported creator content separate from my owned items  
-**So that** I can distinguish between what I own and what is virtual
+- Public shared clothing image URLs are accessible cross-account
+- Private clothing images remain inaccessible to unrelated users
+- Cross-account shared wardrobe browsing works on a real device
 
-**Acceptance Criteria:**
-- Every clothing item has source attribute (Owned/Imported)
-- Imported items include provenance metadata (creator, import date)
-- UI clearly distinguishes owned vs imported items
-- Search and filter can separate by source
+## Module 4: Creator Content
 
----
+### US-4.1 Publish card pack into public browse
 
-### US-X.3: Provenance Tracking
-**As a** Consumer  
-**I want to** see the origin information for imported items  
-**So that** I can credit creators and track where content came from
+**As a** creator  
+**I want** a published card pack to appear in the same public discovery flow as other shared wardrobes  
+**So that** consumers browse one unified public wardrobe surface
 
-**Acceptance Criteria:**
-- Imported items store creator ID and name
-- Imported items store import timestamp
-- Imported items store original pack ID/name
-- User can view provenance information in item details
+**Acceptance Criteria**
 
----
+- Publishing a pack creates or reuses a public `SUB` wardrobe
+- The mapped public wardrobe uses `source = CARD_PACK`
+- Archiving the pack hides the mapped public wardrobe from Discover
 
-## Priority Matrix
+### US-4.2 Capability-driven creator experience
 
-### P0 (Must Have - Phase 1 MVP)
-- US-1.1, US-1.2, US-1.4 (Basic digitalization)
-- US-2.1, US-2.4 (Classification with manual correction)
-- US-2.5 (Search)
-- US-3.1, US-3.2 (Basic wardrobe management)
-- US-4.4 (Import capability)
-- US-5.1, US-5.2, US-5.3 (Basic visualization)
-- US-X.1, US-X.2, US-X.3 (Data integrity and isolation)
+**As a** signed-in user  
+**I want** creator access to depend on backend capabilities  
+**So that** the same app shell can support non-creators, pending creators and active creators
 
-### P1 (Should Have - Phase 1)
-- US-1.3 (Multi-angle views)
-- US-2.2, US-2.3 (Enhanced attributes)
-- US-3.3 (Virtual wardrobe)
-- US-4.1, US-4.2, US-4.3 (Creator features)
-- US-5.4 (Outfit management)
+**Acceptance Criteria**
 
-### P2 (Nice to Have - Future Phases)
-- Advanced search filters
-- Social sharing features
-- Outfit recommendations
-- Weather-based suggestions
+- `/me` returns creator profile summary and capabilities
+- Profile UI uses capability flags to show creator-related entry points
+
+## Module 5: Visualization
+
+### US-5.1 Enter visualization from a unified hub
+
+**As a** user  
+**I want** visualization to provide both existing canvas workflow and the new face-plus-scene workflow  
+**So that** I can choose the mode that fits my task
+
+**Acceptance Criteria**
+
+- `Visualize` opens a hub page
+- Hub exposes `Canvas Studio`
+- Hub exposes `Face + Scene`
+- Header height aligns with other top-level pages such as `Discover`
+
+### US-5.2 Run face plus scene demo flow
+
+**As a** user  
+**I want** to upload a face photo, choose a clothing card and add a scene description  
+**So that** I can preview the intended second visualization path before the real model is deployed
+
+**Acceptance Criteria**
+
+- User can upload a face photo
+- User can choose one clothing card
+- User can input a scene description
+- User can trigger `Generate Demo Preview`
+- System returns a demo image and clearly behaves as a placeholder flow
+
+## Priority Summary
+
+### P0
+
+- Correct signed-in profile state
+- Public sub wardrobe sharing
+- Discover search by `wid` and publisher `uid`
+- Cross-account shared image visibility
+- Shared clothing card tap-through
+- Main wardrobe delete clears entity and cache
+
+### P1
+
+- Unified Discover browse for packs and wardrobes
+- Capability-driven creator UI
+- Visualize dual-mode hub
+- Face plus scene demo flow
+
+### P2
+
+- Follow-up import actions from shared clothing detail
+- Full production AI deployment for face plus scene generation
