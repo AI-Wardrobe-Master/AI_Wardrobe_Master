@@ -100,13 +100,16 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
       setState(() {
         _error = e.toString();
         _loadingWardrobes = false;
+        _loadingItems = false;
       });
-      _loadItems();
     }
   }
 
   Future<void> _loadItems() async {
-    setState(() => _loadingItems = true);
+    setState(() {
+      _loadingItems = true;
+      _error = null;
+    });
     final allItems = <WardrobeItemWithClothing>[];
 
     if (_currentWardrobe != null && _currentWardrobe?.isVirtual != true) {
@@ -234,6 +237,14 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
       MaterialPageRoute(builder: (ctx) => const WardrobeManagementScreen()),
     );
     _loadWardrobes();
+  }
+
+  void _clearSearchAndFilters() {
+    _searchController.clear();
+    setState(() {
+      _selectedCategoryIndex = 0;
+      _searchQuery = '';
+    });
   }
 
   Future<void> _shareWardrobe(Wardrobe wardrobe) async {
@@ -496,6 +507,8 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
       s.categoryOuterwear,
       s.categoryAccessories,
     ];
+    final hasActiveFilter =
+        _selectedCategoryIndex != 0 || _searchQuery.isNotEmpty;
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -508,6 +521,11 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 8),
                 child: LinearProgressIndicator(),
+              )
+            else if (_error != null && _wardrobes.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                child: _buildInlineError(s, onRetry: _loadWardrobes),
               )
             else if (_wardrobes.isEmpty)
               Padding(
@@ -691,7 +709,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                                 setState(() => _error = null);
                                 _loadItems();
                               },
-                              child: const Text('Retry'),
+                              child: Text(s.retry),
                             ),
                           ],
                         ),
@@ -710,7 +728,9 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              s.noClothesYet,
+                              hasActiveFilter
+                                  ? s.noMatchingClothes
+                                  : s.noClothesYet,
                               style: TextStyle(
                                 fontSize: 13,
                                 fontWeight: FontWeight.w600,
@@ -718,13 +738,20 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                               ),
                             ),
                             const SizedBox(height: 4),
-                            Text(
-                              s.useAddToStart,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: _textSecondary,
+                            if (hasActiveFilter) ...[
+                              TextButton(
+                                onPressed: _clearSearchAndFilters,
+                                child: Text(s.clearSearchFilters),
                               ),
-                            ),
+                            ] else
+                              Text(
+                                s.useAddToStart,
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: _textSecondary,
+                                ),
+                              ),
                           ],
                         ),
                       )
@@ -909,6 +936,37 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
           ],
         );
       },
+    );
+  }
+
+  Widget _buildInlineError(AppStrings s, {required VoidCallback onRetry}) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Theme.of(context).dividerColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.error_outline, color: _textSecondary, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _error!,
+                  style: TextStyle(fontSize: 13, color: _textSecondary),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          TextButton(onPressed: onRetry, child: Text(s.retry)),
+        ],
+      ),
     );
   }
 

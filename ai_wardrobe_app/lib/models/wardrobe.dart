@@ -49,7 +49,7 @@ class Wardrobe {
   bool get isMain => kind == 'MAIN';
 
   factory Wardrobe.fromJson(Map<String, dynamic> json) {
-    List<String> _stringList(dynamic raw) => (raw as List<dynamic>? ?? const [])
+    List<String> stringList(dynamic raw) => (raw as List<dynamic>? ?? const [])
         .map((item) => item.toString())
         .toList();
 
@@ -65,9 +65,9 @@ class Wardrobe {
       source: json['source'] as String? ?? 'MANUAL',
       description: json['description'] as String?,
       coverImageUrl: json['coverImageUrl'] as String?,
-      autoTags: _stringList(json['autoTags']),
-      manualTags: _stringList(json['manualTags']),
-      tags: _stringList(json['tags']),
+      autoTags: stringList(json['autoTags']),
+      manualTags: stringList(json['manualTags']),
+      tags: stringList(json['tags']),
       isPublic: json['isPublic'] as bool? ?? false,
       parentWardrobeId: json['parentWardrobeId'] as String?,
       outfitId: json['outfitId'] as String?,

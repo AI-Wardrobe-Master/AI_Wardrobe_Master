@@ -26,6 +26,13 @@ class _WardrobeManagementScreenState extends State<WardrobeManagementScreen> {
   Color get _textSecondary =>
       _isDark ? AppColors.darkTextSecondary : AppColors.textSecondary;
 
+  void _showSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
   @override
   void initState() {
     super.initState();
@@ -55,6 +62,7 @@ class _WardrobeManagementScreenState extends State<WardrobeManagementScreen> {
     final s = AppStringsProvider.of(context);
     final nameController = TextEditingController();
     String type = 'REGULAR';
+    String? nameError;
     await showDialog<void>(
       context: context,
       builder: (ctx) {
@@ -70,6 +78,7 @@ class _WardrobeManagementScreenState extends State<WardrobeManagementScreen> {
                     controller: nameController,
                     decoration: InputDecoration(
                       labelText: s.wardrobeName,
+                      errorText: nameError,
                       border: const OutlineInputBorder(),
                     ),
                     autofocus: true,
@@ -100,7 +109,10 @@ class _WardrobeManagementScreenState extends State<WardrobeManagementScreen> {
                 FilledButton(
                   onPressed: () async {
                     final name = nameController.text.trim();
-                    if (name.isEmpty) return;
+                    if (name.isEmpty) {
+                      setDialogState(() => nameError = s.wardrobeNameRequired);
+                      return;
+                    }
                     Navigator.of(ctx).pop();
                     try {
                       await WardrobeService.createWardrobe(
@@ -109,11 +121,7 @@ class _WardrobeManagementScreenState extends State<WardrobeManagementScreen> {
                       );
                       _load();
                     } catch (e) {
-                      if (mounted) {
-                        ScaffoldMessenger.of(
-                          context,
-                        ).showSnackBar(SnackBar(content: Text(e.toString())));
-                      }
+                      _showSnackBar(e.toString());
                     }
                   },
                   child: Text(s.create),
@@ -124,47 +132,55 @@ class _WardrobeManagementScreenState extends State<WardrobeManagementScreen> {
         );
       },
     );
+    nameController.dispose();
   }
 
   Future<void> _renameWardrobe(Wardrobe w) async {
     final s = AppStringsProvider.of(context);
     final nameController = TextEditingController(text: w.name);
+    String? nameError;
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(s.renameWardrobe),
-        content: TextField(
-          controller: nameController,
-          decoration: InputDecoration(
-            labelText: s.wardrobeName,
-            border: const OutlineInputBorder(),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx2, setDialogState) => AlertDialog(
+          title: Text(s.renameWardrobe),
+          content: TextField(
+            controller: nameController,
+            decoration: InputDecoration(
+              labelText: s.wardrobeName,
+              errorText: nameError,
+              border: const OutlineInputBorder(),
+            ),
+            autofocus: true,
           ),
-          autofocus: true,
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: Text(s.cancel),
+            ),
+            FilledButton(
+              onPressed: () {
+                if (nameController.text.trim().isEmpty) {
+                  setDialogState(() => nameError = s.wardrobeNameRequired);
+                  return;
+                }
+                Navigator.of(ctx).pop(true);
+              },
+              child: Text(s.save),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: Text(s.cancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: Text(s.save),
-          ),
-        ],
       ),
     );
-    if (ok != true) return;
     final name = nameController.text.trim();
-    if (name.isEmpty) return;
+    nameController.dispose();
+    if (ok != true) return;
+    if (name == w.name) return;
     try {
       await WardrobeService.updateWardrobe(w.id, name: name);
       _load();
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(e.toString())));
-      }
+      _showSnackBar(e.toString());
     }
   }
 
@@ -174,7 +190,7 @@ class _WardrobeManagementScreenState extends State<WardrobeManagementScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(s.deleteWardrobe),
-        content: Text(s.deleteWardrobeConfirm),
+        content: Text(s.deleteWardrobeConfirmNamed(w.name, w.itemCount)),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
@@ -195,33 +211,28 @@ class _WardrobeManagementScreenState extends State<WardrobeManagementScreen> {
       await WardrobeService.deleteWardrobe(w.id);
       _load();
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(e.toString())));
-      }
+      _showSnackBar(e.toString());
     }
   }
 
   Future<void> _shareWardrobe(Wardrobe wardrobe) async {
-    var latestWardrobe = wardrobe;
-    if (!wardrobe.isPublic) {
-      latestWardrobe = await WardrobeService.updateWardrobe(
-        wardrobe.id,
-        isPublic: true,
-      );
-      await _load();
-    }
+    try {
+      var latestWardrobe = wardrobe;
+      if (!wardrobe.isPublic) {
+        latestWardrobe = await WardrobeService.updateWardrobe(
+          wardrobe.id,
+          isPublic: true,
+        );
+        await _load();
+      }
 
-    final shareText =
-        'AI Wardrobe share code: ${latestWardrobe.wid}\nWardrobe: ${latestWardrobe.name}';
-    await Clipboard.setData(ClipboardData(text: shareText));
-    if (!mounted) {
-      return;
+      final shareText =
+          'AI Wardrobe share code: ${latestWardrobe.wid}\nWardrobe: ${latestWardrobe.name}';
+      await Clipboard.setData(ClipboardData(text: shareText));
+      _showSnackBar('Share code copied: ${latestWardrobe.wid}');
+    } catch (e) {
+      _showSnackBar(e.toString());
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Share code copied: ${latestWardrobe.wid}')),
-    );
   }
 
   @override
@@ -236,9 +247,15 @@ class _WardrobeManagementScreenState extends State<WardrobeManagementScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(_error!, style: TextStyle(color: _textSecondary)),
+                  Icon(Icons.error_outline, color: _textSecondary),
                   const SizedBox(height: 8),
-                  TextButton(onPressed: _load, child: const Text('Retry')),
+                  Text(
+                    _error!,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: _textSecondary),
+                  ),
+                  const SizedBox(height: 8),
+                  TextButton(onPressed: _load, child: Text(s.retry)),
                 ],
               ),
             )

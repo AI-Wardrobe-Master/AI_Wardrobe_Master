@@ -79,7 +79,8 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
 
   Future<void> _addToCurrentWardrobe() async {
     if (_addingToWardrobe || _addedToWardrobe) return;
-    String? wardrobeId = CurrentWardrobeController.currentWardrobeId;
+    String? wardrobeId =
+        _currentWardrobeId ?? CurrentWardrobeController.currentWardrobeId;
     if (wardrobeId == null) {
       try {
         final list = await WardrobeService.fetchWardrobes();
@@ -94,6 +95,9 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
         }
         wardrobeId = list.first.id;
         CurrentWardrobeController.setCurrentWardrobeId(wardrobeId);
+        if (mounted) {
+          setState(() => _currentWardrobeId = wardrobeId);
+        }
       } catch (_) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -110,6 +114,7 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
         setState(() {
           _addingToWardrobe = false;
           _addedToWardrobe = true;
+          _currentWardrobeId = wardrobeId;
         });
         final s = AppStringsProvider.of(context);
         ScaffoldMessenger.of(

@@ -226,13 +226,18 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
   }
 
   String _statusLabel(Map<String, dynamic> steps) {
-    if (steps['angleRendering'] == 'processing') return 'Rendering angles...';
-    if (steps['modelGeneration'] == 'processing')
+    if (steps['angleRendering'] == 'processing') {
+      return 'Rendering angles...';
+    }
+    if (steps['modelGeneration'] == 'processing') {
       return 'Generating 3D preview...';
-    if (steps['backgroundRemoval'] == 'processing')
+    }
+    if (steps['backgroundRemoval'] == 'processing') {
       return 'Removing background...';
-    if (steps['classification'] == 'processing')
+    }
+    if (steps['classification'] == 'processing') {
       return 'Generating placeholder classification...';
+    }
     return 'Processing...';
   }
 

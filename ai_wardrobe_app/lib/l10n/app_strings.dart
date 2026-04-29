@@ -69,6 +69,13 @@ class AppStrings {
   String get addToCurrentWardrobe => _t('addToCurrentWardrobe');
   String get addedToWardrobe => _t('addedToWardrobe');
   String get createWardrobeFirst => _t('createWardrobeFirst');
+  String get retry => _t('retry');
+  String get wardrobeNameRequired => _t('wardrobeNameRequired');
+  String get noMatchingClothes => _t('noMatchingClothes');
+  String get clearSearchFilters => _t('clearSearchFilters');
+  String deleteWardrobeConfirmNamed(String name, int count) => _t(
+    'deleteWardrobeConfirmNamed',
+  ).replaceAll('{name}', name).replaceAll('{count}', count.toString());
 
   // Discover
   String get discoverTitle => _t('discoverTitle');
@@ -114,8 +121,10 @@ class AppStrings {
   static const Map<String, String> _en = {
     'appTitle': 'AI Wardrobe Master',
     'splashTitle': 'AI Wardrobe Master',
-    'loginSubtitle': 'Sign in to keep your clothes and outfits in sync across devices.',
-    'loginDemoHint': 'No account setup required for the demo.\nJust continue to your wardrobe.',
+    'loginSubtitle':
+        'Sign in to keep your clothes and outfits in sync across devices.',
+    'loginDemoHint':
+        'No account setup required for the demo.\nJust continue to your wardrobe.',
     'continueButton': 'Continue',
     'skipForNow': 'Skip for now',
     'addNew': 'Add new',
@@ -149,13 +158,20 @@ class AppStrings {
     'removeFromWardrobe': 'Remove from wardrobe',
     'noWardrobesYet': 'No wardrobes yet.',
     'createFirstWardrobe': 'Create your first wardrobe to get started.',
-    'deleteWardrobeConfirm': 'Delete this wardrobe? Items inside will not be deleted.',
+    'deleteWardrobeConfirm':
+        'Delete this wardrobe? Items inside will not be deleted.',
     'cancel': 'Cancel',
     'save': 'Save',
     'create': 'Create',
     'addToCurrentWardrobe': 'Add to current wardrobe',
     'addedToWardrobe': 'Added to wardrobe',
     'createWardrobeFirst': 'Create a wardrobe first',
+    'retry': 'Retry',
+    'wardrobeNameRequired': 'Please enter a wardrobe name.',
+    'noMatchingClothes': 'No matching clothes.',
+    'clearSearchFilters': 'Clear search and filters',
+    'deleteWardrobeConfirmNamed':
+        'Delete "{name}"? {count} clothes will stay in your account and only the wardrobe grouping will be removed.',
     'discoverTitle': 'Discover',
     'discoverSubtitle': 'Browse creator packs and styling ideas.',
     'noCreatorPacksYet': 'No creator packs yet.',
@@ -168,7 +184,8 @@ class AppStrings {
     'statOutfits': 'Outfits',
     'statPacks': 'Packs',
     'virtualWardrobes': 'Virtual wardrobes',
-    'keepImportedSeparate': 'Keep imported looks separate from your physical wardrobe.',
+    'keepImportedSeparate':
+        'Keep imported looks separate from your physical wardrobe.',
     'importedLooks': 'Imported looks',
     'settings': 'Settings',
     'language': 'Language',
@@ -183,7 +200,8 @@ class AppStrings {
     'saveLook': 'Save look',
     'generatePreview': 'Generate Preview',
     'selectItem': 'Select {slot} item',
-    'selectItemHint': 'Here we will show hats, tops, pants, shoes, etc. connected to your wardrobe.',
+    'selectItemHint':
+        'Here we will show hats, tops, pants, shoes, etc. connected to your wardrobe.',
     'createCardPack': 'Create Card Pack',
     'cardPackName': 'Card Pack Name',
     'cardPackDescription': 'Card Pack Description',
@@ -238,6 +256,12 @@ class AppStrings {
     'addToCurrentWardrobe': '加入当前衣柜',
     'addedToWardrobe': '已加入衣柜',
     'createWardrobeFirst': '请先创建一个衣柜',
+    'retry': '重试',
+    'wardrobeNameRequired': '请输入衣柜名称。',
+    'noMatchingClothes': '没有匹配的衣物。',
+    'clearSearchFilters': '清除搜索和筛选',
+    'deleteWardrobeConfirmNamed':
+        '确定删除「{name}」？其中 {count} 件衣物仍会保留在账号中，只会移除这个衣柜分组。',
     'discoverTitle': '发现',
     'discoverSubtitle': '浏览创作者搭配包与穿搭灵感。',
     'noCreatorPacksYet': '暂无创作者搭配包。',
