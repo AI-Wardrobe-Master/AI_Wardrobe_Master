@@ -21,7 +21,7 @@ class ImportApiService {
     try {
       final resp = await _dio.post(
         '/imports/card-pack',
-        data: {'cardPackId': cardPackId},
+        data: {'card_pack_id': cardPackId},
       );
       return resp.data as Map<String, dynamic>;
     } catch (_) {
@@ -61,6 +61,10 @@ class ImportApiService {
       }
       return histories.take(limit).toList();
     }
+  }
+
+  static Future<void> unimportCardPack(String cardPackId) async {
+    await _dio.delete('/imports/card-pack/$cardPackId');
   }
 
   static Future<List<Map<String, dynamic>>> getImportedItems() async {

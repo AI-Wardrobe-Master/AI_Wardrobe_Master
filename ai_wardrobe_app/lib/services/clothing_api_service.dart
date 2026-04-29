@@ -205,6 +205,32 @@ class ClothingApiService {
     );
   }
 
+  static Future<List<Map<String, dynamic>>> searchClothingItems({
+    required String query,
+    Map<String, dynamic>? filters,
+    int page = 1,
+    int limit = 20,
+  }) async {
+    final resp = await _dio.post(
+      '/clothing-items/search',
+      data: {
+        'query': query,
+        if (filters != null) 'filters': filters,
+        'page': page,
+        'limit': limit,
+      },
+    );
+    final responseData = resp.data as Map<String, dynamic>;
+    final data = responseData['data'] as Map<String, dynamic>;
+    return (data['items'] as List<dynamic>? ?? const <dynamic>[])
+        .map((entry) => Map<String, dynamic>.from(entry as Map))
+        .toList();
+  }
+
+  static String getModelUrl(String itemId) {
+    return '$apiBaseUrl/clothing-items/$itemId/model';
+  }
+
   static Future<List<Map<String, dynamic>>> listClothingItems({
     String? wardrobeId,
     int page = 1,
