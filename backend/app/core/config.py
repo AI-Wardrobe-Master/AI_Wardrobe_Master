@@ -59,6 +59,7 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7
 
     # Hunyuan3D-2
+    HUNYUAN3D_ENABLED: bool = True
     HUNYUAN3D_MODEL_PATH: str = "tencent/Hunyuan3D-2"
     HUNYUAN3D_MV_MODEL_PATH: str = "tencent/Hunyuan3D-2mv"
     HUNYUAN3D_LOW_VRAM: bool = False

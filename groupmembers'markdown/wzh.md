@@ -444,3 +444,221 @@ Worker exited prematurely: signal 9 (SIGKILL)
 - 通过实际日志和资源监控确认当前瓶颈是内存不足，而不是代码没有调用模型或测试时间不够。
 
 ---
+
+### 5. 个人资料人脸素材、Visualize 联通与页面体验优化（2026.4.29）
+
+#### 5.1 本阶段工作背景
+
+在前端流程继续完善过程中，项目需要支持用户上传个人头像或人脸照片，并将该素材自动用于后续的穿搭预览、全身照生成或 Visualize 相关功能。同时，考虑到部分用户不希望上传真实人脸照片，因此还需要提供虚拟头像作为替代素材。
+
+本阶段工作主要围绕 **Profile 个人资料页的人脸素材管理** 和 **Visualize 模块的人脸素材复用** 展开，并同步处理衣物详情页图片显示体验问题。
+
+#### 5.2 个人资料页人脸照片功能
+
+本阶段在 `ProfileScreen` 中新增了“用于生成的人脸照片”相关能力：
+
+- 支持从相机拍照上传人脸照片。
+- 支持从图库选择已有图片。
+- 选择图片后进入裁切页面，方便用户从非大头照中裁切出人脸区域。
+- 裁切结果统一保存为头像生成素材。
+- 支持清除当前人脸素材。
+- 支持按当前登录用户隔离保存，避免不同账号之间头像素材串用。
+
+相关新增或修改文件包括：
+
+- `ai_wardrobe_app/lib/services/face_profile_service.dart`
+- `ai_wardrobe_app/lib/ui/screens/face_crop_screen.dart`
+- `ai_wardrobe_app/lib/ui/screens/profile_screen.dart`
+
+#### 5.3 虚拟头像替代方案
+
+为了保护用户隐私并降低测试门槛，本阶段新增了两个内置虚拟头像选项：
+
+- 男性虚拟头像
+- 女性虚拟头像
+
+用户可以不上传真人照片，而是直接选择虚拟头像作为后续生成素材。虚拟头像由前端渲染为图片字节并保存，后续页面读取时与真实裁切头像保持统一接口。
+
+该设计使 Profile 页面的人脸来源可以覆盖三种情况：
+
+- 用户自拍
+- 用户从图库上传
+- 用户选择虚拟头像
+
+#### 5.4 Visualize 模块与 Profile 人脸素材联通
+
+本阶段将 Visualize 中原本需要单独上传人脸照片的流程，与 Profile 个人资料页的人脸素材进行了联通：
+
+- Visualize 页面会自动读取当前用户在 Profile 中保存的人脸素材。
+- 如果用户选择了虚拟头像，Visualize 可以直接使用虚拟头像生成的图片字节。
+- 如果用户在 Visualize 中重新选择或裁切人脸，也会同步保存回 Profile，方便后续继续复用。
+- 当没有可用人脸素材时，Visualize 会提示用户先选择素材，而不是直接进入不可用流程。
+
+这样处理后，人脸素材从一次性上传变成了可复用的用户资料能力，减少了重复操作，也使个人资料页和预览生成功能之间形成了更完整的数据链路。
+
+#### 5.5 衣物详情页图片显示与缩放体验优化
+
+在衣物详情页测试中发现，原始衣物图片在详情页中存在两个体验问题：
+
+- 图片在页面中被裁切，只能看到局部区域。
+- 鼠标滚轮在未点开图片的情况下会触发图片缩放，影响页面滚动体验。
+
+针对该问题，本阶段进行了如下优化：
+
+- 详情页内嵌图片改为完整显示，避免默认裁切。
+- 页面中的图片不再直接使用滚轮缩放。
+- 用户点击图片后进入全屏查看模式。
+- 只有在全屏查看模式中才允许使用滚轮或手势缩放图片。
+- 保留页面正常滚动能力，避免图片区域劫持滚轮事件。
+
+相关修改文件：
+
+- `ai_wardrobe_app/lib/ui/screens/clothing_detail_screen.dart`
+
+#### 5.6 本阶段验证结果
+
+完成修改后，对相关前端文件进行了静态分析和运行级验证：
+
+- `Profile` 页面可以选择拍照、图库上传或虚拟头像。
+- 人脸图片裁切后可以保存并在页面回显。
+- 不同登录用户之间的人脸素材独立保存。
+- Visualize 页面可以自动读取 Profile 中的人脸素材。
+- 衣物详情页图片可以完整显示，并且不再影响页面滚动。
+
+#### 5.7 本阶段工作价值
+
+本阶段工作的主要价值在于补齐了“用户个人素材”这一关键前端能力，使项目后续的全身照生成、穿搭预览和个性化展示具备更自然的数据来源。
+
+具体价值包括：
+
+- 提高了 Profile 页面在 AI 生成流程中的实际作用。
+- 降低了用户在 Visualize 中重复上传人脸的操作成本。
+- 提供虚拟头像，兼顾隐私和测试便利性。
+- 优化详情页图片交互，减少误缩放和图片裁切带来的使用问题。
+- 为后续接入真实生成接口提供了更清晰的人脸素材入口。
+
+---
+
+### 6. Windows 桌面应用打包与本地一键启动包（2026.4.29）
+
+#### 6.1 本阶段工作背景
+
+在 Web 版联调基本可用后，进一步尝试将项目打包成更接近桌面软件的 Windows 应用形式，方便在本机进行演示、测试和交付。由于项目并不是单纯前端应用，而是同时依赖 Docker 后端、数据库、Redis、Celery、DreamO 和可选的 Hunyuan3D，因此本阶段采用“Flutter Windows 桌面前端 + Docker 后端 + 一键启动脚本”的方案。
+
+#### 6.2 Windows 桌面构建环境检查
+
+本阶段首先检查并补齐了 Windows 桌面构建环境：
+
+- 启用 Flutter Windows Desktop 支持。
+- 检查 `flutter doctor -v`。
+- 确认 Flutter 可以识别 `Windows (desktop)` 设备。
+- 确认 Visual Studio Community 2026 和 Windows 10 SDK 可用于 Windows 桌面构建。
+- 确认 Android SDK 和 Chrome 的缺失不影响 Windows 桌面打包。
+
+由于原始项目目录包含中文路径，Windows MSBuild 在 release 构建时出现路径编码问题。因此将 Flutter 前端复制到英文路径下进行构建：
+
+```text
+D:\AI_Wardrobe_Windows_Build\ai_wardrobe_app
+```
+
+#### 6.3 Flutter Windows release 构建
+
+在英文路径下执行了 Windows release 构建：
+
+```powershell
+flutter clean
+flutter pub get
+flutter build windows --release
+```
+
+最终成功生成 Windows 桌面前端：
+
+```text
+D:\AI_Wardrobe_Windows_Build\ai_wardrobe_app\build\windows\x64\runner\Release\ai_wardrobe_app.exe
+```
+
+同时确认 Flutter Windows 应用不能只复制单个 exe，必须保留整个 `Release` 目录中的 `data`、`flutter_windows.dll` 和插件 DLL。
+
+#### 6.4 本地应用包整理
+
+为了方便使用和交付，本阶段整理了完整的本地应用包：
+
+```text
+D:\AI_Wardrobe_Windows_Package\AI_Wardrobe_Master
+```
+
+目录结构包括：
+
+```text
+AI_Wardrobe_Master/
+  app/
+  server/
+  start_app.bat
+  stop_app.bat
+  README.txt
+```
+
+其中：
+
+- `app/` 存放 Windows 桌面前端。
+- `server/` 存放 Docker Compose 后端、backend 代码、DreamO 代码和环境变量配置。
+- `start_app.bat` 用于启动 Docker 后端并打开桌面应用。
+- `stop_app.bat` 用于停止 Docker 后端服务。
+- `README.txt` 用于说明基本使用方式。
+
+同时生成了完整压缩包：
+
+```text
+D:\AI_Wardrobe_Windows_Package\AI_Wardrobe_Master_Full_Local_App.zip
+```
+
+#### 6.5 低资源默认配置
+
+考虑到当前电脑虽然具备 RTX 4060 Laptop GPU，但 Hunyuan3D 在本地低内存环境中仍可能导致 worker 被杀死，因此应用包默认采用低资源配置：
+
+- `HUNYUAN3D_ENABLED=false`
+- `HUNYUAN3D_LOW_VRAM=true`
+- `HUNYUAN3D_SKIP_TEXTURE=true`
+- `DREAMO_OFFLOAD=true`
+- `DREAMO_DEFAULT_STEPS=4`
+
+这样可以保证前端、数据库、文件上传、DreamO 相关流程优先保持可用，而不会因为 Hunyuan3D 启动失败影响整体演示。
+
+#### 6.6 配置校验与文档补充
+
+打包完成后执行了 Docker Compose 配置校验：
+
+```powershell
+docker compose config --quiet
+```
+
+校验通过，说明打包目录中的 Compose 配置结构可被 Docker 正常解析。
+
+同时新增维护文档：
+
+```text
+documents/WINDOWS_LOCAL_APP_PACKAGE_GUIDE.md
+```
+
+该文档说明了：
+
+- 应用包定位
+- 目录结构
+- 启动和停止方式
+- `.env` 中的关键配置
+- 如何重新构建 Windows 前端
+- 如何重新生成压缩包
+- 常见问题和维护注意事项
+
+#### 6.7 本阶段工作价值
+
+本阶段工作的主要价值在于把项目从“开发环境运行”进一步推进为“可移动、可启动、可演示的 Windows 本地应用包”：
+
+- 提供了比浏览器页面更接近真实应用的使用方式。
+- 保留 Docker 后端，避免强行把复杂后端和模型塞入单文件 exe。
+- 使用一键脚本降低启动门槛。
+- 避开中文路径导致的 Windows 构建问题。
+- 默认关闭 Hunyuan3D，保证本机演示稳定性。
+- 为后续课程展示、测试分发和项目验收提供了更清晰的交付形态。
+
+---

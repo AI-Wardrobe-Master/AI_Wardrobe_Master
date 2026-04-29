@@ -167,6 +167,7 @@ async def run_styled_generation_task(generation_id: UUID) -> bool:
             seed=gen.seed,
             width=gen.width,
             height=gen.height,
+            num_inference_steps=settings.DREAMO_DEFAULT_STEPS,
         )
         _update_progress(db, gen, 90)
 
