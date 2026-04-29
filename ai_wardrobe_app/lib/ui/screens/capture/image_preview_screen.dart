@@ -1,13 +1,14 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 
+import '../../../models/captured_image.dart';
+
 class ImagePreviewScreen extends StatelessWidget {
-  final File imageFile;
+  final CapturedImage image;
   final String label;
 
   const ImagePreviewScreen({
     super.key,
-    required this.imageFile,
+    required this.image,
     required this.label,
   });
 
@@ -47,10 +48,7 @@ class ImagePreviewScreen extends StatelessWidget {
                 padding: const EdgeInsets.all(20),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(16),
-                  child: Image.file(
-                    imageFile,
-                    fit: BoxFit.contain,
-                  ),
+                  child: image.buildImage(fit: BoxFit.contain),
                 ),
               ),
             ),

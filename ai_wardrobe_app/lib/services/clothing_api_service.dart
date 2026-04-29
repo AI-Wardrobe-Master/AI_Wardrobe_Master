@@ -20,6 +20,7 @@ class ClothingApiService {
     String? material,
     String? style,
     String? wardrobeId,
+    bool skipProcessing = false,
   }) async {
     final formData = FormData.fromMap({
       'front_image': await MultipartFile.fromFile(
@@ -38,6 +39,7 @@ class ClothingApiService {
       if (material case final value?) 'material': value,
       if (style case final value?) 'style': value,
       if (wardrobeId case final value?) 'wardrobe_id': value,
+      if (skipProcessing) 'skip_processing': 'true',
     });
 
     final resp = await _dio.post('/clothing-items', data: formData);
@@ -47,6 +49,8 @@ class ClothingApiService {
   static Future<Map<String, dynamic>> createClothingItemFromBytes({
     required Uint8List frontImageBytes,
     Uint8List? backImageBytes,
+    String frontFilename = 'front.jpg',
+    String? backFilename,
     String? name,
     String? description,
     List<String> manualTags = const <String>[],
@@ -54,16 +58,17 @@ class ClothingApiService {
     String? material,
     String? style,
     String? wardrobeId,
+    bool skipProcessing = false,
   }) async {
     final formData = FormData.fromMap({
       'front_image': MultipartFile.fromBytes(
         frontImageBytes,
-        filename: 'front.jpg',
+        filename: frontFilename,
       ),
       if (backImageBytes != null)
         'back_image': MultipartFile.fromBytes(
           backImageBytes,
-          filename: 'back.jpg',
+          filename: backFilename ?? 'back.jpg',
         ),
       if (name case final value?) 'name': value,
       if (description case final value?) 'description': value,
@@ -72,6 +77,7 @@ class ClothingApiService {
       if (material case final value?) 'material': value,
       if (style case final value?) 'style': value,
       if (wardrobeId case final value?) 'wardrobe_id': value,
+      if (skipProcessing) 'skip_processing': 'true',
     });
 
     final resp = await _dio.post('/clothing-items', data: formData);

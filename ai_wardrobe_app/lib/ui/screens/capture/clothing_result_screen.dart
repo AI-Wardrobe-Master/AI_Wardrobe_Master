@@ -1,12 +1,12 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../../../l10n/app_strings_provider.dart';
-import '../../../services/api_config.dart';
 import '../../../services/clothing_api_service.dart';
 import '../../../services/wardrobe_service.dart';
 import '../../../state/current_wardrobe_controller.dart';
+import '../../../state/wardrobe_refresh_notifier.dart';
 import '../../../theme/app_theme.dart';
+import '../../widgets/app_remote_image.dart';
 
 class ClothingResultScreen extends StatefulWidget {
   final String itemId;
@@ -38,10 +38,12 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
       final results = await Future.wait([
         ClothingApiService.getClothingItem(widget.itemId),
         ClothingApiService.getAngleViews(widget.itemId),
-        ClothingApiService.getAttributeOptions().catchError((_) => <String, List<String>>{}),
+        ClothingApiService.getAttributeOptions().catchError(
+          (_) => <String, List<String>>{},
+        ),
       ]);
       final item = Map<String, dynamic>.from(results[0] as Map);
-      final angleViews = (results[1] as Map)['angleViews'] as List? ?? [];
+      final angleViews = _normalizeAngleViews((results[1] as Map)['angleViews']);
 
       String? currentWardrobeId = CurrentWardrobeController.currentWardrobeId;
       if (currentWardrobeId == null) {
@@ -77,9 +79,7 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
 
   List<Map<String, String>> _getFinalTags() {
     final list = _item?['finalTags'] as List? ?? [];
-    return list
-        .map((e) => Map<String, String>.from(e as Map))
-        .toList();
+    return list.map((e) => Map<String, String>.from(e as Map)).toList();
   }
 
   void _openTagEditor() {
@@ -107,7 +107,10 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
         child: Row(
           children: [
-            Text('Tags', style: TextStyle(fontWeight: FontWeight.w600, color: textP)),
+            Text(
+              'Tags',
+              style: TextStyle(fontWeight: FontWeight.w600, color: textP),
+            ),
             const SizedBox(width: 8),
             TextButton.icon(
               onPressed: _openTagEditor,
@@ -125,7 +128,10 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
         children: [
           Row(
             children: [
-              Text('Tags', style: TextStyle(fontWeight: FontWeight.w600, color: textP)),
+              Text(
+                'Tags',
+                style: TextStyle(fontWeight: FontWeight.w600, color: textP),
+              ),
               const SizedBox(width: 8),
               TextButton(
                 onPressed: _openTagEditor,
@@ -150,11 +156,6 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
         ],
       ),
     );
-  }
-
-  String _fullUrl(String? url) {
-    if (url == null || url.isEmpty) return '';
-    return resolveFileUrl(url);
   }
 
   Future<void> _addToCurrentWardrobe() async {
@@ -190,6 +191,7 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
     setState(() => _addingToWardrobe = true);
     try {
       await WardrobeService.addItemToWardrobe(wardrobeId, widget.itemId);
+      WardrobeRefreshNotifier.requestRefresh();
       if (mounted) {
         setState(() {
           _addingToWardrobe = false;
@@ -224,8 +226,7 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
     }
 
     final name = _item?['name'] as String? ?? 'Clothing Item';
-    final isConfirmed = _item?['isConfirmed'] as bool? ?? false;
-    final _isConfirmed = isConfirmed;
+    final itemConfirmed = _item?['isConfirmed'] as bool? ?? false;
 
     return Scaffold(
       body: SafeArea(
@@ -258,8 +259,8 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
                     tooltip: 'Edit tags',
                   ),
                   Icon(
-                    _isConfirmed ? Icons.check_circle : Icons.pending,
-                    color: _isConfirmed ? Colors.green : Colors.orange,
+                    itemConfirmed ? Icons.check_circle : Icons.pending,
+                    color: itemConfirmed ? Colors.green : Colors.orange,
                     size: 24,
                   ),
                   const SizedBox(width: 8),
@@ -306,10 +307,11 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   scrollDirection: Axis.horizontal,
                   itemCount: _angleViews.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 8),
+                  separatorBuilder: (context, index) =>
+                      const SizedBox(width: 8),
                   itemBuilder: (context, i) {
                     final view = _angleViews[i] as Map;
-                    final url = _fullUrl(view['url'] as String?);
+                    final url = view['url'] as String? ?? '';
                     final selected = i == _selectedAngle;
                     return GestureDetector(
                       onTap: () => setState(() => _selectedAngle = i),
@@ -396,6 +398,7 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
                         padding: const EdgeInsets.symmetric(vertical: 14),
                       ),
                       onPressed: () {
+                        WardrobeRefreshNotifier.requestRefresh();
                         Navigator.of(context).popUntil((r) => r.isFirst);
                       },
                       child: const Text('Done'),
@@ -417,37 +420,44 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
     Widget? placeholder,
     Widget? errorWidget,
   }) {
-    if (url.isEmpty) {
-      return errorWidget ?? const SizedBox.shrink();
-    }
-    if (url.startsWith('data:')) {
-      try {
-        final data = Uri.parse(url).data;
-        if (data != null) {
-          return Image.memory(
-            data.contentAsBytes(),
-            fit: fit,
-            errorBuilder: (_, __, ___) =>
-                errorWidget ?? const SizedBox.shrink(),
-          );
-        }
-      } catch (_) {
-        return errorWidget ?? const SizedBox.shrink();
-      }
-      return errorWidget ?? const SizedBox.shrink();
-    }
-    return CachedNetworkImage(
-      imageUrl: url,
-      httpHeaders: ApiSession.authHeaders,
+    return AppRemoteImage(
+      url: url,
       fit: fit,
-      placeholder: (_, __) => placeholder ?? const SizedBox.shrink(),
-      errorWidget: (_, __, ___) => errorWidget ?? const SizedBox.shrink(),
+      placeholder: placeholder,
+      errorWidget: errorWidget,
     );
+  }
+
+  List<Map<String, dynamic>> _normalizeAngleViews(dynamic raw) {
+    if (raw is List) {
+      return raw
+          .whereType<Map>()
+          .map((entry) => Map<String, dynamic>.from(entry))
+          .toList();
+    }
+    if (raw is Map) {
+      final entries = raw.entries.toList()
+        ..sort((left, right) {
+          final leftAngle = int.tryParse(left.key.toString()) ?? 0;
+          final rightAngle = int.tryParse(right.key.toString()) ?? 0;
+          return leftAngle.compareTo(rightAngle);
+        });
+      return entries
+          .map(
+            (entry) => <String, dynamic>{
+              'angle': int.tryParse(entry.key.toString()),
+              'url': entry.value?.toString(),
+            },
+          )
+          .where((entry) => (entry['url'] as String? ?? '').isNotEmpty)
+          .toList();
+    }
+    return const <Map<String, dynamic>>[];
   }
 
   Widget _buildAngleViewer() {
     final view = _angleViews[_selectedAngle] as Map;
-    final url = _fullUrl(view['url'] as String?);
+    final url = view['url'] as String? ?? '';
     return GestureDetector(
       onHorizontalDragEnd: (details) {
         if (details.primaryVelocity == null) return;
@@ -474,8 +484,14 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
 
   Widget _buildOriginalImages() {
     final images = _item?['images'] as Map? ?? {};
-    final front = _fullUrl(images['processedFrontUrl'] as String?);
-    final back = _fullUrl(images['processedBackUrl'] as String?);
+    final front =
+        images['processedFrontUrl'] as String? ??
+        images['originalFrontUrl'] as String? ??
+        '';
+    final back =
+        images['processedBackUrl'] as String? ??
+        images['originalBackUrl'] as String? ??
+        '';
 
     return PageView(
       children: [
@@ -494,7 +510,7 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
   }
 }
 
-/// Tag edit screen - 2.3.3 手动调整 style/season/audience 等属性
+/// Tag edit screen for adjusting style, season, audience, and related tags.
 class _TagEditScreen extends StatefulWidget {
   final String itemId;
   final List<Map<String, String>> initialTags;
@@ -513,7 +529,7 @@ class _TagEditScreen extends StatefulWidget {
 }
 
 class _TagEditScreenState extends State<_TagEditScreen> {
-  late Map<String, String> _singleValue; // category, pattern, style, season, audience
+  late Map<String, String> _singleValue;
   late List<String> _colors;
   bool _saving = false;
 
@@ -574,9 +590,6 @@ class _TagEditScreenState extends State<_TagEditScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final textP = isDark ? AppColors.darkTextPrimary : AppColors.textPrimary;
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('Edit Tags'),
@@ -618,9 +631,11 @@ class _TagEditScreenState extends State<_TagEditScreen> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
       child: DropdownButtonFormField<String>(
-        value: opts.contains(val) ? val : opts.first,
+        initialValue: opts.contains(val) ? val : opts.first,
         decoration: InputDecoration(labelText: label),
-        items: opts.map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
+        items: opts
+            .map((v) => DropdownMenuItem(value: v, child: Text(v)))
+            .toList(),
         onChanged: (v) => setState(() => _singleValue[key] = v ?? ''),
       ),
     );
@@ -633,7 +648,10 @@ class _TagEditScreenState extends State<_TagEditScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Colors (can select multiple)', style: TextStyle(fontSize: 12)),
+          const Text(
+            'Colors (can select multiple)',
+            style: TextStyle(fontSize: 12),
+          ),
           const SizedBox(height: 8),
           Wrap(
             spacing: 8,

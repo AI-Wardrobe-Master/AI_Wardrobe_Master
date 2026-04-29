@@ -1,12 +1,11 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../models/wardrobe.dart';
-import '../../services/api_config.dart';
 import '../../services/clothing_api_service.dart';
 import '../../services/local_clothing_service.dart';
 import '../../theme/app_theme.dart';
+import '../widgets/app_remote_image.dart';
 
 class ClothingDetailScreen extends StatefulWidget {
   const ClothingDetailScreen({
@@ -399,9 +398,11 @@ class _ClothingDetailScreenState extends State<ClothingDetailScreen> {
 
   Widget _buildImageCard() {
     final imageUrl = _imageUrl;
+    final viewport = MediaQuery.sizeOf(context);
+    final imageHeight = viewport.width < 700 ? 340.0 : 420.0;
     return Container(
       width: double.infinity,
-      height: 280,
+      height: imageHeight,
       decoration: BoxDecoration(
         color: _surfaceColor,
         borderRadius: BorderRadius.circular(24),
@@ -423,21 +424,108 @@ class _ClothingDetailScreenState extends State<ClothingDetailScreen> {
   }
 
   Widget _buildAdaptiveImage(String imageUrl) {
-    if (imageUrl.startsWith('data:')) {
-      final data = Uri.parse(imageUrl).data;
-      if (data != null) {
-        return Image.memory(data.contentAsBytes(), fit: BoxFit.cover);
-      }
-    }
-    return CachedNetworkImage(
-      imageUrl: resolveFileUrl(imageUrl),
-      httpHeaders: ApiSession.authHeaders,
-      fit: BoxFit.cover,
-      placeholder: (_, __) => Center(
-        child: CircularProgressIndicator(strokeWidth: 2, color: _accent),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => _showImageViewer(imageUrl),
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: AppRemoteImage(
+                url: imageUrl,
+                fit: BoxFit.contain,
+                placeholder: Center(
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: _accent,
+                  ),
+                ),
+                errorWidget: Icon(Icons.image_outlined, color: _textSecondary),
+              ),
+            ),
+            Positioned(
+              right: 12,
+              bottom: 12,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.54),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.open_in_full_rounded,
+                        color: Colors.white,
+                        size: 15,
+                      ),
+                      SizedBox(width: 6),
+                      Text(
+                        'Open',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
-      errorWidget: (_, __, ___) =>
-          Icon(Icons.image_outlined, color: _textSecondary),
+    );
+  }
+
+  Future<void> _showImageViewer(String imageUrl) async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return Dialog.fullscreen(
+          backgroundColor: Colors.black,
+          child: SafeArea(
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: InteractiveViewer(
+                    minScale: 0.8,
+                    maxScale: 5,
+                    child: Center(
+                      child: AppRemoteImage(
+                        url: imageUrl,
+                        fit: BoxFit.contain,
+                        placeholder: Center(
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: _accent,
+                          ),
+                        ),
+                        errorWidget: const Icon(
+                          Icons.image_outlined,
+                          color: Colors.white70,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  top: 12,
+                  right: 12,
+                  child: IconButton.filled(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close_rounded),
+                    tooltip: 'Close',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 

@@ -59,9 +59,15 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7
 
     # Hunyuan3D-2
+    HUNYUAN3D_ENABLED: bool = True
     HUNYUAN3D_MODEL_PATH: str = "tencent/Hunyuan3D-2"
     HUNYUAN3D_MV_MODEL_PATH: str = "tencent/Hunyuan3D-2mv"
     HUNYUAN3D_LOW_VRAM: bool = False
+    HUNYUAN3D_SHAPE_SUBFOLDER: str = "hunyuan3d-dit-v2-0"
+    HUNYUAN3D_SHAPE_STEPS: int = 50
+    HUNYUAN3D_OCTREE_RESOLUTION: int = 384
+    HUNYUAN3D_NUM_CHUNKS: int = 8000
+    HUNYUAN3D_SKIP_TEXTURE: bool = False
 
     # Redis / Celery
     REDIS_URL: str = "redis://localhost:6379/0"

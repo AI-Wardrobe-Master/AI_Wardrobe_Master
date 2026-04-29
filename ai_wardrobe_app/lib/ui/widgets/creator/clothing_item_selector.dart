@@ -1,8 +1,7 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
-import '../../../services/api_config.dart';
 import '../../../theme/app_theme.dart';
+import '../app_remote_image.dart';
 
 class ClothingItemSelector extends StatefulWidget {
   final List<Map<String, dynamic>> items;
@@ -92,10 +91,13 @@ class _ClothingItemSelectorState extends State<ClothingItemSelector> {
         final item = widget.items[index];
         final itemId = item['id'] as String? ?? item['id'].toString();
         final isSelected = _selectedIds.contains(itemId);
-        final images = item['images'] as Map<String, dynamic>?;
+        final images = Map<String, dynamic>.from(
+          item['images'] as Map? ?? const <String, dynamic>{},
+        );
         final imageUrl =
-            images?['processedFrontUrl'] as String? ??
-            images?['originalFrontUrl'] as String?;
+            images['processedFrontUrl'] as String? ??
+            images['originalFrontUrl'] as String? ??
+            item['imageUrl'] as String?;
         final name = item['name'] as String? ?? 'Unnamed';
 
         return GestureDetector(
@@ -149,37 +151,14 @@ Widget _buildPreviewImage(String? imageUrl, Color textS) {
     );
   }
 
-  if (imageUrl.startsWith('data:')) {
-    try {
-      final data = Uri.parse(imageUrl).data;
-      if (data != null) {
-        return Image.memory(
-          data.contentAsBytes(),
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => Container(
-            color: textS.withValues(alpha: 0.1),
-            child: Icon(Icons.image_outlined, color: textS),
-          ),
-        );
-      }
-    } catch (_) {
-      // Fall through to the placeholder below.
-    }
-    return Container(
-      color: textS.withValues(alpha: 0.1),
-      child: Icon(Icons.image_outlined, color: textS),
-    );
-  }
-
-  return CachedNetworkImage(
-    imageUrl: resolveFileUrl(imageUrl),
-    httpHeaders: ApiSession.authHeaders,
+  return AppRemoteImage(
+    url: imageUrl,
     fit: BoxFit.cover,
-    placeholder: (context, url) => Container(
+    placeholder: Container(
       color: textS.withValues(alpha: 0.1),
       child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
     ),
-    errorWidget: (context, url, error) => Container(
+    errorWidget: Container(
       color: textS.withValues(alpha: 0.1),
       child: Icon(Icons.image_outlined, color: textS),
     ),

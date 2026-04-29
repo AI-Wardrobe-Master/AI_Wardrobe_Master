@@ -1,9 +1,8 @@
 import 'dart:async';
-import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import '../../../models/captured_image.dart';
 import '../../../services/clothing_api_service.dart';
 import '../../../services/local_clothing_service.dart';
 import '../../../services/wardrobe_service.dart';
@@ -25,8 +24,8 @@ class ProcessingScreen extends StatefulWidget {
     this.targetWardrobeId,
   });
 
-  final File frontImage;
-  final File? backImage;
+  final CapturedImage frontImage;
+  final CapturedImage? backImage;
   final String? itemName;
   final String? description;
   final List<String> manualTags;
@@ -63,10 +62,8 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
 
   Future<void> _startUpload() async {
     try {
-      final frontBytes = await widget.frontImage.readAsBytes();
-      final backBytes = widget.backImage == null
-          ? null
-          : await widget.backImage!.readAsBytes();
+      final frontBytes = widget.frontImage.bytes;
+      final backBytes = widget.backImage?.bytes;
       setState(() {
         _status = 'Uploading images...';
         _progress = 0.05;
@@ -74,9 +71,11 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
         _error = null;
       });
 
-      final result = await ClothingApiService.createClothingItem(
-        frontImage: widget.frontImage,
-        backImage: widget.backImage,
+      final result = await ClothingApiService.createClothingItemFromBytes(
+        frontImageBytes: frontBytes,
+        backImageBytes: backBytes,
+        frontFilename: widget.frontImage.filename,
+        backFilename: widget.backImage?.filename,
         name: widget.itemName,
         description: widget.description,
         manualTags: widget.manualTags,
@@ -84,80 +83,49 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
         material: widget.material,
         style: widget.style,
         wardrobeId: widget.targetWardrobeId,
+        skipProcessing: false,
       );
 
       final responseData = result['data'] as Map<String, dynamic>? ?? result;
       final processingTaskId = responseData['processingTaskId'] as String?;
       final itemId = responseData['id'] as String?;
 
-      if (itemId == null && processingTaskId == null) {
-        throw Exception(
-          'Invalid response: missing item ID or processing task ID',
-        );
+      if (itemId == null) {
+        throw Exception('Invalid response: missing item ID');
       }
 
-      if (itemId != null) {
-        await LocalClothingService.cacheRemoteItem(
-          <String, dynamic>{
-            'id': itemId,
-            'name': widget.itemName?.trim().isNotEmpty == true
-                ? widget.itemName!.trim()
-                : 'Imported Item',
-            'description': widget.description ?? '',
-            'source': 'OWNED',
-            'sourceType': 'MANUAL_CAPTURE',
-            'syncStatus': 'PENDING_SYNC',
-            'predictedTags': widget.autoTags,
-            'finalTags': <Map<String, String>>[
-              ...widget.autoTags,
-              ...widget.manualTags.map(
-                (tag) => <String, String>{'key': 'manual', 'value': tag},
-              ),
-              if ((widget.category ?? '').trim().isNotEmpty)
-                <String, String>{
-                  'key': 'category',
-                  'value': widget.category!.trim(),
-                },
-              if ((widget.material ?? '').trim().isNotEmpty)
-                <String, String>{
-                  'key': 'material',
-                  'value': widget.material!.trim(),
-                },
-              if ((widget.style ?? '').trim().isNotEmpty)
-                <String, String>{'key': 'style', 'value': widget.style!.trim()},
-            ],
-            'customTags': widget.manualTags,
-            'category': widget.category,
-            'material': widget.material,
-            'style': widget.style,
-            'images': <String, dynamic>{
-              'originalFrontUrl':
-                  'data:image/jpeg;base64,${base64Encode(frontBytes)}',
-              'processedFrontUrl':
-                  'data:image/jpeg;base64,${base64Encode(frontBytes)}',
-              if (backBytes != null)
-                'originalBackUrl':
-                    'data:image/jpeg;base64,${base64Encode(backBytes)}',
-              if (backBytes != null)
-                'processedBackUrl':
-                    'data:image/jpeg;base64,${base64Encode(backBytes)}',
-            },
-          },
-          wardrobeIds: widget.targetWardrobeId == null
-              ? const <String>[]
-              : <String>[widget.targetWardrobeId!],
-        );
-      }
-
-      _itemId = itemId ?? processingTaskId;
+      _itemId = itemId;
       setState(() {
         _steps['upload'] = 'completed';
         _steps['classification'] = 'processing';
         _progress = 0.1;
-        _status = 'Upload successful! Processing...';
+        _status = processingTaskId == null
+            ? 'Saved to wardrobe'
+            : 'Starting AI processing...';
       });
 
-      await Future<void>.delayed(const Duration(milliseconds: 500));
+      if (processingTaskId == null) {
+        await ClothingApiService.getClothingItem(itemId);
+        setState(() {
+          _steps['classification'] = 'completed';
+          _steps['backgroundRemoval'] = 'completed';
+          _steps['modelGeneration'] = 'completed';
+          _steps['angleRendering'] = 'completed';
+          _progress = 1;
+        });
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        if (!mounted) {
+          return;
+        }
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute<void>(
+            builder: (_) => ClothingResultScreen(itemId: itemId),
+          ),
+        );
+        return;
+      }
+
       _startPolling();
     } catch (error) {
       setState(() {
@@ -226,9 +194,7 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
   }
 
   String _statusLabel(Map<String, dynamic> steps) {
-    if (steps['angleRendering'] == 'processing') {
-      return 'Rendering angles...';
-    }
+    if (steps['angleRendering'] == 'processing') return 'Rendering angles...';
     if (steps['modelGeneration'] == 'processing') {
       return 'Generating 3D preview...';
     }
@@ -297,10 +263,8 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
         _status = 'Saving locally...';
       });
       final itemId = await LocalClothingService.saveItem(
-        frontImageBytes: await widget.frontImage.readAsBytes(),
-        backImageBytes: widget.backImage == null
-            ? null
-            : await widget.backImage!.readAsBytes(),
+        frontImageBytes: widget.frontImage.bytes,
+        backImageBytes: widget.backImage?.bytes,
         name: widget.itemName?.trim().isNotEmpty == true
             ? widget.itemName!.trim()
             : 'Imported Item',

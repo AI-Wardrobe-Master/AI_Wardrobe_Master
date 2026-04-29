@@ -1,12 +1,17 @@
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_strings_provider.dart';
+import '../../models/card_pack.dart';
 import '../../models/creator.dart';
 import '../../models/wardrobe.dart';
+import '../../services/card_pack_api_service.dart';
 import '../../services/creator_api_service.dart';
+import '../../services/local_card_pack_service.dart';
 import '../../services/wardrobe_service.dart';
 import '../../theme/app_theme.dart';
+import '../widgets/app_remote_image.dart';
 import '../widgets/creator/creator_list_item.dart';
+import 'card_pack_detail_screen.dart';
 import 'creator/card_pack_creator_screen.dart';
 import 'creator/creator_profile_screen.dart';
 import 'shared_wardrobe_detail_screen.dart';
@@ -24,6 +29,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   final TextEditingController _searchController = TextEditingController();
 
   List<Wardrobe> _wardrobes = [];
+  List<CardPack> _cardPacks = [];
   List<Creator> _creators = [];
   bool _loadingWardrobes = false;
   bool _loadingCreators = false;
@@ -78,12 +84,15 @@ class _DiscoverScreenState extends State<DiscoverScreen>
       _errorWardrobes = null;
     });
     try {
-      final wardrobes = await WardrobeService.listPublicWardrobes(
-        search: _searchQuery.isNotEmpty ? _searchQuery : null,
-      );
+      final query = _searchQuery.isNotEmpty ? _searchQuery : null;
+      final results = await Future.wait<Object>([
+        WardrobeService.listPublicWardrobes(search: query),
+        _loadPublishedCardPacks(search: query),
+      ]);
       if (!mounted) return;
       setState(() {
-        _wardrobes = wardrobes;
+        _wardrobes = results[0] as List<Wardrobe>;
+        _cardPacks = results[1] as List<CardPack>;
         _loadingWardrobes = false;
       });
     } catch (e) {
@@ -93,6 +102,45 @@ class _DiscoverScreenState extends State<DiscoverScreen>
         _loadingWardrobes = false;
       });
     }
+  }
+
+  Future<List<CardPack>> _loadPublishedCardPacks({String? search}) async {
+    final merged = <String, CardPack>{};
+    try {
+      final remotePacks = await CardPackApiService.listCardPacks(
+        search: search,
+        status: 'PUBLISHED',
+        limit: 100,
+      );
+      for (final pack in remotePacks) {
+        merged[pack.id] = pack;
+      }
+    } catch (_) {
+      // Local published packs are still useful while the public feed is down.
+    }
+
+    final localPacks = await LocalCardPackService.listCardPacks(
+      status: 'PUBLISHED',
+    );
+    for (final pack in localPacks) {
+      final query = search?.trim().toLowerCase();
+      final matchesQuery =
+          query == null ||
+          query.isEmpty ||
+          pack.name.toLowerCase().contains(query) ||
+          (pack.description?.toLowerCase().contains(query) ?? false);
+      if (matchesQuery) {
+        merged[pack.id] = pack;
+      }
+    }
+
+    final packs = merged.values.toList()
+      ..sort((left, right) {
+        final leftDate = left.publishedAt ?? left.createdAt;
+        final rightDate = right.publishedAt ?? right.createdAt;
+        return rightDate.compareTo(leftDate);
+      });
+    return packs;
   }
 
   Future<void> _loadCreators() async {
@@ -242,8 +290,9 @@ class _DiscoverScreenState extends State<DiscoverScreen>
       );
     }
 
-    final filtered = _filteredWardrobes;
-    if (filtered.isEmpty) {
+    final filteredWardrobes = _filteredWardrobes;
+    final filteredPacks = _filteredCardPacks;
+    if (filteredWardrobes.isEmpty && filteredPacks.isEmpty) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -266,13 +315,16 @@ class _DiscoverScreenState extends State<DiscoverScreen>
             ),
             const SizedBox(height: 20),
             FilledButton.icon(
-              onPressed: () {
-                Navigator.push(
+              onPressed: () async {
+                await Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (_) => const CardPackCreatorScreen(),
                   ),
                 );
+                if (mounted) {
+                  _loadWardrobes();
+                }
               },
               icon: const Icon(Icons.add, size: 18),
               label: const Text('Create Card Pack'),
@@ -291,9 +343,12 @@ class _DiscoverScreenState extends State<DiscoverScreen>
       onRefresh: _loadWardrobes,
       child: ListView.builder(
         padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
-        itemCount: filtered.length,
+        itemCount: filteredPacks.length + filteredWardrobes.length,
         itemBuilder: (context, index) {
-          final wardrobe = filtered[index];
+          if (index < filteredPacks.length) {
+            return _buildCardPackTile(filteredPacks[index], textP, textS, isDark);
+          }
+          final wardrobe = filteredWardrobes[index - filteredPacks.length];
           return Card(
             margin: const EdgeInsets.only(bottom: 12),
             color: isDark ? AppColors.darkSurface : Colors.white,
@@ -383,6 +438,113 @@ class _DiscoverScreenState extends State<DiscoverScreen>
             ),
           );
         },
+      ),
+    );
+  }
+
+  List<CardPack> get _filteredCardPacks {
+    if (_searchQuery.isEmpty) return _cardPacks;
+    final query = _searchQuery.toLowerCase();
+    return _cardPacks.where((pack) {
+      return pack.name.toLowerCase().contains(query) ||
+          (pack.description?.toLowerCase().contains(query) ?? false) ||
+          (pack.creatorUid?.toLowerCase().contains(query) ?? false) ||
+          (pack.creatorUsername?.toLowerCase().contains(query) ?? false) ||
+          (pack.wardrobeWid?.toLowerCase().contains(query) ?? false);
+    }).toList();
+  }
+
+  Widget _buildCardPackTile(
+    CardPack pack,
+    Color textP,
+    Color textS,
+    bool isDark,
+  ) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      color: isDark ? AppColors.darkSurface : Colors.white,
+      child: ListTile(
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => CardPackDetailScreen(packId: pack.id),
+            ),
+          );
+        },
+        leading: ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: SizedBox(
+            width: 56,
+            height: 56,
+            child: pack.coverImageUrl == null || pack.coverImageUrl!.isEmpty
+                ? Container(
+                    color: textS.withValues(alpha: 0.1),
+                    child: Icon(Icons.collections_bookmark_outlined, color: textS),
+                  )
+                : AppRemoteImage(
+                    url: pack.coverImageUrl!,
+                    fit: BoxFit.cover,
+                    placeholder: Container(color: textS.withValues(alpha: 0.1)),
+                    errorWidget: Container(
+                      color: textS.withValues(alpha: 0.1),
+                      child: Icon(Icons.image_outlined, color: textS),
+                    ),
+                  ),
+          ),
+        ),
+        title: Text(
+          pack.name,
+          style: TextStyle(
+            fontWeight: FontWeight.w700,
+            fontSize: 15,
+            color: textP,
+          ),
+        ),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (pack.wardrobeWid != null)
+                Text(
+                  'WID: ${pack.wardrobeWid}',
+                  style: TextStyle(fontSize: 12, color: textS),
+                ),
+              if (pack.creatorUid != null)
+                Text(
+                  'Publisher UID: ${pack.creatorUid}',
+                  style: TextStyle(fontSize: 12, color: textS),
+                ),
+              if (pack.description?.isNotEmpty == true)
+                Text(
+                  pack.description!,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 12, color: textS),
+                ),
+            ],
+          ),
+        ),
+        trailing: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: AppColors.accentBlue.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text('Card Pack', style: TextStyle(fontSize: 11, color: textP)),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '${pack.itemCount} items',
+              style: TextStyle(fontSize: 11, color: textS),
+            ),
+          ],
+        ),
       ),
     );
   }

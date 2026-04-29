@@ -1,7 +1,6 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 
+import '../../../models/captured_image.dart';
 import '../../../models/wardrobe.dart';
 import '../../../services/wardrobe_service.dart';
 import '../../../theme/app_theme.dart';
@@ -14,8 +13,8 @@ class ClothingIntakeScreen extends StatefulWidget {
     this.backImage,
   });
 
-  final File frontImage;
-  final File? backImage;
+  final CapturedImage frontImage;
+  final CapturedImage? backImage;
 
   @override
   State<ClothingIntakeScreen> createState() => _ClothingIntakeScreenState();
@@ -47,8 +46,8 @@ class _ClothingIntakeScreenState extends State<ClothingIntakeScreen> {
       },
       const <String, String>{'key': 'pipeline', 'value': 'placeholder'},
     ];
-    _nameController.text = widget.frontImage.uri.pathSegments.isNotEmpty
-        ? widget.frontImage.uri.pathSegments.last.split('.').first
+    _nameController.text = widget.frontImage.filename.isNotEmpty
+        ? widget.frontImage.filename.split('.').first
         : 'New Clothing Item';
     _loadWardrobes();
   }
@@ -406,7 +405,7 @@ class _ClothingIntakeScreenState extends State<ClothingIntakeScreen> {
     );
   }
 
-  Widget _buildImageCard(File imageFile, String label) {
+  Widget _buildImageCard(CapturedImage image, String label) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -416,7 +415,7 @@ class _ClothingIntakeScreenState extends State<ClothingIntakeScreen> {
           aspectRatio: 0.8,
           child: ClipRRect(
             borderRadius: BorderRadius.circular(16),
-            child: Image.file(imageFile, fit: BoxFit.cover),
+            child: image.buildImage(),
           ),
         ),
       ],

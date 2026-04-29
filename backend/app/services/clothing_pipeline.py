@@ -69,44 +69,51 @@ async def run_pipeline_task(task_id: UUID, worker_id: str | None = None) -> bool
         _update(db, task, 25)
 
         _update(db, task, 30)
-        try:
-            mesh = await m3d.generate_3d_model(front_proc, back_proc)
-            glb_bytes = m3d.export_mesh(mesh, "glb")
-            model_blob = await blob_service.ingest_upload(
-                db, io.BytesIO(glb_bytes),
-                claimed_mime_type="model/gltf-binary",
-                max_size=settings.MAX_UPLOAD_SIZE_BYTES * 5,
-            )
-            _upsert_model(
-                db,
+        if not settings.HUNYUAN3D_ENABLED:
+            logger.info(
+                "Hunyuan3D disabled; completing item %s with processed images only",
                 item.id,
-                blob_hash=model_blob.blob_hash,
-                vertex_count=len(mesh.vertices),
-                face_count=len(mesh.faces),
             )
-            _update(db, task, 70)
-
-            angle_images = renderer.render_all_angles(mesh)
-            for angle_deg, png_bytes in angle_images.items():
-                angle_blob = await blob_service.ingest_upload(
-                    db, io.BytesIO(png_bytes),
-                    claimed_mime_type="image/png",
-                    max_size=settings.MAX_UPLOAD_SIZE_BYTES * 2,
+            _update(db, task, 95)
+        else:
+            try:
+                mesh = await m3d.generate_3d_model(front_proc, back_proc)
+                glb_bytes = m3d.export_mesh(mesh, "glb")
+                model_blob = await blob_service.ingest_upload(
+                    db, io.BytesIO(glb_bytes),
+                    claimed_mime_type="model/gltf-binary",
+                    max_size=settings.MAX_UPLOAD_SIZE_BYTES * 5,
                 )
-                _upsert_image(
+                _upsert_model(
                     db,
                     item.id,
-                    "ANGLE_VIEW",
-                    angle_blob.blob_hash,
-                    angle=angle_deg,
+                    blob_hash=model_blob.blob_hash,
+                    vertex_count=len(mesh.vertices),
+                    face_count=len(mesh.faces),
                 )
-            _update(db, task, 95)
-        except Exception as exc:
-            logger.warning(
-                "3D generation unavailable for item %s; completing with processed images only: %s",
-                item.id,
-                exc,
-            )
+                _update(db, task, 70)
+
+                angle_images = renderer.render_all_angles(mesh)
+                for angle_deg, png_bytes in angle_images.items():
+                    angle_blob = await blob_service.ingest_upload(
+                        db, io.BytesIO(png_bytes),
+                        claimed_mime_type="image/png",
+                        max_size=settings.MAX_UPLOAD_SIZE_BYTES * 2,
+                    )
+                    _upsert_image(
+                        db,
+                        item.id,
+                        "ANGLE_VIEW",
+                        angle_blob.blob_hash,
+                        angle=angle_deg,
+                    )
+                _update(db, task, 95)
+            except Exception as exc:
+                logger.warning(
+                    "3D generation unavailable for item %s; completing with processed images only: %s",
+                    item.id,
+                    exc,
+                )
 
         task.status = "COMPLETED"
         task.progress = 100

@@ -1,11 +1,13 @@
-import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../models/wardrobe.dart';
+import '../../services/face_profile_service.dart';
 import '../../services/wardrobe_service.dart';
 import '../../theme/app_theme.dart';
+import 'face_crop_screen.dart';
 
 class ScenePreviewDemoScreen extends StatefulWidget {
   const ScenePreviewDemoScreen({super.key});
@@ -22,8 +24,10 @@ class _ScenePreviewDemoScreenState extends State<ScenePreviewDemoScreen> {
   final _picker = ImagePicker();
   final List<WardrobeItemWithClothing> _catalog = <WardrobeItemWithClothing>[];
 
-  File? _faceImage;
+  FaceProfile _faceProfile = const FaceProfile(kind: FaceProfileKind.none);
+  Uint8List? _faceImageBytes;
   String? _selectedItemId;
+  bool _loadingFaceProfile = true;
   bool _loadingCatalog = true;
   bool _showGeneratedDemo = false;
 
@@ -37,6 +41,7 @@ class _ScenePreviewDemoScreenState extends State<ScenePreviewDemoScreen> {
   void initState() {
     super.initState();
     _loadCatalog();
+    _loadFaceProfile();
   }
 
   @override
@@ -76,14 +81,61 @@ class _ScenePreviewDemoScreenState extends State<ScenePreviewDemoScreen> {
     });
   }
 
+  Future<void> _loadFaceProfile() async {
+    final profile = await FaceProfileService.load();
+    final imageBytes = await FaceProfileService.resolveImageBytes(profile);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _faceProfile = profile;
+      _faceImageBytes = imageBytes;
+      _loadingFaceProfile = false;
+      _showGeneratedDemo = false;
+    });
+  }
+
   Future<void> _pickFaceImage() async {
     final file = await _picker.pickImage(source: ImageSource.gallery);
     if (file == null || !mounted) {
       return;
     }
+    final bytes = await file.readAsBytes();
+    if (!mounted) {
+      return;
+    }
+    final cropped = await Navigator.of(context).push<Uint8List>(
+      MaterialPageRoute(builder: (_) => FaceCropScreen(imageBytes: bytes)),
+    );
+    if (cropped == null) {
+      return;
+    }
+    await FaceProfileService.saveCustom(cropped);
+    await _loadFaceProfile();
+  }
+
+  String get _faceSourceLabel {
+    switch (_faceProfile.kind) {
+      case FaceProfileKind.custom:
+        return 'Using profile face photo';
+      case FaceProfileKind.virtualMale:
+        return 'Using profile virtual male avatar';
+      case FaceProfileKind.virtualFemale:
+        return 'Using profile virtual female avatar';
+      case FaceProfileKind.none:
+        return 'No profile face source selected';
+    }
+  }
+
+  String get _genderForGeneration {
+    return _faceProfile.kind == FaceProfileKind.virtualFemale
+        ? 'FEMALE'
+        : 'MALE';
+  }
+
+  Future<void> _generatePreview() async {
     setState(() {
-      _faceImage = File(file.path);
-      _showGeneratedDemo = false;
+      _showGeneratedDemo = true;
     });
   }
 
@@ -107,7 +159,7 @@ class _ScenePreviewDemoScreenState extends State<ScenePreviewDemoScreen> {
         ),
         const SizedBox(height: 6),
         Text(
-          'Upload a face photo, choose one clothing card, and describe the scene. The backend model is not deployed yet, so this flow returns a fixed visual demo image for interface validation.',
+          'This flow automatically uses the face source saved on your Profile page. Choose one clothing card and describe the scene to generate a preview.',
           style: TextStyle(fontSize: 13, height: 1.5, color: _textSecondary),
         ),
         const SizedBox(height: 16),
@@ -118,9 +170,9 @@ class _ScenePreviewDemoScreenState extends State<ScenePreviewDemoScreen> {
         _buildCatalog(selected),
         const SizedBox(height: 16),
         FilledButton.icon(
-          onPressed: _selectedItemId == null
+          onPressed: _selectedItemId == null || _faceImageBytes == null
               ? null
-              : () => setState(() => _showGeneratedDemo = true),
+              : _generatePreview,
           icon: const Icon(Icons.auto_awesome_rounded),
           label: const Text('Generate Demo Preview'),
         ),
@@ -142,7 +194,7 @@ class _ScenePreviewDemoScreenState extends State<ScenePreviewDemoScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Step 1: Face Photo',
+            'Step 1: Profile Face Source',
             style: TextStyle(
               fontSize: 15,
               fontWeight: FontWeight.w700,
@@ -160,13 +212,21 @@ class _ScenePreviewDemoScreenState extends State<ScenePreviewDemoScreen> {
                   color: _isDark
                       ? AppColors.darkBackground
                       : AppColors.background,
-                  child: _faceImage == null
+                  child: _loadingFaceProfile
+                      ? const Center(
+                          child: SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        )
+                      : _faceImageBytes == null
                       ? Icon(
                           Icons.face_6_outlined,
                           color: _textSecondary,
                           size: 34,
                         )
-                      : Image.file(_faceImage!, fit: BoxFit.cover),
+                      : Image.memory(_faceImageBytes!, fit: BoxFit.cover),
                 ),
               ),
               const SizedBox(width: 16),
@@ -175,18 +235,29 @@ class _ScenePreviewDemoScreenState extends State<ScenePreviewDemoScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      _faceImage == null
-                          ? 'No face photo selected yet.'
-                          : 'Face photo ready for the demo render.',
+                      _faceSourceLabel,
                       style: TextStyle(fontSize: 13, color: _textPrimary),
                     ),
                     const SizedBox(height: 10),
-                    OutlinedButton.icon(
-                      onPressed: _pickFaceImage,
-                      icon: const Icon(Icons.photo_library_outlined),
-                      label: Text(
-                        _faceImage == null ? 'Choose Photo' : 'Change Photo',
-                      ),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed: _pickFaceImage,
+                          icon: const Icon(Icons.photo_library_outlined),
+                          label: Text(
+                            _faceImageBytes == null
+                                ? 'Upload Profile Face'
+                                : 'Change Profile Face',
+                          ),
+                        ),
+                        TextButton.icon(
+                          onPressed: _loadFaceProfile,
+                          icon: const Icon(Icons.sync_rounded),
+                          label: const Text('Sync from Profile'),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -247,7 +318,7 @@ class _ScenePreviewDemoScreenState extends State<ScenePreviewDemoScreen> {
             )
           else
             DropdownButtonFormField<String>(
-              value: _selectedItemId,
+              initialValue: _selectedItemId,
               items: _catalog
                   .map(
                     (entry) => DropdownMenuItem<String>(
@@ -308,7 +379,11 @@ class _ScenePreviewDemoScreenState extends State<ScenePreviewDemoScreen> {
           ),
           const SizedBox(height: 12),
           Text(
-            'Face photo: ${_faceImage == null ? 'not uploaded' : 'uploaded'}',
+            'Face source: $_faceSourceLabel',
+            style: TextStyle(fontSize: 12, color: _textSecondary),
+          ),
+          Text(
+            'Generation gender hint: $_genderForGeneration',
             style: TextStyle(fontSize: 12, color: _textSecondary),
           ),
           Text(

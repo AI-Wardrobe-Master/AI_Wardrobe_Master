@@ -44,6 +44,8 @@ services:
       LOCAL_STORAGE_PATH: /app/storage
       API_BASE_URL: ${API_BASE_URL:-http://localhost:8000}
       DREAMO_SERVICE_URL: http://dreamo:9000
+      DREAMO_GENERATE_TIMEOUT_SECONDS: ${DREAMO_GENERATE_TIMEOUT_SECONDS:-900}
+      DREAMO_DEFAULT_STEPS: ${DREAMO_DEFAULT_STEPS:-4}
       ROBOFLOW_API_URL: ${ROBOFLOW_API_URL:-https://serverless.roboflow.com}
       ROBOFLOW_API_KEY: ${ROBOFLOW_API_KEY:-}
       ROBOFLOW_WORKSPACE_NAME: ${ROBOFLOW_WORKSPACE_NAME:-}
@@ -73,7 +75,20 @@ services:
       POSTGRES_PORT: 5432
       REDIS_URL: redis://redis:6379/0
       LOCAL_STORAGE_PATH: /app/storage
-      PYTHONPATH: /app
+      PYTHONPATH: /app:/opt/Hunyuan3D-2
+      PYOPENGL_PLATFORM: egl
+      HF_HOME: /models/hunyuan/hf
+      HY3DGEN_MODELS: /models/hunyuan/hy3dgen
+      HUGGINGFACE_HUB_TOKEN: ${HUGGINGFACE_HUB_TOKEN:-}
+      HF_TOKEN: ${HF_TOKEN:-}
+      HUNYUAN3D_ENABLED: ${HUNYUAN3D_ENABLED:-false}
+      HUNYUAN3D_MODEL_PATH: ${HUNYUAN3D_MODEL_PATH:-tencent/Hunyuan3D-2mini}
+      HUNYUAN3D_SHAPE_SUBFOLDER: ${HUNYUAN3D_SHAPE_SUBFOLDER:-hunyuan3d-dit-v2-mini-fast}
+      HUNYUAN3D_LOW_VRAM: ${HUNYUAN3D_LOW_VRAM:-true}
+      HUNYUAN3D_SKIP_TEXTURE: ${HUNYUAN3D_SKIP_TEXTURE:-true}
+      HUNYUAN3D_SHAPE_STEPS: ${HUNYUAN3D_SHAPE_STEPS:-12}
+      HUNYUAN3D_OCTREE_RESOLUTION: ${HUNYUAN3D_OCTREE_RESOLUTION:-256}
+      HUNYUAN3D_NUM_CHUNKS: ${HUNYUAN3D_NUM_CHUNKS:-4000}
     command: >
       celery -A app.core.celery_app worker
       --queues=clothing_pipeline
@@ -81,6 +96,15 @@ services:
       --loglevel=info
     volumes:
       - backend_storage:/app/storage
+      - hunyuan_models:/models/hunyuan
+      - ./Hunyuan3D-2:/opt/Hunyuan3D-2:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 
   celery-styled-gen:
     build:
@@ -100,6 +124,8 @@ services:
       REDIS_URL: redis://redis:6379/0
       LOCAL_STORAGE_PATH: /app/storage
       DREAMO_SERVICE_URL: http://dreamo:9000
+      DREAMO_GENERATE_TIMEOUT_SECONDS: ${DREAMO_GENERATE_TIMEOUT_SECONDS:-900}
+      DREAMO_DEFAULT_STEPS: ${DREAMO_DEFAULT_STEPS:-4}
       PYTHONPATH: /app
     command: >
       celery -A app.core.celery_app worker
@@ -143,6 +169,8 @@ services:
       DREAMO_NO_TURBO: ${DREAMO_NO_TURBO:-false}
       DREAMO_QUANT: ${DREAMO_QUANT:-none}
       DREAMO_DEVICE: ${DREAMO_DEVICE:-auto}
+      HUGGINGFACE_HUB_TOKEN: ${HUGGINGFACE_HUB_TOKEN:-}
+      HF_TOKEN: ${HF_TOKEN:-}
     ports:
       - "${DREAMO_HOST_PORT:-9000}:9000"
     volumes:
@@ -165,3 +193,4 @@ volumes:
   pg_data:
   backend_storage:
   dreamo_models:
+  hunyuan_models:
