@@ -73,7 +73,19 @@ services:
       POSTGRES_PORT: 5432
       REDIS_URL: redis://redis:6379/0
       LOCAL_STORAGE_PATH: /app/storage
-      PYTHONPATH: /app
+      PYTHONPATH: /app:/opt/Hunyuan3D-2
+      PYOPENGL_PLATFORM: egl
+      HF_HOME: /models/hunyuan/hf
+      HY3DGEN_MODELS: /models/hunyuan/hy3dgen
+      HUGGINGFACE_HUB_TOKEN: ${HUGGINGFACE_HUB_TOKEN:-}
+      HF_TOKEN: ${HF_TOKEN:-}
+      HUNYUAN3D_MODEL_PATH: ${HUNYUAN3D_MODEL_PATH:-tencent/Hunyuan3D-2mini}
+      HUNYUAN3D_SHAPE_SUBFOLDER: ${HUNYUAN3D_SHAPE_SUBFOLDER:-hunyuan3d-dit-v2-mini-fast}
+      HUNYUAN3D_LOW_VRAM: ${HUNYUAN3D_LOW_VRAM:-true}
+      HUNYUAN3D_SKIP_TEXTURE: ${HUNYUAN3D_SKIP_TEXTURE:-true}
+      HUNYUAN3D_SHAPE_STEPS: ${HUNYUAN3D_SHAPE_STEPS:-12}
+      HUNYUAN3D_OCTREE_RESOLUTION: ${HUNYUAN3D_OCTREE_RESOLUTION:-256}
+      HUNYUAN3D_NUM_CHUNKS: ${HUNYUAN3D_NUM_CHUNKS:-4000}
     command: >
       celery -A app.core.celery_app worker
       --queues=clothing_pipeline
@@ -81,6 +93,15 @@ services:
       --loglevel=info
     volumes:
       - backend_storage:/app/storage
+      - hunyuan_models:/models/hunyuan
+      - ./Hunyuan3D-2:/opt/Hunyuan3D-2:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 
   celery-styled-gen:
     build:
@@ -143,6 +164,8 @@ services:
       DREAMO_NO_TURBO: ${DREAMO_NO_TURBO:-false}
       DREAMO_QUANT: ${DREAMO_QUANT:-none}
       DREAMO_DEVICE: ${DREAMO_DEVICE:-auto}
+      HUGGINGFACE_HUB_TOKEN: ${HUGGINGFACE_HUB_TOKEN:-}
+      HF_TOKEN: ${HF_TOKEN:-}
     ports:
       - "${DREAMO_HOST_PORT:-9000}:9000"
     volumes:
@@ -165,3 +188,4 @@ volumes:
   pg_data:
   backend_storage:
   dreamo_models:
+  hunyuan_models:

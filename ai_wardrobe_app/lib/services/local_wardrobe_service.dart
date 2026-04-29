@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'api_config.dart';
+
 class LocalWardrobeService {
   static const String _idsKey = 'local_wardrobe_v2_ids';
   static const String _recordPrefix = 'local_wardrobe_v2_';
@@ -9,8 +11,9 @@ class LocalWardrobeService {
   static const String _defaultMainWid = 'WRD-LOCALMAIN';
 
   static Future<void> ensureReady() async {
+    await ApiSession.loadToken();
     final prefs = await SharedPreferences.getInstance();
-    final ids = prefs.getStringList(_idsKey) ?? <String>[];
+    final ids = await _cleanupForeignUserWardrobes(prefs);
     if (ids.isEmpty) {
       final main = _buildMainWardrobe();
       await _saveRecord(main, prefs: prefs);
@@ -32,6 +35,44 @@ class LocalWardrobeService {
       await _saveRecord(main, prefs: prefs);
       await prefs.setStringList(_idsKey, ids);
     }
+  }
+
+  static Future<List<String>> _cleanupForeignUserWardrobes(
+    SharedPreferences prefs,
+  ) async {
+    final ids = prefs.getStringList(_idsKey) ?? <String>[];
+    final currentUserId = ApiSession.currentUserId;
+    if (currentUserId == null || currentUserId.isEmpty) {
+      return ids;
+    }
+
+    final keptIds = <String>[];
+    for (final id in ids) {
+      final raw = prefs.getString('$_recordPrefix$id');
+      if (raw == null || raw.isEmpty) {
+        continue;
+      }
+      try {
+        final record = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+        final userId = record['userId']?.toString();
+        if (record['localOnly'] != true &&
+            userId != null &&
+            userId.isNotEmpty &&
+            userId != currentUserId) {
+          await prefs.remove('$_recordPrefix$id');
+          continue;
+        }
+      } catch (_) {
+        await prefs.remove('$_recordPrefix$id');
+        continue;
+      }
+      keptIds.add(id);
+    }
+
+    if (keptIds.length != ids.length) {
+      await prefs.setStringList(_idsKey, keptIds);
+    }
+    return keptIds;
   }
 
   static Map<String, dynamic> _buildMainWardrobe() {

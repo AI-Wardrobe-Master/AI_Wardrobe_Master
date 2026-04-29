@@ -98,6 +98,7 @@ async def create_clothing_item(
     material: str | None = Form(None),
     style: str | None = Form(None),
     wardrobe_id: UUID | None = Form(None),
+    skip_processing: bool = Form(False),
     catalog_visibility: str = Form("PRIVATE", alias="catalogVisibility"),
     db: Session = Depends(get_db),
     user_id: UUID = Depends(get_current_user_id),
@@ -186,7 +187,9 @@ async def create_clothing_item(
                 image_type="ORIGINAL_BACK",
                 blob_hash=back_blob.blob_hash,
             ))
-        task = create_processing_task(db, item.id, attempt_no=1)
+        task = None
+        if not skip_processing:
+            task = create_processing_task(db, item.id, attempt_no=1)
         crud_wardrobe.ensure_item_in_main_wardrobe(
             db,
             user_id=user_id,
@@ -204,12 +207,13 @@ async def create_clothing_item(
         db.rollback()
         raise
 
-    _dispatch_processing_task(db, task.id)
+    if task is not None:
+        _dispatch_processing_task(db, task.id)
     return ClothingItemCreateResponse(
         id=item.id,
-        processingTaskId=task.id,
-        status=task.status,
-        estimatedTime=30,
+        processingTaskId=task.id if task is not None else None,
+        status=task.status if task is not None else "COMPLETED",
+        estimatedTime=0 if task is None else 30,
     )
 
 

@@ -37,8 +37,26 @@ class ApiSession {
   }
 
   static Future<void> saveUser(Map<String, dynamic> user) async {
-    _user = Map<String, dynamic>.from(user);
     final prefs = await SharedPreferences.getInstance();
+    final previousUserId = _userId(_user);
+    if (_user == null) {
+      final rawUser = prefs.getString(_userKey);
+      if (rawUser != null && rawUser.isNotEmpty) {
+        try {
+          _user = Map<String, dynamic>.from(jsonDecode(rawUser) as Map);
+        } catch (_) {
+          _user = null;
+        }
+      }
+    }
+    final loadedPreviousUserId = _userId(_user) ?? previousUserId;
+    final nextUserId = _userId(user);
+    if (loadedPreviousUserId != null &&
+        nextUserId != null &&
+        loadedPreviousUserId != nextUserId) {
+      await _clearUserScopedLocalCache(prefs);
+    }
+    _user = Map<String, dynamic>.from(user);
     await prefs.setString(_userKey, jsonEncode(_user));
   }
 
@@ -54,9 +72,44 @@ class ApiSession {
   static Map<String, dynamic>? get cachedUser =>
       _user == null ? null : Map<String, dynamic>.from(_user!);
 
+  static String? get currentUserId => _userId(_user);
+
   static Map<String, String> get authHeaders {
     if (!hasToken) return const {};
     return {'Authorization': 'Bearer $_token'};
+  }
+
+  static String? _userId(Map<String, dynamic>? user) {
+    final raw = user?['id'] ?? user?['userId'];
+    final value = raw?.toString();
+    return value == null || value.isEmpty ? null : value;
+  }
+
+  static Future<void> _clearUserScopedLocalCache(
+    SharedPreferences prefs,
+  ) async {
+    const exactKeys = <String>{
+      'local_clothing_v2_ids',
+      'local_clothing_items_list',
+      'local_clothing_3d_demo_item',
+      'local_wardrobe_v2_ids',
+      'local_card_packs_list',
+      'local_import_history_ids',
+    };
+    const prefixes = <String>[
+      'local_clothing_v2_',
+      'local_clothing_item_',
+      'local_wardrobe_v2_',
+      'local_card_pack_',
+      'local_import_history_',
+    ];
+
+    for (final key in prefs.getKeys().toList()) {
+      if (exactKeys.contains(key) ||
+          prefixes.any((prefix) => key.startsWith(prefix))) {
+        await prefs.remove(key);
+      }
+    }
   }
 }
 

@@ -1,12 +1,11 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../models/wardrobe.dart';
-import '../../services/api_config.dart';
 import '../../services/clothing_api_service.dart';
 import '../../services/local_clothing_service.dart';
 import '../../theme/app_theme.dart';
+import '../widgets/app_remote_image.dart';
 
 class ClothingDetailScreen extends StatefulWidget {
   const ClothingDetailScreen({
@@ -423,21 +422,13 @@ class _ClothingDetailScreenState extends State<ClothingDetailScreen> {
   }
 
   Widget _buildAdaptiveImage(String imageUrl) {
-    if (imageUrl.startsWith('data:')) {
-      final data = Uri.parse(imageUrl).data;
-      if (data != null) {
-        return Image.memory(data.contentAsBytes(), fit: BoxFit.cover);
-      }
-    }
-    return CachedNetworkImage(
-      imageUrl: resolveFileUrl(imageUrl),
-      httpHeaders: ApiSession.authHeaders,
+    return AppRemoteImage(
+      url: imageUrl,
       fit: BoxFit.cover,
-      placeholder: (_, __) => Center(
+      placeholder: Center(
         child: CircularProgressIndicator(strokeWidth: 2, color: _accent),
       ),
-      errorWidget: (_, __, ___) =>
-          Icon(Icons.image_outlined, color: _textSecondary),
+      errorWidget: Icon(Icons.image_outlined, color: _textSecondary),
     );
   }
 

@@ -1,17 +1,17 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../l10n/app_strings.dart';
 import '../../l10n/app_strings_provider.dart';
 import '../../models/wardrobe.dart';
-import '../../services/api_config.dart';
 import '../../services/clothing_api_service.dart';
 import '../../services/import_api_service.dart';
 import '../../services/local_clothing_service.dart';
 import '../../state/current_wardrobe_controller.dart';
+import '../../state/wardrobe_refresh_notifier.dart';
 import '../../services/wardrobe_service.dart';
 import '../../theme/app_theme.dart';
+import '../widgets/app_remote_image.dart';
 import 'clothing_detail_screen.dart';
 import 'wardrobe_management_screen.dart';
 
@@ -53,6 +53,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
   @override
   void initState() {
     super.initState();
+    WardrobeRefreshNotifier.tick.addListener(_handleExternalRefresh);
     _searchController.addListener(() {
       setState(
         () => _searchQuery = _searchController.text.trim().toLowerCase(),
@@ -63,8 +64,15 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
 
   @override
   void dispose() {
+    WardrobeRefreshNotifier.tick.removeListener(_handleExternalRefresh);
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _handleExternalRefresh() {
+    if (mounted) {
+      _loadItems();
+    }
   }
 
   Future<void> _loadWardrobes() async {
@@ -109,14 +117,6 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
     setState(() => _loadingItems = true);
     final allItems = <WardrobeItemWithClothing>[];
 
-    if (_currentWardrobe != null && _currentWardrobe?.isVirtual != true) {
-      try {
-        await LocalClothingService.ensure3dPreviewDemoItem(
-          wardrobeId: _currentWardrobe!.id,
-        );
-      } catch (_) {}
-    }
-
     if (_currentWardrobe != null) {
       try {
         final list = await WardrobeService.fetchWardrobeItems(
@@ -158,6 +158,10 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                 name: item['name'] as String?,
                 source: 'OWNED',
                 finalTags: item['finalTags'] as List<dynamic>? ?? [],
+                imageUrl: item['imageUrl'] as String?,
+                images: Map<String, dynamic>.from(
+                  item['images'] as Map? ?? const <String, dynamic>{},
+                ),
                 addedAt: DateTime.tryParse(item['createdAt'] as String? ?? ''),
               ),
             ),
@@ -187,6 +191,10 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                 name: item['name'] as String?,
                 source: 'IMPORTED',
                 finalTags: item['finalTags'] as List<dynamic>? ?? [],
+                imageUrl: item['imageUrl'] as String?,
+                images: Map<String, dynamic>.from(
+                  item['images'] as Map? ?? const <String, dynamic>{},
+                ),
                 addedAt: DateTime.tryParse(item['createdAt'] as String? ?? ''),
               ),
             ),
@@ -388,32 +396,10 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
       );
     }
 
-    if (imageUrl.startsWith('data:')) {
-      try {
-        final uri = Uri.parse(imageUrl);
-        final data = uri.data;
-        if (data != null) {
-          return Image.memory(
-            data.contentAsBytes(),
-            fit: BoxFit.cover,
-            errorBuilder: (context, error, stackTrace) => Container(
-              color: _isDark ? AppColors.darkSurface : Colors.grey.shade200,
-              child: Icon(Icons.image_outlined, color: _textSecondary),
-            ),
-          );
-        }
-      } catch (_) {}
-      return Container(
-        color: _isDark ? AppColors.darkSurface : Colors.grey.shade200,
-        child: Icon(Icons.image_outlined, color: _textSecondary),
-      );
-    }
-
-    return CachedNetworkImage(
-      imageUrl: resolveFileUrl(imageUrl),
-      httpHeaders: ApiSession.authHeaders,
+    return AppRemoteImage(
+      url: imageUrl,
       fit: BoxFit.cover,
-      placeholder: (context, url) => Container(
+      placeholder: Container(
         color: _isDark ? AppColors.darkSurface : Colors.grey.shade200,
         child: Center(
           child: CircularProgressIndicator(
@@ -422,7 +408,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
           ),
         ),
       ),
-      errorWidget: (context, url, error) => Container(
+      errorWidget: Container(
         color: _isDark ? AppColors.darkSurface : Colors.grey.shade200,
         child: Icon(Icons.image_outlined, color: _textSecondary),
       ),
@@ -849,17 +835,6 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
           )
         : null;
 
-    final scanButton = Container(
-      width: 40,
-      height: 40,
-      decoration: BoxDecoration(
-        color: Theme.of(context).cardColor,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Theme.of(context).dividerColor),
-      ),
-      child: Icon(Icons.qr_code_scanner_rounded, size: 20, color: _textPrimary),
-    );
-
     return LayoutBuilder(
       builder: (context, constraints) {
         final compact = constraints.maxWidth < 430;
@@ -876,8 +851,6 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                     const SizedBox(width: 8),
                   ],
                   Expanded(child: manageButton),
-                  const SizedBox(width: 8),
-                  scanButton,
                 ],
               ),
             ],
@@ -904,8 +877,6 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                 child: manageButton,
               ),
             ),
-            const SizedBox(width: 8),
-            scanButton,
           ],
         );
       },

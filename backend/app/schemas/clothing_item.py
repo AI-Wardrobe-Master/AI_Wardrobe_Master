@@ -38,7 +38,7 @@ class ProcessingStatusResponse(BaseModel):
 
 class ClothingItemCreateResponse(BaseModel):
     id: UUID
-    processingTaskId: UUID
+    processingTaskId: Optional[UUID] = None
     status: str
     estimatedTime: int = 30
 

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -25,7 +26,11 @@ class LocalClothingService {
   static final Dio _dio = buildApiDio();
 
   static Future<void> ensureReady() async {
+    await ApiSession.loadToken();
     await _cleanupLegacyResidue();
+    await _cleanupOversizedWebImageCache();
+    await _cleanupDemoPreviewItems();
+    await _cleanupForeignUserItems();
     await _migrateLegacyItems();
   }
 
@@ -55,28 +60,11 @@ class LocalClothingService {
     final ids = prefs.getStringList(_idsKey) ?? <String>[];
     final now = DateTime.now();
     final itemId = preferredId ?? 'local_${now.millisecondsSinceEpoch}';
-    final directory = (await _itemDirectory(itemId, create: true))!;
-
-    final originalFrontPath = await _writeImage(
-      File('${directory.path}/original_front.png'),
-      frontImageBytes,
+    final imageCache = await _persistLocalImages(
+      itemId: itemId,
+      frontImageBytes: frontImageBytes,
+      backImageBytes: backImageBytes,
     );
-    final processedFrontPath = await _writeImage(
-      File('${directory.path}/processed_front.png'),
-      frontImageBytes,
-    );
-    String? originalBackPath;
-    String? processedBackPath;
-    if (backImageBytes != null) {
-      originalBackPath = await _writeImage(
-        File('${directory.path}/original_back.png'),
-        backImageBytes,
-      );
-      processedBackPath = await _writeImage(
-        File('${directory.path}/processed_back.png'),
-        backImageBytes,
-      );
-    }
 
     final normalizedAutoTags = _normalizeStructuredTags(autoTags);
     final normalizedManualTags = _normalizeStringList(manualTags);
@@ -111,13 +99,10 @@ class LocalClothingService {
       'previewSvgStoredLocally': previewSvg != null,
       'previewSvg': previewSvg,
       'wardrobeIds': _normalizeStringList(wardrobeIds),
-      'originalFrontPath': originalFrontPath,
-      'processedFrontPath': processedFrontPath,
-      'originalBackPath': originalBackPath,
-      'processedBackPath': processedBackPath,
+      ...imageCache,
       'createdAt': now.toIso8601String(),
       'updatedAt': now.toIso8601String(),
-      'ownerUserId': 'local_user',
+      'ownerUserId': ApiSession.currentUserId ?? 'local_user',
     };
 
     await _saveRecord(record, prefs: prefs);
@@ -145,32 +130,34 @@ class LocalClothingService {
     final mergedTags = _normalizeStructuredTags(item['finalTags']);
 
     final existing = await getRecord(itemId);
-    final directory = (await _itemDirectory(itemId, create: true))!;
-
-    final originalFrontPath = await _cacheImagePath(
+    final originalFrontPath = await _cacheImageReference(
       itemId: itemId,
       existingPath: existing?['originalFrontPath'] as String?,
-      target: File('${directory.path}/original_front.png'),
+      existingUrl: existing?['originalFrontUrl'] as String?,
+      filename: 'original_front.png',
       source: images['originalFrontUrl'] as String?,
     );
-    final processedFrontPath = await _cacheImagePath(
+    final processedFrontPath = await _cacheImageReference(
       itemId: itemId,
       existingPath: existing?['processedFrontPath'] as String?,
-      target: File('${directory.path}/processed_front.png'),
+      existingUrl: existing?['processedFrontUrl'] as String?,
+      filename: 'processed_front.png',
       source:
           images['processedFrontUrl'] as String? ??
           images['originalFrontUrl'] as String?,
     );
-    final originalBackPath = await _cacheImagePath(
+    final originalBackPath = await _cacheImageReference(
       itemId: itemId,
       existingPath: existing?['originalBackPath'] as String?,
-      target: File('${directory.path}/original_back.png'),
+      existingUrl: existing?['originalBackUrl'] as String?,
+      filename: 'original_back.png',
       source: images['originalBackUrl'] as String?,
     );
-    final processedBackPath = await _cacheImagePath(
+    final processedBackPath = await _cacheImageReference(
       itemId: itemId,
       existingPath: existing?['processedBackPath'] as String?,
-      target: File('${directory.path}/processed_back.png'),
+      existingUrl: existing?['processedBackUrl'] as String?,
+      filename: 'processed_back.png',
       source:
           images['processedBackUrl'] as String? ??
           images['originalBackUrl'] as String?,
@@ -222,10 +209,17 @@ class LocalClothingService {
       'previewSvg':
           item['previewSvg'] as String? ?? existing?['previewSvg'] as String?,
       'wardrobeIds': mergedWardrobeIds,
-      'originalFrontPath': originalFrontPath,
-      'processedFrontPath': processedFrontPath,
-      'originalBackPath': originalBackPath,
-      'processedBackPath': processedBackPath,
+      if (kIsWeb) ...{
+        'originalFrontUrl': originalFrontPath,
+        'processedFrontUrl': processedFrontPath,
+        'originalBackUrl': originalBackPath,
+        'processedBackUrl': processedBackPath,
+      } else ...{
+        'originalFrontPath': originalFrontPath,
+        'processedFrontPath': processedFrontPath,
+        'originalBackPath': originalBackPath,
+        'processedBackPath': processedBackPath,
+      },
       'createdAt':
           item['createdAt'] as String? ??
           existing?['createdAt'] ??
@@ -406,6 +400,9 @@ class LocalClothingService {
     final ids = prefs.getStringList(_idsKey) ?? <String>[];
     ids.remove(itemId);
     await prefs.setStringList(_idsKey, ids);
+    if (kIsWeb) {
+      return;
+    }
     final directory = await _itemDirectory(itemId, create: false);
     if (directory != null && await directory.exists()) {
       await directory.delete(recursive: true);
@@ -557,6 +554,119 @@ class LocalClothingService {
     await prefs.setBool(_cleanupFlagKey, true);
   }
 
+  static Future<void> _cleanupOversizedWebImageCache() async {
+    if (!kIsWeb) {
+      return;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    final ids = prefs.getStringList(_idsKey) ?? <String>[];
+    final keptIds = <String>[];
+    for (final itemId in ids) {
+      final key = '$_recordPrefix$itemId';
+      final raw = prefs.getString(key);
+      if (raw == null || raw.isEmpty) {
+        continue;
+      }
+      if (!raw.contains('DataUri') && raw.length < 500000) {
+        keptIds.add(itemId);
+        continue;
+      }
+
+      await prefs.remove(key);
+      try {
+        final record = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+        record
+          ..remove('originalFrontDataUri')
+          ..remove('processedFrontDataUri')
+          ..remove('originalBackDataUri')
+          ..remove('processedBackDataUri');
+
+        // A purely local Web item with embedded image bytes cannot be kept
+        // without consuming quota. Remote items are recreated from backend data.
+        if (record['localOnly'] == true) {
+          continue;
+        }
+        await prefs.setString(key, jsonEncode(record));
+        keptIds.add(itemId);
+      } catch (_) {
+        // Drop malformed or oversized records; backend remains source of truth.
+      }
+    }
+    if (keptIds.length != ids.length) {
+      await prefs.setStringList(_idsKey, keptIds);
+    }
+  }
+
+  static Future<void> _cleanupDemoPreviewItems() async {
+    final prefs = await SharedPreferences.getInstance();
+    final ids = prefs.getStringList(_idsKey) ?? <String>[];
+    final keptIds = <String>[];
+
+    for (final itemId in ids) {
+      final key = '$_recordPrefix$itemId';
+      final raw = prefs.getString(key);
+      if (raw == null || raw.isEmpty) {
+        continue;
+      }
+
+      try {
+        final record = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+        if (record['sourceType'] == 'DEMO_3D_PREVIEW' ||
+            record['name'] == '3D Preview Demo Card') {
+          await prefs.remove(key);
+          continue;
+        }
+      } catch (_) {
+        // Keep records we cannot classify; other cleanup paths handle corruption.
+      }
+
+      keptIds.add(itemId);
+    }
+
+    if (keptIds.length != ids.length) {
+      await prefs.setStringList(_idsKey, keptIds);
+    }
+    await prefs.remove(_demoItemKey);
+  }
+
+  static Future<void> _cleanupForeignUserItems() async {
+    final currentUserId = ApiSession.currentUserId;
+    if (currentUserId == null || currentUserId.isEmpty) {
+      return;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    final ids = prefs.getStringList(_idsKey) ?? <String>[];
+    final keptIds = <String>[];
+
+    for (final itemId in ids) {
+      final key = '$_recordPrefix$itemId';
+      final raw = prefs.getString(key);
+      if (raw == null || raw.isEmpty) {
+        continue;
+      }
+
+      try {
+        final record = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+        final ownerUserId = record['ownerUserId']?.toString();
+        if (ownerUserId != null &&
+            ownerUserId.isNotEmpty &&
+            ownerUserId != currentUserId) {
+          await prefs.remove(key);
+          continue;
+        }
+      } catch (_) {
+        await prefs.remove(key);
+        continue;
+      }
+
+      keptIds.add(itemId);
+    }
+
+    if (keptIds.length != ids.length) {
+      await prefs.setStringList(_idsKey, keptIds);
+    }
+  }
+
   static Future<void> _migrateLegacyItems() async {
     final prefs = await SharedPreferences.getInstance();
     final legacyIds = prefs.getStringList(_legacyIdsKey) ?? <String>[];
@@ -609,6 +719,10 @@ class LocalClothingService {
       'previewSvgAvailable': record['previewSvgAvailable'] ?? false,
       'previewSvgStoredLocally': record['previewSvgStoredLocally'] ?? false,
       'imageUrl':
+          record['processedFrontUrl'] as String? ??
+          record['originalFrontUrl'] as String? ??
+          record['processedFrontDataUri'] as String? ??
+          record['originalFrontDataUri'] as String? ??
           _filePathToDataUri(record['processedFrontPath'] as String?) ??
           _filePathToDataUri(record['originalFrontPath'] as String?),
       'predictedTags': _normalizeStructuredTags(record['autoTags']),
@@ -618,34 +732,82 @@ class LocalClothingService {
       'createdAt': record['createdAt'],
       'updatedAt': record['updatedAt'],
       'images': {
-        'originalFrontUrl': _filePathToDataUri(
-          record['originalFrontPath'] as String?,
-        ),
-        'processedFrontUrl': _filePathToDataUri(
-          record['processedFrontPath'] as String?,
-        ),
-        'originalBackUrl': _filePathToDataUri(
-          record['originalBackPath'] as String?,
-        ),
-        'processedBackUrl': _filePathToDataUri(
-          record['processedBackPath'] as String?,
-        ),
+        'originalFrontUrl':
+            record['originalFrontUrl'] as String? ??
+            record['originalFrontDataUri'] as String? ??
+            _filePathToDataUri(record['originalFrontPath'] as String?),
+        'processedFrontUrl':
+            record['processedFrontUrl'] as String? ??
+            record['processedFrontDataUri'] as String? ??
+            _filePathToDataUri(record['processedFrontPath'] as String?),
+        'originalBackUrl':
+            record['originalBackUrl'] as String? ??
+            record['originalBackDataUri'] as String? ??
+            _filePathToDataUri(record['originalBackPath'] as String?),
+        'processedBackUrl':
+            record['processedBackUrl'] as String? ??
+            record['processedBackDataUri'] as String? ??
+            _filePathToDataUri(record['processedBackPath'] as String?),
       },
     };
   }
 
-  static Future<String?> _cacheImagePath({
+  static Future<Map<String, String?>> _persistLocalImages({
     required String itemId,
-    required File target,
+    required Uint8List frontImageBytes,
+    Uint8List? backImageBytes,
+  }) async {
+    if (kIsWeb) {
+      return const <String, String?>{};
+    }
+
+    final directory = (await _itemDirectory(itemId, create: true))!;
+    final originalFrontPath = await _writeImage(
+      File('${directory.path}/original_front.png'),
+      frontImageBytes,
+    );
+    final processedFrontPath = await _writeImage(
+      File('${directory.path}/processed_front.png'),
+      frontImageBytes,
+    );
+    String? originalBackPath;
+    String? processedBackPath;
+    if (backImageBytes != null) {
+      originalBackPath = await _writeImage(
+        File('${directory.path}/original_back.png'),
+        backImageBytes,
+      );
+      processedBackPath = await _writeImage(
+        File('${directory.path}/processed_back.png'),
+        backImageBytes,
+      );
+    }
+
+    return {
+      'originalFrontPath': originalFrontPath,
+      'processedFrontPath': processedFrontPath,
+      'originalBackPath': originalBackPath,
+      'processedBackPath': processedBackPath,
+    };
+  }
+
+  static Future<String?> _cacheImageReference({
+    required String itemId,
+    required String filename,
     required String? source,
     required String? existingPath,
+    required String? existingUrl,
   }) async {
     if (source == null || source.isEmpty) {
-      return existingPath;
+      return kIsWeb ? existingUrl : existingPath;
+    }
+    if (kIsWeb) {
+      return source;
     }
     try {
       final bytes = await _loadBytes(source);
-      return _writeImage(target, bytes);
+      final directory = (await _itemDirectory(itemId, create: true))!;
+      return _writeImage(File('${directory.path}/$filename'), bytes);
     } catch (_) {
       return existingPath;
     }
@@ -655,6 +817,9 @@ class LocalClothingService {
     String itemId, {
     required bool create,
   }) async {
+    if (kIsWeb) {
+      return null;
+    }
     final root = await getApplicationDocumentsDirectory();
     final directory = Directory('${root.path}/offline_clothing/$itemId');
     if (create && !await directory.exists()) {
@@ -694,6 +859,9 @@ class LocalClothingService {
   static String? _filePathToDataUri(String? path) {
     if (path == null || path.isEmpty) {
       return null;
+    }
+    if (path.startsWith('data:')) {
+      return path;
     }
     final file = File(path);
     if (!file.existsSync()) {

@@ -1,12 +1,12 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../../../l10n/app_strings_provider.dart';
-import '../../../services/api_config.dart';
 import '../../../services/clothing_api_service.dart';
 import '../../../services/wardrobe_service.dart';
 import '../../../state/current_wardrobe_controller.dart';
+import '../../../state/wardrobe_refresh_notifier.dart';
 import '../../../theme/app_theme.dart';
+import '../../widgets/app_remote_image.dart';
 
 class ClothingResultScreen extends StatefulWidget {
   final String itemId;
@@ -39,7 +39,7 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
         ClothingApiService.getAngleViews(widget.itemId),
       ]);
       final item = Map<String, dynamic>.from(results[0] as Map);
-      final angleViews = (results[1] as Map)['angleViews'] as List? ?? [];
+      final angleViews = _normalizeAngleViews((results[1] as Map)['angleViews']);
 
       String? currentWardrobeId = CurrentWardrobeController.currentWardrobeId;
       if (currentWardrobeId == null) {
@@ -72,11 +72,6 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
     }
   }
 
-  String _fullUrl(String? url) {
-    if (url == null || url.isEmpty) return '';
-    return resolveFileUrl(url);
-  }
-
   Future<void> _addToCurrentWardrobe() async {
     if (_addingToWardrobe || _addedToWardrobe) return;
     String? wardrobeId = CurrentWardrobeController.currentWardrobeId;
@@ -106,6 +101,7 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
     setState(() => _addingToWardrobe = true);
     try {
       await WardrobeService.addItemToWardrobe(wardrobeId, widget.itemId);
+      WardrobeRefreshNotifier.requestRefresh();
       if (mounted) {
         setState(() {
           _addingToWardrobe = false;
@@ -213,7 +209,7 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
                   separatorBuilder: (_, __) => const SizedBox(width: 8),
                   itemBuilder: (context, i) {
                     final view = _angleViews[i] as Map;
-                    final url = _fullUrl(view['url'] as String?);
+                    final url = view['url'] as String? ?? '';
                     final selected = i == _selectedAngle;
                     return GestureDetector(
                       onTap: () => setState(() => _selectedAngle = i),
@@ -297,6 +293,7 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
                         padding: const EdgeInsets.symmetric(vertical: 14),
                       ),
                       onPressed: () {
+                        WardrobeRefreshNotifier.requestRefresh();
                         Navigator.of(context).popUntil((r) => r.isFirst);
                       },
                       child: const Text('Done'),
@@ -318,37 +315,44 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
     Widget? placeholder,
     Widget? errorWidget,
   }) {
-    if (url.isEmpty) {
-      return errorWidget ?? const SizedBox.shrink();
-    }
-    if (url.startsWith('data:')) {
-      try {
-        final data = Uri.parse(url).data;
-        if (data != null) {
-          return Image.memory(
-            data.contentAsBytes(),
-            fit: fit,
-            errorBuilder: (_, __, ___) =>
-                errorWidget ?? const SizedBox.shrink(),
-          );
-        }
-      } catch (_) {
-        return errorWidget ?? const SizedBox.shrink();
-      }
-      return errorWidget ?? const SizedBox.shrink();
-    }
-    return CachedNetworkImage(
-      imageUrl: url,
-      httpHeaders: ApiSession.authHeaders,
+    return AppRemoteImage(
+      url: url,
       fit: fit,
-      placeholder: (_, __) => placeholder ?? const SizedBox.shrink(),
-      errorWidget: (_, __, ___) => errorWidget ?? const SizedBox.shrink(),
+      placeholder: placeholder,
+      errorWidget: errorWidget,
     );
+  }
+
+  List<Map<String, dynamic>> _normalizeAngleViews(dynamic raw) {
+    if (raw is List) {
+      return raw
+          .whereType<Map>()
+          .map((entry) => Map<String, dynamic>.from(entry))
+          .toList();
+    }
+    if (raw is Map) {
+      final entries = raw.entries.toList()
+        ..sort((left, right) {
+          final leftAngle = int.tryParse(left.key.toString()) ?? 0;
+          final rightAngle = int.tryParse(right.key.toString()) ?? 0;
+          return leftAngle.compareTo(rightAngle);
+        });
+      return entries
+          .map(
+            (entry) => <String, dynamic>{
+              'angle': int.tryParse(entry.key.toString()),
+              'url': entry.value?.toString(),
+            },
+          )
+          .where((entry) => (entry['url'] as String? ?? '').isNotEmpty)
+          .toList();
+    }
+    return const <Map<String, dynamic>>[];
   }
 
   Widget _buildAngleViewer() {
     final view = _angleViews[_selectedAngle] as Map;
-    final url = _fullUrl(view['url'] as String?);
+    final url = view['url'] as String? ?? '';
     return GestureDetector(
       onHorizontalDragEnd: (details) {
         if (details.primaryVelocity == null) return;
@@ -375,8 +379,14 @@ class _ClothingResultScreenState extends State<ClothingResultScreen> {
 
   Widget _buildOriginalImages() {
     final images = _item?['images'] as Map? ?? {};
-    final front = _fullUrl(images['processedFrontUrl'] as String?);
-    final back = _fullUrl(images['processedBackUrl'] as String?);
+    final front =
+        images['processedFrontUrl'] as String? ??
+        images['originalFrontUrl'] as String? ??
+        '';
+    final back =
+        images['processedBackUrl'] as String? ??
+        images['originalBackUrl'] as String? ??
+        '';
 
     return PageView(
       children: [

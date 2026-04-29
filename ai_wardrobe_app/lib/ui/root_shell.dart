@@ -1,9 +1,8 @@
-import 'dart:io';
-
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import '../l10n/app_strings_provider.dart';
+import '../models/captured_image.dart';
 import '../theme/app_theme.dart';
 import 'screens/capture/camera_capture_screen.dart';
 import 'screens/capture/clothing_intake_screen.dart';
@@ -186,7 +185,7 @@ class _MobileRootShellState extends State<_MobileRootShell> {
   }
 
   Future<void> _navigateToCapture() async {
-    final result = await Navigator.push<Map<String, File?>>(
+    final result = await Navigator.push<Map<String, CapturedImage?>>(
       context,
       MaterialPageRoute(builder: (_) => const CameraCaptureScreen()),
     );
@@ -406,7 +405,7 @@ class _WebRootShellState extends State<_WebRootShell> {
   }
 
   Future<void> _navigateToCapture() async {
-    final result = await Navigator.push<Map<String, File?>>(
+    final result = await Navigator.push<Map<String, CapturedImage?>>(
       context,
       MaterialPageRoute(builder: (_) => const CameraCaptureScreen()),
     );

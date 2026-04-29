@@ -1,8 +1,8 @@
-import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../../models/captured_image.dart';
 import '../../../theme/app_theme.dart';
 import 'image_preview_screen.dart';
 
@@ -19,7 +19,7 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
   bool _isCapturing = false;
 
   bool _capturingFront = true; // true = front phase, false = back phase
-  File? _frontImage;
+  CapturedImage? _frontImage;
 
   @override
   void initState() {
@@ -52,7 +52,9 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
       if (mounted) Navigator.pop(context);
       return;
     }
-    _onPhotoCaptured(File(picked.path));
+    final image = await CapturedImage.fromXFile(picked);
+    if (!mounted) return;
+    _onPhotoCaptured(image);
   }
 
   Future<void> _takePhoto() async {
@@ -60,18 +62,20 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
     setState(() => _isCapturing = true);
     try {
       final xFile = await _controller!.takePicture();
-      _onPhotoCaptured(File(xFile.path));
+      final image = await CapturedImage.fromXFile(xFile);
+      if (!mounted) return;
+      _onPhotoCaptured(image);
     } finally {
       if (mounted) setState(() => _isCapturing = false);
     }
   }
 
-  void _onPhotoCaptured(File photo) {
+  void _onPhotoCaptured(CapturedImage photo) {
     Navigator.push<bool>(
       context,
       MaterialPageRoute(
         builder: (_) => ImagePreviewScreen(
-          imageFile: photo,
+          image: photo,
           label: _capturingFront ? 'Front View' : 'Back View',
         ),
       ),
@@ -150,7 +154,7 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
     });
   }
 
-  void _finishCapture(File? backImage) {
+  void _finishCapture(CapturedImage? backImage) {
     Navigator.pop(context, {
       'front': _frontImage,
       'back': backImage,
@@ -165,7 +169,6 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
