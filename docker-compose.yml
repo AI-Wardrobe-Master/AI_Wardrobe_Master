@@ -15,6 +15,16 @@ services:
       timeout: 5s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_HOST_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   backend:
     build:
       context: ./backend
@@ -22,20 +32,136 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       POSTGRES_SERVER: db
       POSTGRES_USER: wardrobe_user
       POSTGRES_PASSWORD: wardrobe_pass
       POSTGRES_DB: wardrobe_db
       POSTGRES_PORT: 5432
+      REDIS_URL: redis://redis:6379/0
       LOCAL_STORAGE_PATH: /app/storage
       API_BASE_URL: ${API_BASE_URL:-http://localhost:8000}
+      DREAMO_SERVICE_URL: http://dreamo:9000
+      ROBOFLOW_API_URL: ${ROBOFLOW_API_URL:-https://serverless.roboflow.com}
+      ROBOFLOW_API_KEY: ${ROBOFLOW_API_KEY:-}
+      ROBOFLOW_WORKSPACE_NAME: ${ROBOFLOW_WORKSPACE_NAME:-}
+      ROBOFLOW_WORKFLOW_ID: ${ROBOFLOW_WORKFLOW_ID:-}
+      ROBOFLOW_IMAGE_INPUT_NAME: ${ROBOFLOW_IMAGE_INPUT_NAME:-image}
+      ROBOFLOW_TIMEOUT_SECONDS: ${ROBOFLOW_TIMEOUT_SECONDS:-30}
       PYTHONPATH: /app
     ports:
       - "${BACKEND_HOST_PORT:-8000}:8000"
     volumes:
       - backend_storage:/app/storage
 
+  celery-clothing:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      POSTGRES_SERVER: db
+      POSTGRES_USER: wardrobe_user
+      POSTGRES_PASSWORD: wardrobe_pass
+      POSTGRES_DB: wardrobe_db
+      POSTGRES_PORT: 5432
+      REDIS_URL: redis://redis:6379/0
+      LOCAL_STORAGE_PATH: /app/storage
+      PYTHONPATH: /app
+    command: >
+      celery -A app.core.celery_app worker
+      --queues=clothing_pipeline
+      --concurrency=1
+      --loglevel=info
+    volumes:
+      - backend_storage:/app/storage
+
+  celery-styled-gen:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      POSTGRES_SERVER: db
+      POSTGRES_USER: wardrobe_user
+      POSTGRES_PASSWORD: wardrobe_pass
+      POSTGRES_DB: wardrobe_db
+      POSTGRES_PORT: 5432
+      REDIS_URL: redis://redis:6379/0
+      LOCAL_STORAGE_PATH: /app/storage
+      DREAMO_SERVICE_URL: http://dreamo:9000
+      PYTHONPATH: /app
+    command: >
+      celery -A app.core.celery_app worker
+      --queues=styled_generation
+      --concurrency=1
+      --loglevel=info
+    volumes:
+      - backend_storage:/app/storage
+
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      POSTGRES_SERVER: db
+      POSTGRES_USER: wardrobe_user
+      POSTGRES_PASSWORD: wardrobe_pass
+      POSTGRES_DB: wardrobe_db
+      POSTGRES_PORT: 5432
+      REDIS_URL: redis://redis:6379/0
+      LOCAL_STORAGE_PATH: /app/storage
+      PYTHONPATH: /app
+    command: >
+      celery -A app.core.celery_app beat
+      --loglevel=info
+    volumes:
+      - backend_storage:/app/storage
+
+  dreamo:
+    build:
+      context: ./DreamO
+      dockerfile: Dockerfile
+    environment:
+      DREAMO_VERSION: ${DREAMO_VERSION:-v1.1}
+      DREAMO_OFFLOAD: ${DREAMO_OFFLOAD:-true}
+      DREAMO_NO_TURBO: ${DREAMO_NO_TURBO:-false}
+      DREAMO_QUANT: ${DREAMO_QUANT:-none}
+      DREAMO_DEVICE: ${DREAMO_DEVICE:-auto}
+    ports:
+      - "${DREAMO_HOST_PORT:-9000}:9000"
+    volumes:
+      - dreamo_models:/app/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
 volumes:
   pg_data:
   backend_storage:
+  dreamo_models:

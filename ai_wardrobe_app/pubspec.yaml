@@ -30,6 +30,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_localizations:
+    sdk: flutter
 
   cupertino_icons: ^1.0.8
   camera: ^0.11.0+2
@@ -38,6 +40,8 @@ dependencies:
   path_provider: ^2.1.4
   dio: ^5.7.0
   cached_network_image: ^3.4.1
+  shared_preferences: ^2.3.3
+  flutter_svg: ^2.2.0
 
 dev_dependencies:
   flutter_test:

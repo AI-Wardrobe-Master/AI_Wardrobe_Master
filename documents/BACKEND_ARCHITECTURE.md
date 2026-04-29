@@ -44,10 +44,13 @@ backend/
 │   │       ├── auth.py              # Authentication endpoints
 │   │       ├── clothing.py          # Clothing item endpoints
 │   │       ├── wardrobe.py          # Wardrobe endpoints
-│   │       ├── outfit.py            # Outfit endpoints
-│   │       ├── card_pack.py         # Card pack endpoints
-│   │       ├── creator.py           # Creator endpoints
-│   │       ├── import_ops.py        # Import operations
+│   │       ├── me.py                # Unified user context endpoint
+│   │       ├── creators.py          # Creator profile endpoints
+│   │       ├── creator_items.py     # Creator catalog item endpoints
+│   │       ├── card_packs.py        # Card pack endpoints
+│   │       ├── imports.py           # Import operations
+│   │       ├── outfits.py           # Saved outfit endpoints
+│   │       ├── outfit_preview.py    # Outfit preview task endpoints
 │   │       └── image.py             # Image processing endpoints
 │   │
 │   ├── models/                      # SQLAlchemy models
@@ -55,8 +58,11 @@ backend/
 │   │   ├── user.py
 │   │   ├── clothing_item.py
 │   │   ├── wardrobe.py
+│   │   ├── creator.py
 │   │   ├── outfit.py
 │   │   ├── card_pack.py
+│   │   ├── import_history.py
+│   │   ├── outfit_preview_task.py
 │   │   └── associations.py          # Many-to-many tables
 │   │
 │   ├── schemas/                     # Pydantic schemas
@@ -64,15 +70,23 @@ backend/
 │   │   ├── user.py
 │   │   ├── clothing_item.py
 │   │   ├── wardrobe.py
+│   │   ├── me.py
+│   │   ├── creator.py
 │   │   ├── outfit.py
-│   │   └── card_pack.py
+│   │   ├── card_pack.py
+│   │   ├── import_history.py
+│   │   └── outfit_preview.py
 │   │
 │   ├── crud/                        # CRUD operations
 │   │   ├── __init__.py
 │   │   ├── base.py                  # Base CRUD class
 │   │   ├── clothing.py
 │   │   ├── wardrobe.py
-│   │   └── outfit.py
+│   │   ├── creator.py
+│   │   ├── card_pack.py
+│   │   ├── import_history.py
+│   │   ├── outfit.py
+│   │   └── outfit_preview.py
 │   │
 │   ├── services/                    # Business logic services
 │   │   ├── __init__.py
@@ -80,7 +94,12 @@ backend/
 │   │   ├── storage_service.py       # S3/MinIO/Local storage
 │   │   ├── image_service.py         # Image processing
 │   │   ├── ai_service.py            # AI classification
-│   │   └── search_service.py        # Search functionality
+│   │   ├── search_service.py        # Search functionality
+│   │   ├── upload_validation_service.py
+│   │   ├── virtual_wardrobe_service.py
+│   │   ├── card_pack_import_service.py
+│   │   ├── outfit_service.py
+│   │   └── outfit_preview_service.py
 │   │
 │   ├── core/                        # Core utilities
 │   │   ├── __init__.py
@@ -116,6 +135,66 @@ backend/
 ```
 
 ---
+
+## Missing Feature Alignment
+
+The archived `backend_missing_feature_design` set has been absorbed into this document. When any older examples below conflict with this section, **this section is authoritative**.
+
+### Route and Module Boundaries
+
+- `me.py` returns unified user context plus creator capability flags for Flutter shell gating.
+- `creator_items.py` is a legacy façade. The old `creator_items` table has been merged into `clothing_items`; this router remains solely as a backwards-compatible shim delegating to the unified clothing endpoints.
+- `clothing.py` is now the single source of truth for both consumer and creator items. Publishing, visibility, and import are all expressed on the `clothing_items` row via `catalog_visibility`.
+- `creators.py` handles public creator browse plus authenticated self-service profile and dashboard access.
+- `card_packs.py` owns draft/publish/archive/delete transitions and public share reads, and exposes the new `/card-packs/popular` ranking endpoint.
+- `imports.py` is a transactional route surface and must delegate write orchestration to a service.
+- `outfit_preview.py` is isolated from clothing processing and owns preview task creation, polling, and save-to-outfit.
+- `outfits.py` only manages saved outfit metadata and retrieval. It does not behave like a generation task controller.
+
+### Data Model Overrides
+
+- Imported-item provenance is stored on `clothing_items` via origin fields, not in a standalone `provenance` table.
+- **Creator/consumer clothing table merge.** There is exactly one canonical table — `clothing_items`. The previous `creator_items` table has been folded in. Every item (owned, imported, or creator-authored) carries `catalog_visibility` ∈ {`PRIVATE`, `PACK_ONLY`, `PUBLIC`}, which drives public discovery filters. `card_pack_items.clothing_item_id` references this merged table directly; there is no separate `creator_item_id`. Data migration `20260420_000015` performs the move.
+- There is a single async pipeline queue, `clothing_pipeline`, used for both consumer uploads and creator-authored items. The old `creator_pipeline` name is no longer used.
+- `wardrobes` must support `is_system_managed` and `system_key`, with `DEFAULT_VIRTUAL_IMPORTED` reserved for the auto-created imported-content wardrobe.
+- Creator business data should live in `creator_profiles` keyed by `user_id`, with explicit `PENDING / ACTIVE / SUSPENDED` lifecycle state.
+- Import flow requires `import_histories` plus `import_history_items` so that cloned imported items can be traced back to both pack and source item. The self-reference field on imported copies is now `imported_from_clothing_item_id` (was `imported_from_creator_item_id`).
+- Outfit preview is a separate domain modeled by `outfit_preview_tasks` and `outfit_preview_task_items`.
+- `outfits` represent confirmed saved results and may reference `preview_task_id`; they should not also serve as asynchronous processing records.
+- **Styled generation multi-garment model.** `styled_generations` now carries a `gender VARCHAR(10)` column, and the many-to-many `styled_generation_clothing_items` junction table (`styled_generation_id`, `clothing_item_id`, `slot ∈ {HAT,TOP,PANTS,SHOES}`, `sort_order`) replaces the single `source_clothing_item_id` FK for inference. The FK is retained on `styled_generations` for backward-compat reads.
+
+### Service Boundaries
+
+- `upload_validation_service.py` performs MIME, extension, decodability, and dimension checks before accepting uploads.
+- `virtual_wardrobe_service.py` exposes `get_or_create_virtual_wardrobe(user_id)` and is used both by API convenience endpoints and import orchestration.
+- `card_pack_import_service.py` owns clone creation, provenance population, virtual wardrobe insertion, and import history writes in a single transaction.
+- `outfit_service.py` manages saved outfit reads and metadata updates.
+- `outfit_preview_service.py` owns prompt selection, provider invocation, result persistence, and task state updates.
+
+### Ownership And Transaction Rules
+
+- Public visibility filters such as `PUBLISHED` and `catalog_visibility != PRIVATE` must be enforced in the query layer, not trimmed after object loading.
+- Write paths must query by both resource id and owner id, for example `get_owned_card_pack`, `get_owned_creator_item`, and `get_owned_outfit`.
+- CRUD helpers may continue to serve simple reads, but transactional writes for imports, publish/archive transitions, and preview save flows must commit at the service layer.
+- State-changing endpoints should prefer row-level locking or equivalent transactional guards and return `409` for domain conflicts.
+
+### User Id And Ownership Dependencies
+
+- `get_current_creator_user_id` should build on `get_current_user_id` and then verify that a creator profile exists and is `ACTIVE`.
+- Creator-only routes must depend on `get_current_creator_user_id`, not on a loose `user_type == CREATOR` check.
+- Ownership-safe helpers should exist for every mutating resource boundary:
+  - `get_owned_creator_profile(db, *, creator_id, current_user_id)`
+  - `get_owned_creator_item(db, *, item_id, creator_id)`
+  - `get_owned_card_pack(db, *, pack_id, creator_id)`
+  - `get_owned_outfit(db, *, outfit_id, user_id)`
+- These helpers should return `None` when ownership fails so routes can map the result to `404` without leaking resource existence.
+- Transactional flows must load resources through ownership-safe helpers before any state transition, then commit in the service layer after all validations pass.
+
+### Async Execution Split
+
+- `processing_tasks` remains the async pipeline for clothing asset preparation.
+- `outfit_preview_tasks` is a distinct queue / worker domain for generated try-on previews.
+- Provider-specific prompt selection and image ordering belong in backend services; frontend submits structured metadata and referenced clothing item ids only.
 
 ## Database Schema (PostgreSQL)
 
@@ -197,17 +276,8 @@ CREATE TABLE images (
 
 CREATE INDEX idx_images_clothing ON images(clothing_item_id);
 
--- provenance table
-CREATE TABLE provenance (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    clothing_item_id UUID UNIQUE NOT NULL REFERENCES clothing_items(id) ON DELETE CASCADE,
-    creator_id UUID NOT NULL REFERENCES users(id),
-    creator_name VARCHAR(100) NOT NULL,
-    card_pack_id UUID,
-    card_pack_name VARCHAR(200),
-    imported_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    import_source TEXT
-);
+-- provenance is no longer modeled as a standalone table.
+-- Imported-item origin fields now live on clothing_items and import history tables.
 
 -- wardrobes table
 CREATE TABLE wardrobes (
@@ -268,7 +338,11 @@ CREATE INDEX idx_outfit_items_outfit ON outfit_items(outfit_id);
 CREATE TABLE creators (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'ACTIVE', 'SUSPENDED')),
+    display_name VARCHAR(100),
     brand_name VARCHAR(200),
+    bio TEXT,
+    avatar_url TEXT,
     website_url TEXT,
     social_links JSONB,  -- {platform: url}
     follower_count INTEGER DEFAULT 0,
@@ -278,6 +352,7 @@ CREATE TABLE creators (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX idx_creator_status ON creators(status);
 CREATE INDEX idx_creator_verified ON creators(is_verified);
 
 -- card_packs table
@@ -345,11 +420,15 @@ CREATE TABLE processing_tasks (
     task_type VARCHAR(30) NOT NULL CHECK (
         task_type IN ('BACKGROUND_REMOVAL', '3D_GENERATION', 'ANGLE_RENDERING', 'FULL_PIPELINE')
     ),
+    attempt_no INTEGER NOT NULL DEFAULT 1 CHECK (attempt_no >= 1),
+    retry_of_task_id UUID REFERENCES processing_tasks(id) ON DELETE SET NULL,
     status VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK (
         status IN ('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED')
     ),
     progress INTEGER DEFAULT 0 CHECK (progress BETWEEN 0 AND 100),
     error_message TEXT,
+    worker_id VARCHAR(255),
+    lease_expires_at TIMESTAMP WITH TIME ZONE,
     started_at TIMESTAMP WITH TIME ZONE,
     completed_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
@@ -357,6 +436,9 @@ CREATE TABLE processing_tasks (
 
 CREATE INDEX idx_processing_tasks_clothing ON processing_tasks(clothing_item_id);
 CREATE INDEX idx_processing_tasks_status ON processing_tasks(status);
+CREATE UNIQUE INDEX uq_processing_tasks_active_item
+    ON processing_tasks(clothing_item_id)
+    WHERE status IN ('PENDING', 'PROCESSING');
 
 -- Trigger to update updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -382,490 +464,135 @@ CREATE TRIGGER update_outfits_updated_at BEFORE UPDATE ON outfits
 
 ---
 
-## SQLAlchemy Models Example
+## Processing Pipeline Execution
 
-```python
-# app/models/clothing_item.py
-from sqlalchemy import Column, String, Boolean, ARRAY, ForeignKey, DateTime
-from sqlalchemy.dialects.postgresql import UUID, JSONB
-from sqlalchemy.orm import relationship
-from datetime import datetime
-import uuid
+### Clothing Digitization Pipeline (Hunyuan3D)
 
-from app.db.base import Base
+- API writes are short-lived: store original uploads, create `clothing_items`, create `processing_tasks(PENDING)`, then enqueue Celery.
+- Celery workers claim a task atomically before moving it to `PROCESSING`.
+- Worker failures mark the task `FAILED`, keep original uploads, and remove all derived database records and files.
+- Retry creates a new task row instead of mutating the failed task, preserving audit history.
+- Queue: `clothing_pipeline`
 
-class ClothingItem(Base):
-    __tablename__ = "clothing_items"
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    source = Column(String(20), nullable=False)
-    
-    # Tag-based classification
-    predicted_tags = Column(JSONB, nullable=False, default=[])  # Immutable AI predictions
-    final_tags = Column(JSONB, nullable=False, default=[])      # User-confirmed tags
-    is_confirmed = Column(Boolean, default=False)
-    
-    # Metadata
-    name = Column(String(200))
-    description = Column(String)
-    custom_tags = Column(ARRAY(String), default=[])  # User-defined freeform tags
-    
-    # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
-    # Relationships
-    user = relationship("User", back_populates="clothing_items")
-    images = relationship("Image", back_populates="clothing_item", cascade="all, delete-orphan")
-    provenance = relationship("Provenance", back_populates="clothing_item", uselist=False)
-    wardrobes = relationship("Wardrobe", secondary="wardrobe_items", back_populates="items")
+### Styled Generation Pipeline (DreamO)
 
-# Tag structure example:
-# predicted_tags = [
-#     {"key": "category", "value": "T_SHIRT"},
-#     {"key": "color", "value": "blue"},
-#     {"key": "pattern", "value": "striped"}
-# ]
+A separate async pipeline for personalized fashion photo generation:
+
+- **Endpoint**: `POST /api/v1/styled-generations` creates a `StyledGeneration` record, inserts one `styled_generation_clothing_items` row per submitted garment (1–4, unique slots), and enqueues to the `styled_generation` Celery queue.
+- **Queue**: `styled_generation` (separate from `clothing_pipeline`)
+- **Worker**: `celery-styled-gen` Docker service
+- **Pipeline steps**:
+  1. Load the gender and all slot→garment rows from `styled_generation_clothing_items` via the junction table (ordered HAT → TOP → PANTS → SHOES).
+  2. Validate every garment has a PROCESSED_FRONT image (from Hunyuan3D pipeline).
+  3. Download and preprocess selfie (face detection, background removal, white bg composite).
+  4. Build composite prompt from gender-aware templates + slot-ordered garment descriptions + user scene description.
+  5. Call isolated DreamO HTTP service (port 9000) for inference, passing `garment_images: [...]` (list).
+  6. Store result image and update status to SUCCEEDED.
+- **DreamO** runs as a separate Docker service with its own Python environment (torch, diffusers, transformers pinned to specific versions).
+- Retry resets the record to PENDING and re-dispatches, but before re-enqueueing it releases any blobs produced by the prior failed attempt (result image, intermediate selfie variants).
+
+### StyledGeneration Entity
+
+```sql
+CREATE TABLE styled_generations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    source_clothing_item_id UUID REFERENCES clothing_items(id) ON DELETE SET NULL,
+    -- kept as a backwards-compat "first garment" shortcut; real garments live in
+    -- the junction table styled_generation_clothing_items
+    gender VARCHAR(10) NOT NULL CHECK (gender IN ('male','female')),
+    selfie_original_path TEXT NOT NULL,
+    selfie_processed_path TEXT,
+    scene_prompt TEXT NOT NULL,
+    negative_prompt TEXT,
+    dreamo_version VARCHAR(10) NOT NULL DEFAULT 'v1.1',
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING'
+        CHECK (status IN ('PENDING','PROCESSING','SUCCEEDED','FAILED')),
+    progress INTEGER NOT NULL DEFAULT 0 CHECK (progress BETWEEN 0 AND 100),
+    result_image_path TEXT,
+    failure_reason TEXT,
+    guidance_scale FLOAT NOT NULL DEFAULT 4.5,
+    seed INTEGER NOT NULL DEFAULT -1,
+    width INTEGER NOT NULL DEFAULT 1024,
+    height INTEGER NOT NULL DEFAULT 1024,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+);
+
+-- Multi-garment junction. 1-4 rows per generation, unique slots per generation.
+CREATE TABLE styled_generation_clothing_items (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    styled_generation_id UUID NOT NULL REFERENCES styled_generations(id) ON DELETE CASCADE,
+    clothing_item_id UUID NOT NULL REFERENCES clothing_items(id),
+    slot VARCHAR(10) NOT NULL CHECK (slot IN ('HAT','TOP','PANTS','SHOES')),
+    sort_order INTEGER NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+    UNIQUE(styled_generation_id, slot)
+);
+CREATE INDEX idx_sgci_generation ON styled_generation_clothing_items(styled_generation_id);
+CREATE INDEX idx_sgci_clothing ON styled_generation_clothing_items(clothing_item_id);
 ```
 
----
+### Content-Addressed Storage (CAS)
 
-## Pydantic Schemas Example
+All binary assets (images, GLB models) are stored using content-addressed storage. Files are identified by their SHA-256 hash, not by user/item paths.
 
-```python
-# app/schemas/clothing_item.py
-from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional, List
-from datetime import datetime
-from uuid import UUID
-from enum import Enum
+**Architecture:**
+- `blobs` table: central registry with `blob_hash CHAR(64)` PK, `byte_size`, `mime_type`, `ref_count`, `pending_delete_at`
+- `BlobStorage` (byte layer): `LocalBlobStorage` or `S3BlobStorage`, stores files at `blobs/{hash[:2]}/{hash[2:4]}/{hash}`
+- `BlobService` (DB layer): manages ref_count via `ingest_upload()`, `addref()`, `release()`
+- Concurrency safety: PostgreSQL advisory locks (`pg_advisory_xact_lock`) serialize per-hash operations
+- GC: Celery Beat sweeps blobs with `ref_count=0` after 24h grace period
 
-class ItemSource(str, Enum):
-    OWNED = "OWNED"
-    IMPORTED = "IMPORTED"
+**Business tables reference blobs via `blob_hash CHAR(64) FK`:**
+- `images.blob_hash`, `models_3d.blob_hash` (consumer clothing)
+- `creator_item_images.blob_hash`, `creator_models_3d.blob_hash` (creator clothing)
+- `styled_generations.selfie_original_blob_hash`, `.selfie_processed_blob_hash`, `.result_image_blob_hash`
+- `outfit_preview_tasks.person_image_blob_hash`, `.preview_image_blob_hash`
+- `outfit_preview_task_items.garment_image_blob_hash`
+- `outfits.preview_image_blob_hash`
+- `card_packs.cover_image_blob_hash`
 
-class ClothingType(str, Enum):
-    # Tops
-    T_SHIRT = "T_SHIRT"
-    SHIRT = "SHIRT"
-    BLOUSE = "BLOUSE"
-    POLO = "POLO"
-    TANK_TOP = "TANK_TOP"
-    SWEATER = "SWEATER"
-    HOODIE = "HOODIE"
-    SWEATSHIRT = "SWEATSHIRT"
-    CARDIGAN = "CARDIGAN"
-    
-    # Bottoms
-    JEANS = "JEANS"
-    TROUSERS = "TROUSERS"
-    SHORTS = "SHORTS"
-    SKIRT = "SKIRT"
-    LEGGINGS = "LEGGINGS"
-    SWEATPANTS = "SWEATPANTS"
-    
-    # Outerwear
-    JACKET = "JACKET"
-    COAT = "COAT"
-    BLAZER = "BLAZER"
-    PUFFER = "PUFFER"
-    WIND_BREAKER = "WIND_BREAKER"
-    VEST = "VEST"
-    
-    # Full Body
-    DRESS = "DRESS"
-    JUMPSUIT = "JUMPSUIT"
-    ROMPER = "ROMPER"
-    
-    # Footwear
-    SNEAKERS = "SNEAKERS"
-    BOOTS = "BOOTS"
-    SANDALS = "SANDALS"
-    DRESS_SHOES = "DRESS_SHOES"
-    HEELS = "HEELS"
-    SLIPPERS = "SLIPPERS"
-    
-    # Accessories
-    HAT = "HAT"
-    SCARF = "SCARF"
-    BELT = "BELT"
-    
-    # Fallback
-    OTHER = "OTHER"
+**URL delivery:** All file URLs use business paths (`/files/clothing-items/{id}/{kind}`), never expose hashes. The `/files` router resolves `blob_hash` internally and streams bytes.
 
-class Tag(BaseModel):
-    """Tag structure: {key: string, value: string}"""
-    key: str = Field(..., description="Tag key (e.g., 'category', 'color', 'pattern')")
-    value: str = Field(..., description="Tag value (e.g., 'T_SHIRT', 'blue', 'striped')")
+### Card Pack Import Flow
 
-class ClothingItemBase(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    customTags: List[str] = Field(default_factory=list, description="User-defined freeform tags")
+When a consumer imports a published card pack:
+1. `card_pack_imports` record created (tracks import binding)
+2. For each `creator_item` in the pack: a snapshot `clothing_items` row is created with `source='IMPORTED'`, copying metadata (tags, name, description) but sharing blob references via `addref()`
+3. `import_count` on the card pack is incremented
+4. Consumer can delete individual imported items or un-import the entire pack
 
-class ClothingItemCreate(ClothingItemBase):
-    pass
+**Deletion rules (3-tier clothing item lifecycle, spec §4.7):**
 
-class ClothingItemUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    finalTags: Optional[List[Tag]] = Field(None, description="User-confirmed tags (replaces all)")
-    isConfirmed: Optional[bool] = None
-    customTags: Optional[List[str]] = None
+`DELETE /clothing-items/{id}` dispatches as follows:
 
-class ClothingItemInDB(ClothingItemBase):
-    model_config = ConfigDict(from_attributes=True)
-    
-    id: UUID
-    user_id: UUID
-    source: ItemSource
-    predicted_tags: List[Tag] = Field(default_factory=list, description="Immutable AI predictions")
-    final_tags: List[Tag] = Field(default_factory=list, description="User-confirmed tags")
-    is_confirmed: bool
-    created_at: datetime
-    updated_at: datetime
+1. **Hard delete — private or never published.** If `catalog_visibility = PRIVATE`, or the item has never been referenced by a `PUBLISHED` card pack, the row is removed and `BlobService.release()` runs for every asset.
+2. **Hard delete — published but zero downstream downloaders.** If the item has been published (`PACK_ONLY` / `PUBLIC`) but no consumer import row currently references it, the row is still removed. Same release path.
+3. **Tombstone — published with live downstream imports.** If at least one `clothing_items` row has `imported_from_clothing_item_id = <id>`, the row is retained but `deleted_at` is set. It is filtered out of every list / discovery endpoint. Blob references remain until the consumer un-imports; consumer un-import cascades the tombstone (its downstream copies are deleted, which triggers blob `release()`).
 
-class ClothingItemResponse(ClothingItemInDB):
-    images: List["ImageResponse"] = []
-    provenance: Optional["ProvenanceResponse"] = None
-```
+**Other deletion constraints:**
+- Consumer clothing_item (OWNED or IMPORTED): always deletable (releases blob refs).
+- Card pack ARCHIVE: always allowed (hides from discovery, doesn't affect imports).
+- Card pack HARD DELETE: blocked while `card_pack_imports` count > 0.
 
----
+### View Counts and Popular Packs
 
-## Storage Service (S3/MinIO/Local)
+`clothing_items` and `card_packs` both carry a `view_count INTEGER NOT NULL DEFAULT 0` column, incremented atomically on every detail GET (`UPDATE ... SET view_count = view_count + 1 RETURNING view_count`). The same transaction also performs the read, so the response reflects the post-increment value.
 
-```python
-# app/services/storage_service.py
-from abc import ABC, abstractmethod
-from typing import BinaryIO, Optional
-import boto3
-from pathlib import Path
-import shutil
-from app.core.config import settings
+Rules:
+- Only `PUBLISHED` packs accrue views (the counter is still persisted for drafts, but all paths that read it skip non-published rows).
+- Self-views are skipped: if the authenticated caller owns the pack (or the creator-authored item), the increment is short-circuited.
+- `GET /api/v1/card-packs/popular?limit=10` returns `PUBLISHED` packs ordered by `view_count DESC, published_at DESC`.
 
-class StorageService(ABC):
-    @abstractmethod
-    async def upload_file(self, file: BinaryIO, path: str) -> str:
-        """Upload file and return storage path"""
-        pass
-    
-    @abstractmethod
-    async def download_file(self, path: str) -> bytes:
-        """Download file from storage"""
-        pass
-    
-    @abstractmethod
-    async def delete_file(self, path: str) -> bool:
-        """Delete file from storage"""
-        pass
-    
-    @abstractmethod
-    def get_url(self, path: str) -> str:
-        """Get accessible URL for file"""
-        pass
+### Database Hardening
 
-class S3StorageService(StorageService):
-    def __init__(self):
-        self.s3_client = boto3.client(
-            's3',
-            endpoint_url=settings.S3_ENDPOINT,
-            aws_access_key_id=settings.S3_ACCESS_KEY,
-            aws_secret_access_key=settings.S3_SECRET_KEY,
-            region_name=settings.S3_REGION
-        )
-        self.bucket = settings.S3_BUCKET
-    
-    async def upload_file(self, file: BinaryIO, path: str) -> str:
-        self.s3_client.upload_fileobj(file, self.bucket, path)
-        return path
-    
-    async def download_file(self, path: str) -> bytes:
-        response = self.s3_client.get_object(Bucket=self.bucket, Key=path)
-        return response['Body'].read()
-    
-    async def delete_file(self, path: str) -> bool:
-        self.s3_client.delete_object(Bucket=self.bucket, Key=path)
-        return True
-    
-    def get_url(self, path: str) -> str:
-        if settings.S3_PUBLIC_URL:
-            return f"{settings.S3_PUBLIC_URL}/{path}"
-        return self.s3_client.generate_presigned_url(
-            'get_object',
-            Params={'Bucket': self.bucket, 'Key': path},
-            ExpiresIn=3600
-        )
+- `release()` acquires the per-hash `pg_advisory_xact_lock` before decrementing `ref_count`, so concurrent release / ingest calls cannot race into double-decrement or stale zero-ref observations.
+- Retry paths for `StyledGeneration` / `ProcessingTask` explicitly release prior-attempt blobs before re-enqueue to avoid blob leaks on repeated failures.
+- `card_pack.import_count` is now updated under `SELECT ... FOR UPDATE`, closing the TOCTOU window between "I was at zero when I checked" and the hard-delete commit. A new `ck_card_pack_import_count_nonneg` CHECK constraint defends against underflow.
+- New Celery-beat reap jobs scan `styled_generations` and `processing_tasks` every hour for rows stuck in `PROCESSING` past their `lease_expires_at` and flip them to `FAILED`.
+- A weekly orphan-file sweep on local storage reconciles bytes on disk against `blobs.blob_hash`, removing anything not in the registry. (S3 storage is covered by the existing `gc_sweep` task.)
+- `SECRET_KEY` now has a production-environment validator that rejects the dev default on `ENV=production`.
+- N+1 fix in the wardrobe list endpoints (single query now loads `wardrobe_items` with joinedload; previously each item fetched its `clothing_items` row individually).
+- `files.py` card-pack cover route gained an auth guard that returns 404 for `DRAFT` / `ARCHIVED` packs to non-owners — the previous route leaked DRAFT cover bytes by blob hash.
 
-class LocalStorageService(StorageService):
-    def __init__(self):
-        self.base_path = Path(settings.LOCAL_STORAGE_PATH)
-        self.base_path.mkdir(parents=True, exist_ok=True)
-    
-    async def upload_file(self, file: BinaryIO, path: str) -> str:
-        file_path = self.base_path / path
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        with open(file_path, 'wb') as f:
-            shutil.copyfileobj(file, f)
-        return path
-    
-    async def download_file(self, path: str) -> bytes:
-        file_path = self.base_path / path
-        with open(file_path, 'rb') as f:
-            return f.read()
-    
-    async def delete_file(self, path: str) -> bool:
-        file_path = self.base_path / path
-        if file_path.exists():
-            file_path.unlink()
-            return True
-        return False
-    
-    def get_url(self, path: str) -> str:
-        return f"{settings.API_BASE_URL}/files/{path}"
-
-# Factory function
-def get_storage_service() -> StorageService:
-    if settings.STORAGE_TYPE == "s3":
-        return S3StorageService()
-    elif settings.STORAGE_TYPE == "local":
-        return LocalStorageService()
-    else:
-        raise ValueError(f"Unknown storage type: {settings.STORAGE_TYPE}")
-```
-
----
-
-## Configuration
-
-```python
-# app/core/config.py
-from pydantic_settings import BaseSettings
-from typing import Optional
-
-class Settings(BaseSettings):
-    # API
-    API_V1_STR: str = "/api/v1"
-    PROJECT_NAME: str = "AI Wardrobe Master"
-    
-    # Database
-    POSTGRES_SERVER: str
-    POSTGRES_USER: str
-    POSTGRES_PASSWORD: str
-    POSTGRES_DB: str
-    POSTGRES_PORT: str = "5432"
-    
-    @property
-    def DATABASE_URL(self) -> str:
-        return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
-    
-    # Storage
-    STORAGE_TYPE: str = "local"  # "s3" or "local"
-    
-    # S3/MinIO
-    S3_ENDPOINT: Optional[str] = None
-    S3_ACCESS_KEY: Optional[str] = None
-    S3_SECRET_KEY: Optional[str] = None
-    S3_BUCKET: Optional[str] = None
-    S3_REGION: str = "us-east-1"
-    S3_PUBLIC_URL: Optional[str] = None
-    
-    # Local Storage
-    LOCAL_STORAGE_PATH: str = "./storage"
-    
-    # Security
-    SECRET_KEY: str
-    ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
-    
-    # CORS
-    BACKEND_CORS_ORIGINS: list = ["*"]
-    
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
-
-settings = Settings()
-```
-
----
-
-## API Endpoint Example
-
-```python
-# app/api/v1/clothing.py
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
-from sqlalchemy.orm import Session
-from typing import List
-from uuid import UUID
-
-from app.api import deps
-from app.schemas.clothing_item import ClothingItemCreate, ClothingItemResponse
-from app.crud import clothing as crud_clothing
-from app.services.storage_service import get_storage_service
-from app.services.image_service import ImageService
-from app.services.ai_service import AIService
-
-router = APIRouter()
-
-@router.post("/", response_model=ClothingItemResponse, status_code=201)
-async def create_clothing_item(
-    *,
-    db: Session = Depends(deps.get_db),
-    current_user = Depends(deps.get_current_user),
-    front_image: UploadFile = File(...),
-    back_image: UploadFile = File(...),
-    name: str = None,
-    description: str = None
-):
-    """
-    Create new clothing item with image upload
-    """
-    storage = get_storage_service()
-    image_service = ImageService(storage)
-    ai_service = AIService()
-    
-    # Process images
-    front_processed = await image_service.process_image(front_image)
-    back_processed = await image_service.process_image(back_image)
-    
-    # AI classification - returns Tag[]
-    classification = await ai_service.classify_clothing(front_processed)
-    
-    # Create clothing item
-    item_data = ClothingItemCreate(
-        name=name,
-        description=description,
-        customTags=custom_tags or []
-    )
-    
-    clothing_item = await crud_clothing.create_with_images(
-        db=db,
-        user_id=current_user.id,
-        obj_in=item_data,
-        front_image=front_processed,
-        back_image=back_processed,
-        predicted_tags=classification["predictedTags"]  # Tag[] from AI
-    )
-    
-    return clothing_item
-
-@router.get("/", response_model=List[ClothingItemResponse])
-async def list_clothing_items(
-    db: Session = Depends(deps.get_db),
-    current_user = Depends(deps.get_current_user),
-    skip: int = 0,
-    limit: int = 20,
-    source: Optional[str] = None,
-    tag_key: Optional[str] = None,
-    tag_value: Optional[str] = None
-):
-    """
-    List user's clothing items with filters
-    Search uses final_tags only (not predicted_tags)
-    """
-    items = crud_clothing.get_multi_by_user(
-        db=db,
-        user_id=current_user.id,
-        skip=skip,
-        limit=limit,
-        source=source,
-        type=type
-    )
-    return items
-```
-
----
-
-## Docker Compose Setup
-
-```yaml
-# docker-compose.yml
-version: '3.8'
-
-services:
-  postgres:
-    image: postgres:15-alpine
-    environment:
-      POSTGRES_USER: wardrobe_user
-      POSTGRES_PASSWORD: wardrobe_pass
-      POSTGRES_DB: wardrobe_db
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-  
-  minio:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - minio_data:/data
-  
-  backend:
-    build: .
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-    volumes:
-      - ./backend:/app
-    ports:
-      - "8000:8000"
-    environment:
-      - POSTGRES_SERVER=postgres
-      - POSTGRES_USER=wardrobe_user
-      - POSTGRES_PASSWORD=wardrobe_pass
-      - POSTGRES_DB=wardrobe_db
-      - STORAGE_TYPE=s3
-      - S3_ENDPOINT=http://minio:9000
-      - S3_ACCESS_KEY=minioadmin
-      - S3_SECRET_KEY=minioadmin
-      - S3_BUCKET=wardrobe-images
-    depends_on:
-      - postgres
-      - minio
-
-volumes:
-  postgres_data:
-  minio_data:
-```
-
----
-
-## Requirements.txt
-
-```txt
-fastapi==0.109.0
-uvicorn[standard]==0.27.0
-sqlalchemy==2.0.25
-alembic==1.13.1
-psycopg2-binary==2.9.9
-pydantic==2.5.3
-pydantic-settings==2.1.0
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
-python-multipart==0.0.6
-boto3==1.34.34
-pillow==10.2.0
-opencv-python-headless==4.9.0.80
-pytest==7.4.4
-pytest-asyncio==0.23.3
-httpx==0.26.0
-```
-
----
-
-## Next Steps
-
-1. Setup PostgreSQL database
-2. Configure S3/MinIO or local storage
-3. Implement authentication
-4. Build CRUD operations
-5. Add image processing pipeline
-6. Integrate AI classification (optional)
-7. Write tests
-8. Deploy with Docker

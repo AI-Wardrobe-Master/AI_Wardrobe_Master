@@ -1,11 +1,12 @@
 """
-AI Classification Service - Module 2.1, 2.2
-Integrates: category classification, color detection, pattern recognition.
-TODO: 替换 _classify_mock 为实际模型调用。
+AI classification service backed by a Roboflow workflow.
 """
+import base64
+import json
 import logging
 from pathlib import Path
-from typing import List
+from typing import Any, List
+from urllib import error, request
 
 from app.core.exceptions import ClassificationError
 from app.core.config import settings
@@ -13,47 +14,51 @@ from app.schemas.clothing_item import Tag
 
 logger = logging.getLogger(__name__)
 
-
-# ---------------------------------------------------------------------------
-# 待定：实际模型接入
-# ---------------------------------------------------------------------------
-# 可选方案（需调研选型后替换）:
-# 1. Hugging Face transformers + 服装分类预训练模型
-# 2. TensorFlow Lite / ONNX 轻量模型 (Fashion-MNIST 等)
-# 3. 颜色: Pillow + colorthief 或 K-Means
-# 4. 图案: 简单 CNN 或规则+纹理特征
-# ---------------------------------------------------------------------------
-# 依赖项（选型后添加到 requirements.txt）:
-# - torch / transformers  (若用 Hugging Face)
-# - tensorflow / tflite   (若用 TF)
-# - colorthief           (若用主色提取)
-# ---------------------------------------------------------------------------
-
-# 预定义类型，与 DATA_MODEL 保持一致
-_CATEGORIES = [
-    "T_SHIRT", "SHIRT", "BLOUSE", "POLO", "TANK_TOP",
-    "SWEATER", "HOODIE", "SWEATSHIRT", "CARDIGAN",
-    "JEANS", "TROUSERS", "SHORTS", "SKIRT", "LEGGINGS", "SWEATPANTS",
-    "JACKET", "COAT", "BLAZER", "PUFFER", "WIND_BREAKER", "VEST",
-    "DRESS", "JUMPSUIT", "ROMPER",
-    "SNEAKERS", "BOOTS", "SANDALS", "DRESS_SHOES", "HEELS", "SLIPPERS",
-    "HAT", "SCARF", "BELT",
-    "OTHER",
+SUPPORTED_CATEGORY_VALUES = [
+    "dress",
+    "hat",
+    "longsleeve",
+    "outwear",
+    "pants",
+    "shirt",
+    "shoes",
+    "shorts",
+    "t-shirt",
 ]
 
-_COLORS = [
-    "black", "white", "gray", "navy", "blue", "red", "green",
-    "yellow", "orange", "brown", "pink", "purple", "beige",
-]
-
-_PATTERNS = [
-    "solid", "striped", "checked", "floral", "geometric",
-    "polka_dot", "animal_print", "abstract", "other",
-]
-
-_STYLES = ["casual", "formal", "business", "sporty", "bohemian", "vintage", "minimalist", "streetwear", "elegant", "other"]
-_SEASONS = ["spring", "summer", "fall", "winter", "all_season"]
-_AUDIENCES = ["men", "women", "unisex", "kids", "teen"]
+_SUPPORTED_CATEGORY_SET = set(SUPPORTED_CATEGORY_VALUES)
+_CATEGORY_ALIASES = {
+    "dress": "dress",
+    "hat": "hat",
+    "long-sleeve": "longsleeve",
+    "long_sleeve": "longsleeve",
+    "long sleeve": "longsleeve",
+    "longsleeve": "longsleeve",
+    "outerwear": "outwear",
+    "outwear": "outwear",
+    "pants": "pants",
+    "shirt": "shirt",
+    "shoe": "shoes",
+    "shoes": "shoes",
+    "short": "shorts",
+    "shorts": "shorts",
+    "t shirt": "t-shirt",
+    "t-shirt": "t-shirt",
+    "t_shirt": "t-shirt",
+    "tee": "t-shirt",
+    "tee shirt": "t-shirt",
+    "tshirt": "t-shirt",
+}
+_LABEL_KEYS = {
+    "class",
+    "class_name",
+    "classname",
+    "label",
+    "name",
+    "predicted_class",
+    "predictedclass",
+    "top",
+}
 
 
 def _load_image_bytes(image_path: str) -> bytes:
@@ -75,54 +80,131 @@ def _load_image_bytes(image_path: str) -> bytes:
     raise ClassificationError(f"Cannot load image: {image_path}")
 
 
-def _classify_category(_image_bytes: bytes) -> str:
-    """
-    服装品类分类。
-    TODO: 接入实际分类模型，返回 ClothingType 枚举值。
-    """
-    # Mock: 返回默认值，便于前后端联调
-    return "T_SHIRT"
+def _normalize_category_label(raw_label: str) -> str | None:
+    normalized = raw_label.strip().lower().replace("_", " ").replace("-", " ")
+    normalized = " ".join(normalized.split())
+    return _CATEGORY_ALIASES.get(normalized)
 
 
-def _detect_colors(_image_bytes: bytes) -> List[str]:
-    """
-    主色/次色检测。
-    TODO: 使用 colorthief / Pillow+KMeans 等实现。
-    """
-    return ["blue", "white"]
+def _collect_supported_categories(payload: Any) -> list[str]:
+    found: list[str] = []
+
+    def add_label(value: str):
+        normalized = _normalize_category_label(value)
+        if normalized and normalized not in found:
+            found.append(normalized)
+
+    def visit(node: Any):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                key_normalized = key.strip().lower().replace("-", "_")
+                if key_normalized in _LABEL_KEYS and isinstance(value, str):
+                    add_label(value)
+                    continue
+                visit(value)
+            return
+        if isinstance(node, list):
+            for item in node:
+                visit(item)
+            return
+        if isinstance(node, str):
+            add_label(node)
+
+    visit(payload)
+    return found
 
 
-def _detect_pattern(_image_bytes: bytes) -> str:
-    """
-    图案识别。
-    TODO: 接入图案识别模型或规则。
-    """
-    return "striped"
-
-
-def _classify_mock(_image_bytes: bytes) -> List[Tag]:
-    """
-    Mock 分类结果，仅返回 2.1/2.2 属性（品类、颜色、图案）。
-    style/season/audience 由用户手动选择（2.3.3），不做自动分配（2.3.2 已移除）。
-    """
-    return [
-        Tag(key="category", value=_classify_category(_image_bytes)),
-        Tag(key="color", value="blue"),
-        Tag(key="color", value="white"),
-        Tag(key="pattern", value=_detect_pattern(_image_bytes)),
+def _build_workflow_url() -> str:
+    missing = [
+        name
+        for name, value in [
+            ("ROBOFLOW_API_KEY", settings.ROBOFLOW_API_KEY),
+            ("ROBOFLOW_WORKSPACE_NAME", settings.ROBOFLOW_WORKSPACE_NAME),
+            ("ROBOFLOW_WORKFLOW_ID", settings.ROBOFLOW_WORKFLOW_ID),
+        ]
+        if not value
     ]
+    if missing:
+        missing_joined = ", ".join(missing)
+        raise ClassificationError(
+            f"Roboflow configuration missing: {missing_joined}"
+        )
+
+    base_url = settings.ROBOFLOW_API_URL.rstrip("/")
+    return (
+        f"{base_url}/infer/workflows/"
+        f"{settings.ROBOFLOW_WORKSPACE_NAME}/{settings.ROBOFLOW_WORKFLOW_ID}"
+    )
+
+
+def _call_roboflow_workflow(image_bytes: bytes) -> Any:
+    encoded_image = base64.b64encode(image_bytes).decode("ascii")
+    payload = {
+        "api_key": settings.ROBOFLOW_API_KEY,
+        "inputs": {
+            settings.ROBOFLOW_IMAGE_INPUT_NAME: {
+                "type": "base64",
+                "value": encoded_image,
+            }
+        },
+    }
+
+    body = json.dumps(payload).encode("utf-8")
+    workflow_request = request.Request(
+        _build_workflow_url(),
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with request.urlopen(
+        workflow_request,
+        timeout=settings.ROBOFLOW_TIMEOUT_SECONDS,
+    ) as response:
+        return json.load(response)
+
+
+def _parse_workflow_result(payload: Any) -> List[Tag]:
+    categories = _collect_supported_categories(payload)
+    if not categories:
+        raise ClassificationError(
+            "Roboflow workflow returned no supported category. "
+            f"Supported values: {', '.join(SUPPORTED_CATEGORY_VALUES)}"
+        )
+
+    # 当前流程只落一个主 category，其他属性交给用户手动补充。
+    category = categories[0]
+    if category not in _SUPPORTED_CATEGORY_SET:
+        raise ClassificationError(f"Unsupported category returned: {category}")
+
+    return [Tag(key="category", value=category)]
 
 
 class AIService:
-    """AI 分类服务：品类、颜色、图案及扩展属性"""
+    """AI 分类服务。"""
 
     def classify_bytes(self, image_bytes: bytes) -> List[Tag]:
         """
         对图片字节进行分类，返回 predictedTags。
-        内部处理流程和 API 路径读取共用这一入口。
+        当前只自动生成模型已支持的 category 标签。
         """
         try:
-            return _classify_mock(image_bytes)
+            payload = _call_roboflow_workflow(image_bytes)
+            return _parse_workflow_result(payload)
+        except error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")[:500]
+            logger.exception("Roboflow workflow request failed: %s", body)
+            raise ClassificationError(
+                f"Roboflow workflow request failed with status "
+                f"{exc.code}: {body}"
+            )
+        except error.URLError as exc:
+            logger.exception("Roboflow workflow network error")
+            raise ClassificationError(f"Roboflow workflow network error: {exc}")
+        except json.JSONDecodeError as exc:
+            logger.exception("Roboflow workflow returned invalid JSON")
+            raise ClassificationError(
+                f"Roboflow workflow returned invalid JSON: {exc}"
+            )
         except Exception as e:
             logger.exception("Failed to classify image bytes")
             raise ClassificationError(str(e))

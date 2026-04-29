@@ -3,7 +3,6 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     ARRAY,
-    BigInteger,
     Boolean,
     CheckConstraint,
     Column,
@@ -40,6 +39,28 @@ class ClothingItem(Base):
     name = Column(String(200))
     description = Column(Text)
     custom_tags = Column(ARRAY(String), default=[])
+    category = Column(String(100), nullable=True)
+    material = Column(String(100), nullable=True)
+    style = Column(String(100), nullable=True)
+    preview_svg_state = Column(String(20), nullable=False, default="PLACEHOLDER")
+    preview_svg_available = Column(Boolean, nullable=False, default=False)
+    sync_status = Column(String(20), nullable=False, default="SYNCED")
+    catalog_visibility = Column(
+        String(20), nullable=False, server_default="PRIVATE"
+    )
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
+    view_count = Column(Integer, nullable=False, server_default="0")
+
+    imported_from_card_pack_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("card_packs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    imported_from_clothing_item_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("clothing_items.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     created_at = Column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
@@ -56,6 +77,19 @@ class ClothingItem(Base):
         Index("idx_clothing_user_created", "user_id", "created_at"),
         Index("idx_clothing_final_tags", "final_tags", postgresql_using="gin"),
         Index("idx_clothing_custom_tags", "custom_tags", postgresql_using="gin"),
+        Index("idx_clothing_items_imported_from_pack", "imported_from_card_pack_id"),
+        CheckConstraint(
+            "preview_svg_state IN ('PLACEHOLDER','GENERATED','FAILED')",
+            name="ck_clothing_preview_svg_state",
+        ),
+        CheckConstraint(
+            "sync_status IN ('SYNCED','LOCAL_ONLY','PENDING_SYNC')",
+            name="ck_clothing_sync_status",
+        ),
+        CheckConstraint(
+            "catalog_visibility IN ('PRIVATE','PACK_ONLY','PUBLIC')",
+            name="ck_clothing_catalog_visibility",
+        ),
     )
 
     images = relationship(
@@ -83,10 +117,8 @@ class Image(Base):
         index=True,
     )
     image_type = Column(String(20), nullable=False)
-    storage_path = Column(Text, nullable=False)
+    blob_hash = Column(String(64), ForeignKey("blobs.blob_hash"), nullable=False)
     angle = Column(Integer, nullable=True)
-    file_size = Column(BigInteger, nullable=True)
-    mime_type = Column(String(50), nullable=True)
     created_at = Column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -132,10 +164,9 @@ class Model3D(Base):
         nullable=False,
     )
     model_format = Column(String(10), nullable=False, default="glb")
-    storage_path = Column(Text, nullable=False)
+    blob_hash = Column(String(64), ForeignKey("blobs.blob_hash"), nullable=False)
     vertex_count = Column(Integer, nullable=True)
     face_count = Column(Integer, nullable=True)
-    file_size = Column(BigInteger, nullable=True)
     created_at = Column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -158,9 +189,17 @@ class ProcessingTask(Base):
         index=True,
     )
     task_type = Column(String(30), nullable=False)
+    attempt_no = Column(Integer, nullable=False, default=1)
+    retry_of_task_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("processing_tasks.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     status = Column(String(20), nullable=False, default="PENDING")
     progress = Column(Integer, default=0)
     error_message = Column(Text, nullable=True)
+    worker_id = Column(String(255), nullable=True)
+    lease_expires_at = Column(DateTime(timezone=True), nullable=True)
     started_at = Column(DateTime(timezone=True), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(
@@ -173,12 +212,20 @@ class ProcessingTask(Base):
             "'ANGLE_RENDERING','FULL_PIPELINE')",
             name="ck_task_type",
         ),
+        CheckConstraint("attempt_no >= 1", name="ck_attempt_no"),
         CheckConstraint(
             "status IN ('PENDING','PROCESSING','COMPLETED','FAILED')",
             name="ck_task_status",
         ),
         CheckConstraint("progress BETWEEN 0 AND 100", name="ck_progress"),
         Index("idx_processing_tasks_item_created", "clothing_item_id", "created_at"),
+        Index(
+            "uq_processing_tasks_active_item",
+            "clothing_item_id",
+            unique=True,
+            postgresql_where=sql_text("status IN ('PENDING','PROCESSING')"),
+        ),
     )
 
     clothing_item = relationship("ClothingItem", back_populates="processing_tasks")
+    retry_of_task = relationship("ProcessingTask", remote_side=[id], uselist=False)

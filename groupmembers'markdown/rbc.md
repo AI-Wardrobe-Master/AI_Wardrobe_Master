@@ -126,3 +126,69 @@
 
 - 前端或联调同学可以通过一条 `docker compose up --build` 拉起数据库和后端
 - 后端容器启动时会自动完成 migration 和 demo 用户准备，减少手工初始化步骤
+---
+
+## rbc 工作记录 2026.3.9
+
+### 本次修改主题
+
+将 Module 2 的服装分类从本地 mock 改为可配置的 Roboflow workflow 接入，并收缩当前自动标签范围，只保留模型真实支持的 `category`。
+
+### 已完成内容
+
+- 改造分类服务
+  - 修改 `backend/app/services/ai_service.py`
+  - 移除原有 mock 分类、mock `style`、mock `season`、mock `audience`
+  - 增加 Roboflow workflow 调用逻辑，支持通过环境变量配置 `api_url`、`api_key`、`workspace_name`、`workflow_id`
+  - 增加类别归一化和结果解析逻辑，兼容 `t_shirt` / `t-shirt` / `long sleeve` / `outerwear` 等常见变体
+  - 当前只将一个主类别写入 `predictedTags`，格式为 `{ "key": "category", "value": "<label>" }`
+
+- 收缩当前支持的 category 范围
+  - 当前后端自动分类仅保留：
+    `dress`、`hat`、`longsleeve`、`outwear`、`pants`、`shirt`、`shoes`、`shorts`、`t-shirt`
+  - 在 `documents/DATA_MODEL.md` 中将其他历史类型先注释为“暂不启用”
+
+- 调整配置与说明
+  - 修改 `backend/app/core/config.py`
+  - 修改 `backend/.env.example`
+  - 修改 `backend/README.md`
+  - 新增 Roboflow workflow 相关环境变量说明，默认 `api_url` 对齐为 `https://serverless.roboflow.com`
+
+- 同步接口与数据模型文档
+  - 修改 `documents/API_CONTRACT.md`
+  - 修改 `documents/DATA_MODEL.md`
+  - 将示例中的自动预测结果改为当前实现：仅自动返回 `category`
+  - 明确 `season`、`style`、`audience` 由用户后续手动补充到 `finalTags`
+
+### 影响范围
+
+- `POST /api/v1/ai/classify` 与上传流程里的自动分类结果不再混入伪造的 `style` / `season` / `audience`
+- 前后端联调时，`predictedTags`/`finalTags` 的初始内容会更贴近当前模型能力
+- 若后续需要恢复更多自动标签，应以新增真实模型能力为前提，而不是继续扩展 mock 枚举
+
+---
+
+## 工作记录3-31
+- R1 真实认证与用户隔离
+  - 将 `backend/app/api/deps.py` 中的固定 demo 用户 ID 改为真实 JWT 解析
+  - 让 `get_current_user_id()` 从 `Authorization: Bearer <token>` 中获取当前用户身份
+  - 检查 `backend/app/api/v1/clothing.py` 等接口，移除写死的 `00000000-0000-0000-0000-000000000001`
+  - 为衣物、衣橱等按用户访问的接口补充真实的用户隔离逻辑
+  - 增加最小验证：不同用户不能读取、修改或写入彼此的数据
+## rbc 待完成任务 2026.3.30
+
+### 待完成主题
+
+补齐后端当前尚未完成的认证与跨域安全配置，解决 demo 阶段遗留的固定用户和过宽 CORS 问题。
+
+### 待完成任务
+
+
+
+- R2 CORS 配置收敛   在项目交付之前加上
+  - 调整 `backend/app/main.py` 中当前过宽的跨域配置
+  - 不再在非本地开发环境中使用 `allow_origins=["*"]`
+  - 按环境区分本地开发和部署环境的允许来源
+  - 保留前端联调所需来源，避免任意站点直接发起带凭证请求
+  - 补充配置说明，确保部署时不会继续沿用 demo 阶段的开放策略
+

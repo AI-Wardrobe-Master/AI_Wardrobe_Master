@@ -20,7 +20,7 @@ Production: https://api.aiwardrobe.com/v1
 Authorization: Bearer <JWT_TOKEN>
 ```
 
-**Current implementation note:** Module 2 demo backend still uses a fixed demo user internally and does not enforce real JWT verification yet.
+**Current implementation note:** The local backend now enforces Bearer JWT on protected endpoints. For local Docker-based development, a seed user is prepared automatically: `demo@example.com` / `demo123456`.
 
 ### Common Headers
 ```
@@ -90,26 +90,69 @@ POST /auth/register
   "username": "johndoe",
   "email": "john@example.com",
   "password": "SecurePass123!",
-  "userType": "CONSUMER"
+  "userType": "CREATOR"
 }
 ```
 
-**Response (201):**
+**Fields:**
+
+| Field      | Type    | Required | Notes |
+|------------|---------|----------|-------|
+| `username` | string  | yes      | 3–50 chars, trimmed, must be unique across all users |
+| `email`    | string  | yes      | 3–255 chars, lowercased + trimmed, must be unique, must contain `@` and a dot in the domain |
+| `password` | string  | yes      | 8–255 chars, stored as a bcrypt hash |
+| `userType` | string  | **no**   | `"CONSUMER"` or `"CREATOR"` (case-insensitive, trimmed); omitted / `null` → defaults to `"CONSUMER"`; any other value → 422 `"Invalid user type"` |
+
+**`userType` semantics (as of 2026-04-20):** the backend **honors whatever the client sends**. Passing `"CREATOR"` at registration creates an account with `user_type='CREATOR'` and grants creator capabilities (`canApplyForCreator` / `canPublishItems` / `canCreateCardPacks` / `canEditCreatorProfile` / `canViewCreatorCenter` in `GET /me`) from the first request. Passing `"CONSUMER"` or omitting the field creates a consumer account. Note: this is a change from an earlier (undocumented) build that silently clamped every new registration to `"CONSUMER"`; that clamp has been removed.
+
+Product implication: if you want a gated "apply to become a creator" flow, enforce it **on the frontend** (e.g., only surface the `userType=CREATOR` option behind an invite / review step) — the backend does not police it today.
+
+**Response (201) — consumer registration:**
 ```json
 {
   "success": true,
   "data": {
     "user": {
       "id": "user-123",
+      "uid": "U-ABC12345",
       "username": "johndoe",
       "email": "john@example.com",
       "type": "CONSUMER",
-      "createdAt": "2024-01-15T10:30:00Z"
+      "createdAt": "2026-04-20T10:30:00Z"
     },
     "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
   }
 }
 ```
+
+**Response (201) — creator registration:**
+```json
+{
+  "success": true,
+  "data": {
+    "user": {
+      "id": "user-456",
+      "uid": "U-XYZ98765",
+      "username": "janedesigner",
+      "email": "jane@example.com",
+      "type": "CREATOR",
+      "createdAt": "2026-04-20T10:30:00Z"
+    },
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  }
+}
+```
+
+**Errors:**
+
+| Status | Condition | `detail` |
+|--------|-----------|----------|
+| 409    | Email already registered         | `"Email already registered"` |
+| 409    | Username already taken           | `"Username already taken"` |
+| 422    | `username` empty after trim      | standard pydantic `ValueError` |
+| 422    | `email` missing `@` or domain dot | `"Invalid email address"` |
+| 422    | `userType` not in `{CONSUMER, CREATOR}` | `"Invalid user type"` |
+| 422    | `password` outside 8–255         | standard pydantic constraint error |
 
 ### 1.2 Login
 ```
@@ -154,9 +197,16 @@ description: "Comfortable cotton t-shirt"
 
 **Current implementation note:** `customTags` / `tags` are not accepted during creation in the current backend implementation. User-defined tags are added later via `PATCH /clothing-items/:id`.
 
+**Validation Rules:**
+- `front_image` is required and must be `image/jpeg`, `image/png`, or `image/webp`
+- Empty files are rejected
+- Backend validates MIME type, extension consistency, and actual decodability
+- Image dimensions must stay within the backend-supported range
+- `name` and `description` are optional, but must satisfy backend length checks when present
+
 **Response (202 Accepted):**
 
-> Returns 202 instead of 201 because 3D model generation and angle rendering are processed asynchronously (~30s). Client should poll the processing-status endpoint.
+> Returns 202 because the request only stores the originals, creates a processing task, and enqueues background work. Client should poll the processing-status endpoint.
 
 ```json
 {
@@ -164,11 +214,17 @@ description: "Comfortable cotton t-shirt"
   "data": {
     "id": "item-001",
     "processingTaskId": "task-001",
-    "status": "PROCESSING",
+    "status": "PENDING",
     "estimatedTime": 30
   }
 }
 ```
+
+**Failure / retry semantics:**
+- Original assets (`originalFrontUrl`, `originalBackUrl`) remain available after failure.
+- Derived assets (`processedFrontUrl`, `processedBackUrl`, `model3dUrl`, `angleViews`) must be empty when the latest processing task is `FAILED`.
+- `POST /clothing-items/:id/retry` creates a new processing task, reuses the original uploads, and clears previous derived outputs before rerunning.
+- Only one active processing task (`PENDING` or `PROCESSING`) is allowed per clothing item.
 
 **Response after processing completes (via GET /clothing-items/:id):**
 ```json
@@ -196,16 +252,10 @@ description: "Comfortable cotton t-shirt"
     },
     "model3dUrl": "/models/item-001.glb",
     "predictedTags": [
-      { "key": "category", "value": "T_SHIRT" },
-      { "key": "color", "value": "blue" },
-      { "key": "color", "value": "white" },
-      { "key": "pattern", "value": "striped" }
+      { "key": "category", "value": "t-shirt" }
     ],
     "finalTags": [
-      { "key": "category", "value": "T_SHIRT" },
-      { "key": "color", "value": "blue" },
-      { "key": "color", "value": "white" },
-      { "key": "pattern", "value": "striped" }
+      { "key": "category", "value": "t-shirt" }
     ],
     "isConfirmed": false,
     "name": "Blue Striped T-Shirt",
@@ -228,11 +278,35 @@ GET /clothing-items/:id
 ```json
 {
   "success": true,
-  "data": { /* ClothingItem object */ }
+  "data": {
+    "id": "item-002",
+    "userId": "user-123",
+    "source": "IMPORTED",
+    "provenance": {
+      "sourceType": "IMPORTED",
+      "originClothingItemId": "creator-item-456",
+      "importHistoryId": "import-001",
+      "creator": {
+        "id": "creator-456",
+        "displayName": "FashionGuru"
+      },
+      "cardPack": {
+        "id": "pack-789",
+        "name": "Summer Essentials 2024"
+      },
+      "importedAt": "2026-04-01T08:00:00Z"
+    }
+  }
 }
 ```
 
-**Current implementation note:** The detail response now includes `customTags`.
+**Current implementation notes:**
+- The detail response now includes `customTags`.
+- Automatic prediction currently only fills `category`. `season`, `style`, and `audience` are expected to be user-added later through `PATCH /clothing-items/:id`.
+- For owned items, `provenance` is `null`.
+- For imported items, `provenance` includes creator and pack summary data assembled from the imported item's stored origin fields.
+- The detail response now also includes `viewCount: int` (lifetime detail-view count, atomically incremented on each authenticated GET). Self-views by the owning creator are excluded.
+- The detail response now includes `catalogVisibility` (`PRIVATE` | `PACK_ONLY` | `PUBLIC`).
 
 ### 2.3 Update Clothing Item (Including Tag Confirmation)
 ```
@@ -249,14 +323,14 @@ PATCH /clothing-items/:id
 {
   "name": "Updated Name",
   "finalTags": [
-    { "key": "category", "value": "SHIRT" },
-    { "key": "color", "value": "blue" },
+    { "key": "category", "value": "shirt" },
     { "key": "style", "value": "casual" },
     { "key": "season", "value": "summer" },
     { "key": "audience", "value": "unisex" }
   ],
   "isConfirmed": true,
-  "customTags": ["cotton", "comfortable", "everyday"]
+  "customTags": ["cotton", "comfortable", "everyday"],
+  "catalogVisibility": "PACK_ONLY"
 }
 ```
 
@@ -273,15 +347,17 @@ PATCH /clothing-items/:id
 - The `predictedTags` remain immutable and cannot be modified
 - Set `isConfirmed: true` when user has reviewed and confirmed the tags
 - Search operations use `finalTags` only, not `predictedTags`
+- `catalogVisibility` ∈ {`PRIVATE`, `PACK_ONLY`, `PUBLIC`} controls creator-catalog exposure for a `ClothingItem` that has been promoted out of purely private use.
+  - Transition to `PRIVATE` is rejected with `409 Conflict` while the item participates in any `PUBLISHED` card pack. Unpublish or remove the item from all published packs first.
+  - `PACK_ONLY` means the item is only visible through packs that contain it.
+  - `PUBLIC` means the item is also discoverable through creator catalog endpoints.
 
 **Example - Confirming Predicted Tags:**
 ```json
 {
   "isConfirmed": true,
   "finalTags": [
-    { "key": "category", "value": "T_SHIRT" },
-    { "key": "color", "value": "blue" },
-    { "key": "pattern", "value": "striped" }
+    { "key": "category", "value": "t-shirt" }
   ]
 }
 ```
@@ -291,9 +367,9 @@ PATCH /clothing-items/:id
 {
   "isConfirmed": true,
   "finalTags": [
-    { "key": "category", "value": "SHIRT" },
-    { "key": "color", "value": "blue" },
-    { "key": "pattern", "value": "solid" }
+    { "key": "category", "value": "shirt" },
+    { "key": "season", "value": "summer" },
+    { "key": "style", "value": "casual" }
   ]
 }
 ```
@@ -305,6 +381,28 @@ DELETE /clothing-items/:id
 
 **Response (204):**
 No content
+
+**3-tier delete semantics (spec §4.7):**
+
+Backend dispatches between three outcomes based on the item's state at the moment of deletion:
+
+| State | Outcome |
+|-------|---------|
+| `catalog_visibility = PRIVATE` and no active publish linkage | **Hard delete.** Row removed. Blob `release()` runs for every referenced asset. |
+| `catalog_visibility ∈ {PACK_ONLY, PUBLIC}` and never downloaded (zero consumer imports trace back to it) | **Hard delete.** Same as above — safe because no backlinks exist. |
+| Item has at least one consumer import (`imported_from_clothing_item_id` referenced) | **Tombstone.** Row is kept with `deleted_at` set, content is hidden from all list/discovery endpoints, and existing consumer copies continue to resolve through the junction/import-history backlinks. |
+
+Tombstoned items are not re-usable. Attempting to create a new pack or outfit
+reference to a tombstoned id returns `404`.
+
+### 2.7 View Count Field
+
+All `ClothingItem` detail responses (`GET /clothing-items/:id`,
+`GET /creator-items/:id`) include a top-level `viewCount: int`. The counter is
+incremented atomically in the same transaction as the detail load. Self-views
+(owner fetching own item) are excluded. The same field is exposed on
+`CardPack` detail responses (`GET /card-packs/:id`), and drives the
+`/card-packs/popular` ranking.
 
 ### 2.5 List User's Clothing Items
 ```
@@ -321,7 +419,7 @@ GET /clothing-items
 
 **Example:**
 ```
-GET /clothing-items?source=OWNED&tagKey=category&tagValue=T_SHIRT&page=1&limit=20
+GET /clothing-items?source=OWNED&tagKey=category&tagValue=t-shirt&page=1&limit=20
 GET /clothing-items?tagKey=season&tagValue=summer&search=blue
 ```
 
@@ -353,11 +451,8 @@ POST /clothing-items/search
   "filters": {
     "source": "OWNED",
     "tags": [
-      { "key": "category", "value": "T_SHIRT" },
-      { "key": "category", "value": "SHIRT" },
-      { "key": "color", "value": "blue" },
-      { "key": "pattern", "value": "solid" },
-      { "key": "pattern", "value": "striped" },
+      { "key": "category", "value": "t-shirt" },
+      { "key": "category", "value": "shirt" },
       { "key": "style", "value": "casual" },
       { "key": "season", "value": "summer" }
     ]
@@ -366,6 +461,18 @@ POST /clothing-items/search
   "limit": 20
 }
 ```
+
+**Current implementation note:** 
+
+**Phase 1 Classification:**
+- Backend auto-predicts only `category` tag during upload
+- Supported category values (9 basic types): `dress`, `hat`, `longsleeve`, `outwear`, `pants`, `shirt`, `shoes`, `shorts`, `t-shirt`
+- Classification runs synchronously during `POST /clothing-items` before 3D generation
+- `season`, `style`, and `audience` tags are valid for search but must be user-supplied via `PATCH /clothing-items/:id`
+
+**Future Expansion:**
+- Phase 2+ will add 27 additional clothing types
+- Additional auto-classification attributes may be added in future phases
 
 **Response (200):**
 ```json
@@ -423,9 +530,22 @@ GET /wardrobes/:id
 ```json
 {
   "success": true,
-  "data": { /* Wardrobe object */ }
+  "data": {
+    "id": "wardrobe-virtual-001",
+    "userId": "user-123",
+    "name": "Virtual Wardrobe",
+    "type": "VIRTUAL",
+    "description": "Imported creator content",
+    "isSystemManaged": true,
+    "systemKey": "DEFAULT_VIRTUAL_IMPORTED",
+    "itemCount": 23,
+    "createdAt": "2026-04-01T08:00:00Z",
+    "updatedAt": "2026-04-01T08:00:00Z"
+  }
 }
 ```
+
+**Current implementation note:** `isSystemManaged` and `systemKey` are read-only system fields on virtual wardrobes. Regular wardrobes should return `false` and `null` respectively.
 
 ### 3.3 List User's Wardrobes
 ```
@@ -444,6 +564,8 @@ GET /wardrobes
   }
 }
 ```
+
+**Current implementation note:** every wardrobe object in list responses includes `isSystemManaged` and `systemKey`. Public and consumer-facing clients should treat those fields as read-only.
 
 ### 3.4 Update Wardrobe
 ```
@@ -527,36 +649,113 @@ GET /wardrobes/:id/items
 }
 ```
 
+### 3.9 Get System Virtual Wardrobe
+```
+GET /wardrobes/system/virtual
+```
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "wardrobe-virtual-001",
+    "userId": "user-123",
+    "name": "Virtual Wardrobe",
+    "type": "VIRTUAL",
+    "isSystemManaged": true,
+    "systemKey": "DEFAULT_VIRTUAL_IMPORTED",
+    "itemCount": 23,
+    "createdAt": "2026-04-01T08:00:00Z",
+    "updatedAt": "2026-04-01T08:00:00Z"
+  }
+}
+```
+
+**Behavior:**
+- Returns the current user's imported-content wardrobe
+- Creates the virtual wardrobe on first access if it does not already exist
+- Import flows must use the same backend service; frontend does not need to pre-create this resource
+
 ---
 
-## 4. Outfits
+## 4. Outfits And Outfit Preview
 
-### 4.1 Create Outfit
+### 4.1 Create Outfit Preview Task
 ```
-POST /outfits
+POST /outfit-preview-tasks
+```
+
+**Request Body (multipart/form-data):**
+```text
+person_image: <file>
+person_view_type: FULL_BODY | UPPER_BODY
+clothing_item_ids[]: item-001, item-002
+garment_categories[]: TOP, BOTTOM
+```
+
+**Rules:**
+- `person_image` is the only uploaded person photo
+- Clothing inputs must reference existing user-accessible clothing items
+- `clothing_item_ids[]` and `garment_categories[]` must be aligned one-to-one
+- Backend performs light validation only; complex category inference stays in frontend
+
+**Response (202):**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "preview-task-001",
+    "status": "PENDING",
+    "clothingItemIds": ["item-001", "item-002"],
+    "personViewType": "FULL_BODY",
+    "garmentCategories": ["TOP", "BOTTOM"],
+    "createdAt": "2026-04-02T12:00:00Z"
+  }
+}
+```
+
+### 4.2 Get Outfit Preview Task
+```
+GET /outfit-preview-tasks/:id
+```
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "preview-task-001",
+    "status": "COMPLETED",
+    "previewImageUrl": "/files/outfit-previews/user-123/preview-task-001/result.png",
+    "errorCode": null,
+    "errorMessage": null,
+    "createdAt": "2026-04-02T12:00:00Z",
+    "startedAt": "2026-04-02T12:00:03Z",
+    "completedAt": "2026-04-02T12:00:21Z"
+  }
+}
+```
+
+### 4.3 List My Outfit Preview Tasks
+```
+GET /outfit-preview-tasks
+```
+
+**Query Parameters:**
+- `page` (optional, default: 1)
+- `limit` (optional, default: 20)
+- `status` (optional): `PENDING` | `PROCESSING` | `COMPLETED` | `FAILED`
+
+### 4.4 Save Successful Preview As Outfit
+```
+POST /outfit-preview-tasks/:id/save
 ```
 
 **Request Body:**
 ```json
 {
-  "name": "Casual Friday",
-  "description": "Comfortable office look",
-  "items": [
-    {
-      "clothingItemId": "item-001",
-      "layer": 0,
-      "position": { "x": 0.5, "y": 0.3 },
-      "scale": 1.0,
-      "rotation": 0
-    },
-    {
-      "clothingItemId": "item-002",
-      "layer": 1,
-      "position": { "x": 0.5, "y": 0.6 },
-      "scale": 1.0,
-      "rotation": 0
-    }
-  ]
+  "name": "Casual Friday"
 }
 ```
 
@@ -567,30 +766,25 @@ POST /outfits
   "data": {
     "id": "outfit-001",
     "userId": "user-123",
+    "previewTaskId": "preview-task-001",
     "name": "Casual Friday",
-    "description": "Comfortable office look",
-    "thumbnailUrl": "/images/outfit-001-thumb.jpg",
-    "items": [ /* Array of OutfitItem objects */ ],
-    "createdAt": "2024-01-15T10:30:00Z",
-    "updatedAt": "2024-01-15T10:30:00Z"
+    "previewImageUrl": "/files/outfit-previews/user-123/preview-task-001/result.png",
+    "items": [
+      { "clothingItemId": "item-001" },
+      { "clothingItemId": "item-002" }
+    ],
+    "createdAt": "2026-04-02T12:01:00Z",
+    "updatedAt": "2026-04-02T12:01:00Z"
   }
 }
 ```
 
-### 4.2 Get Outfit
+### 4.5 Get Outfit
 ```
 GET /outfits/:id
 ```
 
-**Response (200):**
-```json
-{
-  "success": true,
-  "data": { /* Outfit object with populated ClothingItem details */ }
-}
-```
-
-### 4.3 List User's Outfits
+### 4.6 List User's Outfits
 ```
 GET /outfits
 ```
@@ -599,18 +793,7 @@ GET /outfits
 - `page` (optional, default: 1)
 - `limit` (optional, default: 20)
 
-**Response (200):**
-```json
-{
-  "success": true,
-  "data": {
-    "outfits": [ /* Array of Outfit objects */ ],
-    "pagination": { /* pagination info */ }
-  }
-}
-```
-
-### 4.4 Update Outfit
+### 4.7 Update Outfit Metadata
 ```
 PATCH /outfits/:id
 ```
@@ -618,46 +801,28 @@ PATCH /outfits/:id
 **Request Body:**
 ```json
 {
-  "name": "Updated Name",
-  "description": "Updated description",
-  "items": [ /* Updated OutfitItem array */ ]
+  "name": "Updated Name"
 }
 ```
 
-**Response (200):**
-```json
-{
-  "success": true,
-  "data": { /* Updated Outfit object */ }
-}
-```
-
-### 4.5 Delete Outfit
+### 4.8 Delete Outfit
 ```
 DELETE /outfits/:id
-```
-
-**Response (204):**
-No content
-
-### 4.6 Generate Outfit Thumbnail
-```
-POST /outfits/:id/thumbnail
-```
-
-**Response (200):**
-```json
-{
-  "success": true,
-  "data": {
-    "thumbnailUrl": "/images/outfit-001-thumb.jpg"
-  }
-}
 ```
 
 ---
 
 ## 5. Card Packs (Creator Content)
+
+**Current implementation notes for frontend:**
+- `GET /card-packs/:id` is dual-mode. Owner can read `DRAFT` / `PUBLISHED` / `ARCHIVED`; public callers only receive `PUBLISHED`.
+- `GET /creators/:creatorId/card-packs` is also dual-mode. Public callers only receive `PUBLISHED`; the creator themself receives all statuses.
+- Current response payload uses `coverImage`, not `coverImageUrl`.
+- Current list response shape is `{ success, data: { items, pagination } }`, not `{ packs, pagination }`.
+- Current create/update/detail payloads return full pack objects with nested `items`; there is no top-level `itemIds` array in the response.
+- `DELETE /card-packs/:id` currently allows deleting owner-owned `PUBLISHED` packs as well as `DRAFT` packs. Frontend should treat delete as a destructive action and require confirmation for published packs.
+- When deleting a creator item that belongs to a published pack, backend returns `409` with a user-facing message instructing the user to delete the published pack first.
+- State-changing endpoints now use row locks and return `409` on transaction / uniqueness conflicts. Frontend should treat these as retry-or-refresh situations, not as generic server errors.
 
 ### 5.1 Create Card Pack
 ```
@@ -671,7 +836,7 @@ POST /card-packs
   "description": "Must-have items for summer",
   "type": "CLOTHING_COLLECTION",
   "itemIds": ["item-001", "item-002", "item-003"],
-  "coverImage": "<base64_encoded_image>"
+  "coverImage": "packs/cover.jpg"
 }
 ```
 
@@ -683,20 +848,40 @@ POST /card-packs
     "id": "pack-001",
     "creatorId": "creator-456",
     "name": "Summer Essentials 2024",
-    "description": "Must-have items for summer",
-    "coverImageUrl": "/images/pack-001-cover.jpg",
     "type": "CLOTHING_COLLECTION",
-    "itemIds": ["item-001", "item-002", "item-003"],
-    "itemCount": 3,
-    "shareLink": "https://app.com/pack/pack-001",
     "status": "DRAFT",
+    "description": "Must-have items for summer",
+    "coverImage": "packs/cover.jpg",
+    "shareId": null,
     "importCount": 0,
+    "itemCount": 3,
+    "archivedAt": null,
     "createdAt": "2024-01-15T10:30:00Z",
     "publishedAt": null,
-    "updatedAt": "2024-01-15T10:30:00Z"
+    "updatedAt": "2024-01-15T10:30:00Z",
+    "items": [
+      {
+        "id": "pack-item-001",
+        "creatorItemId": "item-001",
+        "sortOrder": 0,
+        "name": "White Shirt",
+        "description": "Relaxed fit",
+        "catalogVisibility": "PACK_ONLY",
+        "processingStatus": "COMPLETED",
+        "coverUrl": "/files/items/item-001/front.jpg",
+        "finalTags": [
+          { "key": "category", "value": "shirt" }
+        ],
+        "createdAt": "2024-01-15T10:30:00Z"
+      }
+    ]
   }
 }
 ```
+
+**Frontend handling:**
+- `itemIds` is write-only in create/update requests. Use `data.items[*].creatorItemId` when you need selected item ids after persistence.
+- `coverImage` is currently treated as a storage path string. Frontend should not send base64 here unless backend upload flow changes.
 
 ### 5.2 Get Card Pack
 ```
@@ -708,10 +893,15 @@ GET /card-packs/:id
 {
   "success": true,
   "data": {
-    /* CardPack object with populated ClothingItem details */
+    /* CardPack object with populated ClothingItem details, now including `viewCount: int` */
   }
 }
 ```
+
+**Frontend handling:**
+- If creator opens their own draft or archived pack, the same endpoint works with auth.
+- If a public caller or another user requests a non-published pack, backend returns `404`, not `403`.
+- `viewCount` is incremented atomically on each non-creator detail GET of a `PUBLISHED` pack. Creator self-views and non-published states do not contribute. See `/card-packs/popular` for the ranking endpoint.
 
 ### 5.3 Get Card Pack by Share Link
 ```
@@ -732,7 +922,6 @@ GET /creators/:creatorId/card-packs
 ```
 
 **Query Parameters:**
-- `status` (optional): `DRAFT` | `PUBLISHED` | `ARCHIVED`
 - `page` (optional, default: 1)
 - `limit` (optional, default: 20)
 
@@ -741,11 +930,17 @@ GET /creators/:creatorId/card-packs
 {
   "success": true,
   "data": {
-    "packs": [ /* Array of CardPack objects */ ],
+    "items": [ /* Array of CardPack summary objects */ ],
     "pagination": { /* pagination info */ }
   }
 }
 ```
+
+**Frontend handling:**
+- There is no `status` query parameter in the current backend.
+- Frontend should infer visibility from auth:
+  - with creator auth on own profile, expect `DRAFT` / `PUBLISHED` / `ARCHIVED`
+  - otherwise expect only `PUBLISHED`
 
 ### 5.5 Update Card Pack
 ```
@@ -769,6 +964,11 @@ PATCH /card-packs/:id
 }
 ```
 
+**Conflict cases the frontend should surface directly:**
+- `409 Published packs cannot change items`
+- `409 Archived packs cannot be updated`
+- `409 Card pack update conflicts with current database state`
+
 ### 5.6 Publish Card Pack
 ```
 POST /card-packs/:id/publish
@@ -779,10 +979,16 @@ POST /card-packs/:id/publish
 {
   "success": true,
   "data": {
-    /* CardPack object with status: "PUBLISHED" and publishedAt timestamp */
+    /* CardPack object with status: "PUBLISHED", publishedAt, and shareLink */
   }
 }
 ```
+
+**Conflict cases the frontend should surface directly:**
+- `409 Pack cannot be published`
+- `409 Pack must contain at least one item`
+- `409 All pack items must be processed before publishing`
+- `409 Card pack publish conflicts with current database state`
 
 ### 5.7 Archive Card Pack
 ```
@@ -799,15 +1005,65 @@ POST /card-packs/:id/archive
 }
 ```
 
+**Conflict cases the frontend should surface directly:**
+- `409 Pack cannot be archived`
+- `409 Card pack archive conflicts with current database state`
+
 ### 5.8 Delete Card Pack
 ```
 DELETE /card-packs/:id
 ```
 
-**Note:** Only DRAFT packs can be deleted. Published packs must be archived first.
+**Current implementation note:** Owner can currently delete both `DRAFT` and `PUBLISHED` packs. `ARCHIVED` packs are also deletable if the owner explicitly calls delete. This is implementation behavior and may be tightened later, so frontend should not hard-code a stricter local rule than the backend.
 
 **Response (204):**
 No content
+
+**Conflict cases the frontend should surface directly:**
+- `409 Card pack delete conflicts with current database state`
+
+### 5.9 Creator Item Delete Guard
+```
+DELETE /creator-items/:id
+```
+
+**Current implementation note:** If the item belongs to any published pack, backend returns:
+
+```json
+{
+  "detail": "Creator item belongs to a published pack. Delete the published pack first."
+}
+```
+
+**Frontend handling:**
+- Show this message directly in the delete flow.
+- Offer a secondary action that routes the creator to pack management instead of retrying the same delete.
+
+### 5.10 List Popular Card Packs
+```
+GET /card-packs/popular?limit=10
+```
+
+**Query Parameters:**
+- `limit` (optional, default: 10, max: 50): Number of packs to return
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "items": [ /* Array of CardPack summary objects */ ],
+    "pagination": { /* pagination info */ }
+  }
+}
+```
+
+**Behavior:**
+- Returns `PUBLISHED` card packs only, ordered by `view_count` DESC, then `published_at` DESC.
+- Response shape matches `GET /card-packs` / `GET /creators/:creatorId/card-packs`.
+- Each pack carries a top-level `viewCount` field (see §2.7 / §5.2).
+- Self-views by the pack creator are excluded from the underlying counter, so
+  creators cannot inflate rankings.
 
 ---
 
@@ -821,9 +1077,16 @@ POST /imports/card-pack
 **Request Body:**
 ```json
 {
-  "cardPackId": "pack-001"
+  "cardPackId": "pack-001",
+  "requestId": "import-user-123-pack-001-20260402"
 }
 ```
+
+**Idempotency behavior:**
+- The backend deduplicates by `(userId, requestId)`
+- Repeating the same `requestId` for the same `cardPackId` must return the original import record or current import status instead of creating a new import
+- Repeating the same `requestId` for a different `cardPackId` should be treated as a conflict
+- Clients should send `requestId` for every import call
 
 **Response (201):**
 ```json
@@ -832,6 +1095,7 @@ POST /imports/card-pack
   "data": {
     "importId": "import-001",
     "cardPackId": "pack-001",
+    "status": "COMPLETED",
     "itemsImported": 3,
     "importedItems": [
       { /* ClothingItem object with provenance */ }
@@ -864,6 +1128,7 @@ GET /imports/history
         "cardPackName": "Summer Essentials 2024",
         "creatorId": "creator-456",
         "creatorName": "FashionGuru",
+        "status": "COMPLETED",
         "itemCount": 3,
         "importedAt": "2024-01-15T10:30:00Z"
       }
@@ -889,6 +1154,7 @@ GET /creators/:id
   "data": {
     "userId": "creator-456",
     "username": "fashionguru",
+    "status": "ACTIVE",
     "displayName": "Fashion Guru",
     "brandName": "FG Fashion",
     "bio": "Sharing fashion inspiration",
@@ -901,9 +1167,13 @@ GET /creators/:id
     "followerCount": 1250,
     "packCount": 15,
     "isVerified": true,
-    "verifiedAt": "2024-01-01T00:00:00Z"
+    "verifiedAt": "2024-01-01T00:00:00Z",
+    "createdAt": "2024-01-01T00:00:00Z"
   }
 }
+```
+
+**Status values:** `PENDING` | `ACTIVE` | `SUSPENDED`
 ```
 
 ### 7.2 List Creators
@@ -928,7 +1198,31 @@ GET /creators
 }
 ```
 
-### 7.3 Update Creator Profile
+### 7.3 Get Creator Items
+```
+GET /creators/:creatorId/items
+```
+
+**Query Parameters:**
+- `page` (optional, default: 1)
+- `limit` (optional, default: 20)
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "items": [ /* Array of Creator Item objects */ ],
+    "pagination": { /* pagination info */ }
+  }
+}
+```
+
+**Visibility rules:**
+- Public callers only receive items where `catalogVisibility != PRIVATE`
+- The creator themselves can see their full catalog, including private items
+
+### 7.4 Update Creator Profile
 ```
 PATCH /creators/:id
 ```
@@ -950,6 +1244,82 @@ PATCH /creators/:id
   "data": { /* Updated Creator object */ }
 }
 ```
+
+### 7.5 Get My Creator Profile
+```
+GET /creators/me/profile
+```
+
+**Purpose:**
+- Returns the authenticated creator's full editable profile
+- Used by `Profile -> Creator Center`
+
+### 7.6 Get My Creator Dashboard
+```
+GET /creators/me/dashboard
+```
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "packCount": 12,
+    "publishedPackCount": 7,
+    "importCount": 134,
+    "draftCount": 5
+  }
+}
+```
+
+### 7.7 Create Creator Item
+```
+POST /creator-items
+```
+
+**Request Body:**
+- Same multipart fields as `POST /clothing-items`
+- Optional `catalogVisibility`: `PRIVATE` | `PACK_ONLY` | `PUBLIC`
+
+**Response (202):**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "creator-item-001",
+    "processingTaskId": "task-001",
+    "status": "PENDING",
+    "catalogVisibility": "PACK_ONLY",
+    "createdAt": "2026-04-01T08:00:00Z"
+  }
+}
+```
+
+### 7.8 Get Creator Item
+```
+GET /creator-items/:id
+```
+
+### 7.9 Update Creator Item
+```
+PATCH /creator-items/:id
+```
+
+**Allowed Fields:**
+- `name`
+- `description`
+- `finalTags`
+- `customTags`
+- `catalogVisibility`
+
+### 7.10 Delete Creator Item
+```
+DELETE /creator-items/:id
+```
+
+**Conflict Note:**
+- If the item belongs to a published pack, backend returns `409`
+- Frontend should surface the backend message directly instead of collapsing it into a retry toast
 
 ---
 
@@ -1035,6 +1405,7 @@ GET /clothing-items/:id/processing-status
     "progress": 60,
     "steps": {
       "upload": "completed",
+      "classification": "completed",
       "backgroundRemoval": "completed",
       "modelGeneration": "processing",
       "angleRendering": "pending"
@@ -1046,6 +1417,40 @@ GET /clothing-items/:id/processing-status
 
 **Status values:** `PENDING` | `PROCESSING` | `COMPLETED` | `FAILED`
 
+**Processing step values:** `pending` | `processing` | `completed` | `failed`
+
+**Classification Flow:**
+1. **Upload Phase**: Frontend uploads images via `POST /clothing-items`
+2. **Synchronous Classification**: Backend immediately runs AI classification on front image
+3. **Async 3D Pipeline**: Backend then enqueues background removal → 3D generation → angle rendering
+4. **Early Tag Access**: Since classification completes synchronously, `steps.classification` is always `completed` when processing status is queried
+5. **Frontend Strategy**: Call `GET /clothing-items/:id` immediately after upload to get `predictedTags` and initial `finalTags`, without waiting for 3D generation to finish
+
+**Tag availability note:**
+- Classification happens synchronously during `POST /clothing-items`, NOT as part of the async processing pipeline
+- `predictedTags` and initial `finalTags` are available immediately after the upload request returns
+- Frontend can display tags and allow user editing while 3D generation continues in background
+- `GET /clothing-items/:id/processing-status` tracks only the async 3D pipeline steps
+
+**FAILED example:**
+```json
+{
+  "success": true,
+  "data": {
+    "status": "FAILED",
+    "progress": 25,
+    "steps": {
+      "upload": "completed",
+      "classification": "completed",
+      "backgroundRemoval": "failed",
+      "modelGeneration": "pending",
+      "angleRendering": "pending"
+    },
+    "errorMessage": "Background removal failed"
+  }
+}
+```
+
 ### 8.5 Retry Failed Processing
 ```
 POST /clothing-items/:id/retry
@@ -1056,11 +1461,17 @@ POST /clothing-items/:id/retry
 {
   "success": true,
   "data": {
+    "id": "item-001",
     "processingTaskId": "task-002",
-    "status": "PROCESSING"
+    "status": "PENDING"
   }
 }
 ```
+
+**Retry rules:**
+- Latest task must be `FAILED`.
+- If the clothing item already has an active `PENDING` or `PROCESSING` task, retry returns `409 Conflict`.
+- Retry preserves the original uploads, removes previous derived outputs, and creates a brand new processing task for auditability.
 
 ### 8.6 Get Angle Views
 ```
@@ -1099,45 +1510,13 @@ Returns the GLB file as binary with `Content-Type: model/gltf-binary`.
 ## 9. AI Classification
 
 ### 9.1 Classify Clothing Item
-```
-POST /ai/classify
-```
+AI classification is included in `POST /clothing-items`; there is no standalone `POST /ai/classify` endpoint in the current backend.
 
-**Request Body:**
-```json
-{
-  "imageUrl": "/images/img-001.jpg"
-}
-```
-
-**Response (200):**
-```json
-{
-  "success": true,
-  "data": {
-    "predictedTags": [
-      { "key": "category", "value": "T_SHIRT" },
-      { "key": "color", "value": "blue" },
-      { "key": "color", "value": "white" },
-      { "key": "pattern", "value": "striped" },
-      { "key": "style", "value": "casual" },
-      { "key": "season", "value": "summer" },
-      { "key": "audience", "value": "unisex" }
-    ]
-  }
-}
-```
-
-**Note:** The response returns an array of Tag objects. Each tag has a `key` (attribute type) and `value` (attribute value). No confidence scores are included.
-
-**Tag Confirmation Flow:**
-1. Frontend receives `predictedTags` from this endpoint
-2. User reviews the predicted tags in the UI
-3. User can accept or modify the tags
-4. Frontend calls `PATCH /clothing-items/:id` with `finalTags` and `isConfirmed: true`
-5. Backend stores the confirmed tags in `final_tags` column
-
-See section **2.3 Update Clothing Item** for the tag confirmation API.
+**Behavior:**
+- `POST /clothing-items` synchronously runs classification on the uploaded front image before the async 3D pipeline is dispatched
+- The created clothing item immediately stores `predictedTags`, copies them into initial `finalTags`, and sets `isConfirmed` to `false`
+- `GET /clothing-items/{id}/processing-status` includes a `classification` step. When it is `completed`, the frontend can call `GET /clothing-items/{id}` to read tags before 3D generation finishes
+- User tag edits are submitted through `PATCH /clothing-items/{id}` and must not be overwritten by later 3D processing
 
 ---
 
@@ -1190,6 +1569,262 @@ PATCH /users/:id
   "data": { /* Updated User object */ }
 }
 ```
+
+### 10.3 Get Current User Context
+```
+GET /me
+```
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "user-123",
+    "username": "alice",
+    "email": "alice@example.com",
+    "type": "CONSUMER",
+    "creatorProfile": {
+      "exists": true,
+      "status": "ACTIVE",
+      "displayName": "Alice Looks",
+      "brandName": "Alice Studio"
+    },
+    "capabilities": {
+      "canApplyForCreator": false,
+      "canPublishItems": true,
+      "canCreateCardPacks": true,
+      "canEditCreatorProfile": true,
+      "canViewCreatorCenter": true
+    }
+  }
+}
+```
+
+---
+
+## 10. Styled Generations (DreamO)
+
+> **New module**: Personalized scene outfit generation using DreamO. Does NOT modify existing clothing-items endpoints.
+
+### 10.1 Create Styled Generation
+```
+POST /styled-generations
+```
+
+**Request Body (multipart/form-data):**
+```
+selfie_image: <file>                     (required, JPEG/PNG, max 10 MB)
+gender: "male" | "female"                (required, drives prompt template selection)
+clothing_items: '[{"id":"...","slot":"TOP"}, ...]'
+                                         (required, JSON string encoding an array of
+                                          1–4 items; each item has `id` (clothing_item
+                                          UUID) and `slot` ∈ {"HAT","TOP","PANTS","SHOES"};
+                                          slots must be unique within a request)
+clothing_item_id: "item-uuid"            (DEPRECATED single-item shim; retained for
+                                          one release for backward compatibility.
+                                          Ignored when `clothing_items` is provided.)
+scene_prompt: "standing in a cafe..."    (required)
+negative_prompt: "blurry, bad anatomy"   (optional)
+guidance_scale: 4.5                      (optional, default 4.5, range 1.0-10.0)
+seed: -1                                 (optional, -1 = random)
+width: 1024                              (optional, 768-1024)
+height: 1024                             (optional, 768-1024)
+```
+
+**Response (202 Accepted):**
+```json
+{
+  "id": "gen-uuid",
+  "status": "PENDING",
+  "estimatedTime": 120
+}
+```
+
+**Error responses:**
+- `404` - Clothing item not found (any referenced id)
+- `409` - A clothing item has not finished processing (no PROCESSED_FRONT image)
+- `413` - Selfie image exceeds size limit
+- `422` - Validation error (invalid UUID, invalid dimensions, not an image,
+  malformed `clothing_items` JSON, duplicate slot, empty list, >4 items,
+  unknown `slot` value, or missing `gender`)
+- `503` - Processing queue unavailable
+
+### 10.2 Get Styled Generation
+```
+GET /styled-generations/:id
+```
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "gen-uuid",
+    "userId": "user-uuid",
+    "gender": "female",
+    "garments": [
+      {
+        "id": "item-uuid-1",
+        "slot": "TOP",
+        "name": "Blue Striped T-Shirt",
+        "imageUrl": "/files/clothing-items/item-uuid-1/processed-front"
+      },
+      {
+        "id": "item-uuid-2",
+        "slot": "PANTS",
+        "name": "Black Jeans",
+        "imageUrl": "/files/clothing-items/item-uuid-2/processed-front"
+      }
+    ],
+    "sourceClothingItemId": "item-uuid-1",
+    "selfieOriginalUrl": "/files/.../selfie_original.jpg",
+    "selfieProcessedUrl": "/files/.../selfie_processed.png",
+    "scenePrompt": "standing in a coffee shop, warm light",
+    "negativePrompt": null,
+    "dreamoVersion": "v1.1",
+    "status": "SUCCEEDED",
+    "progress": 100,
+    "resultImageUrl": "/files/.../result.png",
+    "failureReason": null,
+    "guidanceScale": 4.5,
+    "seed": 42,
+    "width": 1024,
+    "height": 1024,
+    "createdAt": "2026-04-13T10:00:00Z",
+    "updatedAt": "2026-04-13T10:02:30Z"
+  }
+}
+```
+
+**Response field notes:**
+- `gender` (`"male"` | `"female"`) mirrors the value submitted at creation.
+- `garments` is an ordered list of the referenced clothing items, one entry per
+  occupied slot. Each entry includes `id`, `slot`, `name`, and the processed
+  `imageUrl`. The list honors the HAT → TOP → PANTS → SHOES rendering order used
+  by the prompt builder.
+- `sourceClothingItemId` is retained for backward compatibility and equals the
+  first garment's id (typically `TOP` when present).
+
+**Status values:** `PENDING` | `PROCESSING` | `SUCCEEDED` | `FAILED`
+
+### 10.3 List Styled Generations
+```
+GET /styled-generations?page=1&limit=20
+```
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "items": [ /* Array of StyledGeneration objects */ ],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 5,
+      "totalPages": 1
+    }
+  }
+}
+```
+
+### 10.4 Retry Failed Generation
+```
+POST /styled-generations/:id/retry
+```
+
+Only allowed when status is `FAILED`.
+
+**Response (202):**
+```json
+{
+  "id": "gen-uuid",
+  "status": "PENDING",
+  "estimatedTime": 120
+}
+```
+
+### 10.5 Delete Styled Generation
+```
+DELETE /styled-generations/:id
+```
+
+Cannot delete while status is `PENDING` or `PROCESSING` (returns 409).
+
+**Response (204):**
+No content.
+
+---
+
+## 11. Card Pack Import / Un-import
+
+### 11.1 Import Card Pack
+```
+POST /imports/card-pack
+```
+
+**Request Body:**
+```json
+{
+  "card_pack_id": "pack-uuid"
+}
+```
+
+**Response (201):**
+```json
+{
+  "cardPackId": "pack-uuid",
+  "importedItemIds": ["item-1", "item-2", "item-3"]
+}
+```
+
+**Error responses:**
+- `404` — Pack not found or not published
+- `409` — Pack already imported by this user
+
+### 11.2 Un-import Card Pack
+```
+DELETE /imports/card-pack/{pack_id}
+```
+
+Removes the import record and all clothing_items that originated from this pack for the current user.
+
+**Response (204):** No content
+
+### 11.3 Delete Clothing Item
+```
+DELETE /clothing-items/{id}
+```
+
+Deletes a clothing item (OWNED, IMPORTED, or creator-authored). Backend applies
+the 3-tier rule documented in §2.4: hard-delete when safe, otherwise tombstone
+so existing consumer imports keep resolving. Hard-deletes call blob `release()`
+for every referenced asset.
+
+**Response (204):** No content
+
+**Error responses:**
+- `404` — Item not found
+- `409` — Cannot delete while processing (active PENDING/PROCESSING task)
+
+### 11.4 Archive Card Pack
+```
+POST /card-packs/{id}/archive
+```
+
+Archives a published card pack (hides from discovery). Existing imports are unaffected.
+
+**Response (200):** Updated card pack object
+
+### 11.5 URL Format Change
+
+All file URLs now use business paths instead of raw storage paths:
+- Clothing images: `/files/clothing-items/{id}/{kind}` where kind is `original-front`, `processed-front`, `angle-0`..`angle-315`, `model`
+- Creator items: `/files/creator-items/{id}/{kind}`
+- Styled generations: `/files/styled-generations/{id}/{kind}` where kind is `selfie-original`, `selfie-processed`, `result`
+- Card pack covers: `/files/card-packs/{id}/cover`
+- Outfit previews: `/files/outfit-preview-tasks/{id}/preview` or `/files/outfits/{id}/preview`
 
 ---
 

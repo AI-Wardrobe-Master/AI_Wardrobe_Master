@@ -19,20 +19,14 @@ def _get_remover():
         _remover = BackgroundRemover()
         logger.info("Using BackgroundRemover")
     except ImportError:
-        from rembg import new_session, remove as _rembg_remove
-
-        class _RembgWrapper:
-            def __init__(self):
-                self.session = new_session("u2net")
-
+        class _PassthroughRemover:
             def __call__(self, img: Image.Image) -> Image.Image:
-                buf = io.BytesIO()
-                img.save(buf, format="PNG")
-                result = _rembg_remove(buf.getvalue(), session=self.session)
-                return Image.open(io.BytesIO(result)).convert("RGBA")
+                return img
 
-        _remover = _RembgWrapper()
-        logger.info("Hunyuan3D rembg unavailable, using standalone rembg")
+        _remover = _PassthroughRemover()
+        logger.warning(
+            "Hunyuan3D rembg unavailable; using passthrough background handling to avoid extra model downloads"
+        )
 
     return _remover
 

@@ -131,7 +131,7 @@ ai_wardrobe_app/
 │   └── services/                          # Services
 │       ├── camera_service.dart            # Camera integration
 │       ├── image_processing_service.dart  # Image processing
-│       ├── ai_classification_service.dart # AI classification
+│       ├── clothing_api_service.dart      # Upload, processing status, tag/detail retrieval
 │       ├── storage_service.dart           # File storage
 │       └── notification_service.dart      # Notifications
 │
@@ -418,16 +418,114 @@ class RootShell extends StatelessWidget {
 
 Patterns:
 
-- `_MobileRootShell` uses a `BottomNavigationBar` with 5 items: `Wardrobe / Discover / Add / Visualize / Profile`.
+- `_MobileRootShell` uses a `BottomNavigationBar` with 4 items: `Wardrobe / Discover / Outfit / Profile`.
 - `_WebRootShell` uses `Row + NavigationRail + IndexedStack`:
-  - Left: `NavigationRail` with `Wardrobe / Discover / Visualize / Profile`.
-  - Bottom of the rail: a prominent **Add** button that opens the same `BottomSheet` as mobile (\"Add clothes\" / \"Open outfit canvas\").
+  - Left: `NavigationRail` with `Wardrobe / Discover / Outfit / Profile`.
+  - Secondary creation actions such as `Add clothes`, `Create pack`, and `Start preview` should live inside page-level CTA areas rather than a fifth global tab.
   - Right: main content area with the same page widgets as mobile.
 
 This keeps:
 
 - **Business logic & pages shared** across platforms.
 - **Shell layout swapped** automatically based on **platform + screen width**.
+
+---
+
+## Unified Role IA
+
+The app should keep a single shell for all signed-in users and reveal creator functionality by capability, not by branching into separate apps.
+
+### Navigation Rules
+
+- Keep four top-level destinations: `Wardrobe / Discover / Outfit / Profile`
+- Do not add a dedicated `Creator` tab at this stage
+- Creator entry points belong in page sections, especially `Discover` and `Profile`
+
+### Capability-Driven User States
+
+Frontend should distinguish at least four creator-related display states:
+
+- `State A`: normal consumer, no creator profile yet
+- `State B`: creator profile exists but status is `PENDING`
+- `State C`: creator profile exists and status is `ACTIVE`
+- `State D`: creator profile exists and status is `SUSPENDED`
+
+These states should be derived from `GET /me` plus creator profile status rather than inferred from a coarse user type alone.
+
+### Page-Level IA
+
+`Wardrobe`
+- Keep owned and imported wardrobe management unified
+- Surface the virtual wardrobe entry, but do not mix creator catalog management into this page
+
+`Discover`
+- Public content area: recommended creators, card packs, and share-link import
+- Import area: recently imported packs and quick entry to virtual wardrobe
+- Creator work area: only visible when capabilities allow publish / pack management
+- Status guidance area: onboarding, pending review, or suspended-state messaging
+
+`Outfit`
+- Entry point for selecting owned and imported items
+- Hosts preview-task creation, preview history, and saved outfit browsing
+- Should not assume a fully manual canvas editor as the only interaction model
+
+`Profile`
+- User profile and settings for everyone
+- Creator status card for all users
+- Creator center only when capability allows it
+
+### Creator Entry Strategy
+
+- Primary creator work entry: `Discover -> 我的内容`
+- Secondary creator settings entry: `Profile -> 创作者中心`
+- `我的内容` should group creator upload, pack management, and creator stats in one place
+- `创作者中心` should focus on profile state, application status, and account-level creator settings
+- The app should not add a dedicated top-level creator tab before these two entry points are proven insufficient
+
+### Required User Context Endpoints
+
+- `GET /me` for shell gating and capability-driven visibility
+- `GET /creators/me/profile` for full creator settings
+- `GET /creators/me/dashboard` for Discover/Profile creator modules
+
+### Recommended Shared Components
+
+- `CapabilityGate` for capability and status-based visibility
+- `CreatorStatusCard` for `NOT_ENABLED / PENDING / ACTIVE / SUSPENDED`
+- `EntryCard` for secondary destinations such as Creator Center and Virtual Wardrobe
+- `PreviewTaskCard` for displaying outfit preview task status and generated images
+
+### Outfit Preview Frontend Flow
+
+1. User selects one selfie and one or more referenced clothing items
+2. Frontend validates allowed combinations before hitting backend
+3. App submits `POST /outfit-preview-tasks`
+4. App polls `GET /outfit-preview-tasks/:id` or refreshes task list
+5. Completed preview can be saved through `POST /outfit-preview-tasks/:id/save`
+6. Saved outfits are then managed through the `/outfits` endpoints
+
+### Key User Flows
+
+Upgrade creator:
+- Open `Profile`
+- Tap `开通发布能力`
+- Fill creator profile
+- Enter `PENDING`
+- Surface creator UI only after `ACTIVE`
+
+Creator publish flow:
+- Open `Discover`
+- Enter `我的内容`
+- Upload creator items
+- Create and publish card packs
+- Return to `我的内容` for management
+
+Consumer import flow:
+- Open `Discover`
+- Browse creators or open a share link
+- Preview a published pack
+- Import into the virtual wardrobe
+- Open `Wardrobe` to inspect imported items
 
 ## Database Schema (SQLite)
 
@@ -480,18 +578,8 @@ CREATE TABLE images (
   FOREIGN KEY (clothing_item_id) REFERENCES clothing_items(id) ON DELETE CASCADE
 );
 
--- provenance table
-CREATE TABLE provenance (
-  id TEXT PRIMARY KEY,
-  clothing_item_id TEXT UNIQUE NOT NULL,
-  creator_id TEXT NOT NULL,
-  creator_name TEXT NOT NULL,
-  card_pack_id TEXT,
-  card_pack_name TEXT,
-  imported_at INTEGER NOT NULL,
-  import_source TEXT,
-  FOREIGN KEY (clothing_item_id) REFERENCES clothing_items(id) ON DELETE CASCADE
-);
+-- provenance is no longer modeled as a standalone table.
+-- Imported-item origin fields are stored on clothing_items and related import history records.
 
 -- wardrobes table
 CREATE TABLE wardrobes (

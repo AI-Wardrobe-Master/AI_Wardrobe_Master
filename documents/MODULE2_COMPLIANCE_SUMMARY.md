@@ -45,13 +45,13 @@ All Module 2 documentation has been updated to comply with the requirements.
 **Requirement:** Frontend uploads image → Backend returns Tag[]
 
 **Implementation:**
-- ✅ POST /ai/classify endpoint returns `predictedTags: Tag[]`
-- ✅ No confidence scores in response
-- ✅ ClothingItem creation stores predictedTags
+- ✅ `POST /clothing-items` synchronously classifies the uploaded front image
+- ✅ No confidence scores are stored or returned
+- ✅ ClothingItem creation stores `predictedTags` and initializes `finalTags`
 
 **Files Updated:**
-- `documents/API_CONTRACT.md` - Lines 850-875 (AI Classification endpoint)
-- `documents/BACKEND_ARCHITECTURE.md` - Lines 750-780 (API endpoint example)
+- `documents/API_CONTRACT.md` - AI Classification section
+- `backend/app/api/v1/clothing.py` - item creation now performs classification before dispatching the 3D pipeline
 
 #### Edit Flow ✅
 **Requirement:** User edits tags → Frontend submits finalTags: Tag[] → Backend persists
@@ -114,7 +114,7 @@ All Module 2 documentation has been updated to comply with the requirements.
 - PATCH /clothing-items/:id accepts finalTags: Tag[]
 - GET /clothing-items query params updated for tag filtering
 - POST /clothing-items/search uses finalTags
-- POST /ai/classify returns predictedTags: Tag[]
+- POST /clothing-items stores predictedTags and initial finalTags
 
 ### 3. documents/BACKEND_ARCHITECTURE.md ✅
 **Status:** Updated in this session

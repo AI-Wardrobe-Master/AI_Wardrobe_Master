@@ -3,12 +3,14 @@ import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
+import '../l10n/app_strings_provider.dart';
 import '../theme/app_theme.dart';
 import 'screens/capture/camera_capture_screen.dart';
-import 'screens/capture/processing_screen.dart';
+import 'screens/capture/clothing_intake_screen.dart';
+import 'screens/creator/card_pack_creator_screen.dart';
 import 'screens/discover_screen.dart';
-import 'screens/outfit_canvas_screen.dart';
 import 'screens/profile_screen.dart';
+import 'screens/visualization_hub_screen.dart';
 import 'screens/wardrobe_screen.dart';
 
 /// Root shell that switches layout between mobile and web/desktop.
@@ -45,7 +47,7 @@ class _MobileRootShellState extends State<_MobileRootShell> {
   final _pages = const <Widget>[
     WardrobeScreen(),
     DiscoverScreen(),
-    OutfitCanvasScreen(),
+    VisualizationHubScreen(),
     ProfileScreen(),
   ];
 
@@ -61,9 +63,12 @@ class _MobileRootShellState extends State<_MobileRootShell> {
   }
 
   void _onAddPressed() {
+    final s = AppStringsProvider.of(context);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final textP = isDark ? AppColors.darkTextPrimary : AppColors.textPrimary;
-    final textS = isDark ? AppColors.darkTextSecondary : AppColors.textSecondary;
+    final textS = isDark
+        ? AppColors.darkTextSecondary
+        : AppColors.textSecondary;
     final accent = isDark ? AppColors.darkAccentBlue : AppColors.accentBlue;
 
     showModalBottomSheet<void>(
@@ -92,7 +97,7 @@ class _MobileRootShellState extends State<_MobileRootShell> {
                 ),
                 const SizedBox(height: 16),
                 Text(
-                  'Add new',
+                  s.addNew,
                   style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w700,
@@ -101,7 +106,7 @@ class _MobileRootShellState extends State<_MobileRootShell> {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  'Quickly add clothes or start a new outfit.',
+                  s.addNewSubtitle,
                   style: TextStyle(fontSize: 13, color: textS),
                 ),
                 const SizedBox(height: 20),
@@ -111,17 +116,15 @@ class _MobileRootShellState extends State<_MobileRootShell> {
                     width: 40,
                     height: 40,
                     decoration: BoxDecoration(
-                      color:
-                          isDark ? AppColors.darkBackground : AppColors.background,
+                      color: isDark
+                          ? AppColors.darkBackground
+                          : AppColors.background,
                       borderRadius: BorderRadius.circular(14),
                     ),
-                    child: Icon(
-                      Icons.checkroom_rounded,
-                      color: textP,
-                    ),
+                    child: Icon(Icons.checkroom_rounded, color: textP),
                   ),
                   title: Text(
-                    'Add clothes',
+                    s.addClothes,
                     style: TextStyle(
                       fontWeight: FontWeight.w600,
                       fontSize: 15,
@@ -129,7 +132,7 @@ class _MobileRootShellState extends State<_MobileRootShell> {
                     ),
                   ),
                   subtitle: Text(
-                    'Capture or pick photos to add items.',
+                    s.addClothesSubtitle,
                     style: TextStyle(fontSize: 12, color: textS),
                   ),
                   onTap: () {
@@ -144,16 +147,16 @@ class _MobileRootShellState extends State<_MobileRootShell> {
                     width: 40,
                     height: 40,
                     decoration: BoxDecoration(
-                      color: AppColors.accentYellow.withOpacity(0.18),
+                      color: AppColors.accentBlue.withValues(alpha: 0.18),
                       borderRadius: BorderRadius.circular(14),
                     ),
                     child: Icon(
-                      Icons.style_rounded,
+                      Icons.collections_bookmark_rounded,
                       color: accent,
                     ),
                   ),
                   title: Text(
-                    'Open outfit canvas',
+                    s.createCardPack,
                     style: TextStyle(
                       fontWeight: FontWeight.w600,
                       fontSize: 15,
@@ -161,15 +164,17 @@ class _MobileRootShellState extends State<_MobileRootShell> {
                     ),
                   ),
                   subtitle: Text(
-                    'Play with pieces on a 2.5D canvas.',
+                    'Create and publish a card pack',
                     style: TextStyle(fontSize: 12, color: textS),
                   ),
-                  onTap: () {
+                  onTap: () async {
                     Navigator.of(context).pop();
-                    setState(() {
-                      _navIndex = 3;
-                      _pageIndex = 2;
-                    });
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const CardPackCreatorScreen(),
+                      ),
+                    );
                   },
                 ),
               ],
@@ -191,50 +196,46 @@ class _MobileRootShellState extends State<_MobileRootShell> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => ProcessingScreen(
-          frontImage: front,
-          backImage: result['back'],
-        ),
+        builder: (_) =>
+            ClothingIntakeScreen(frontImage: front, backImage: result['back']),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final s = AppStringsProvider.of(context);
     return Scaffold(
-      body: IndexedStack(
-        index: _pageIndex,
-        children: _pages,
-      ),
+      body: IndexedStack(index: _pageIndex, children: _pages),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _navIndex,
         onTap: _onNavTap,
         type: BottomNavigationBarType.fixed,
         items: [
-          const BottomNavigationBarItem(
-            icon: Icon(Icons.inventory_2_outlined),
-            activeIcon: Icon(Icons.inventory_2_rounded),
-            label: 'Wardrobe',
+          BottomNavigationBarItem(
+            icon: const Icon(Icons.inventory_2_outlined),
+            activeIcon: const Icon(Icons.inventory_2_rounded),
+            label: s.navWardrobe,
           ),
-          const BottomNavigationBarItem(
-            icon: Icon(Icons.local_fire_department_outlined),
-            activeIcon: Icon(Icons.local_fire_department),
-            label: 'Discover',
+          BottomNavigationBarItem(
+            icon: const Icon(Icons.local_fire_department_outlined),
+            activeIcon: const Icon(Icons.local_fire_department),
+            label: s.navDiscover,
           ),
           BottomNavigationBarItem(
             icon: _AddNavIcon(highlight: false),
             activeIcon: _AddNavIcon(highlight: true),
-            label: 'Add',
+            label: s.navAdd,
           ),
-          const BottomNavigationBarItem(
-            icon: Icon(Icons.style_outlined),
-            activeIcon: Icon(Icons.style_rounded),
-            label: 'Visualize',
+          BottomNavigationBarItem(
+            icon: const Icon(Icons.style_outlined),
+            activeIcon: const Icon(Icons.style_rounded),
+            label: s.navVisualize,
           ),
-          const BottomNavigationBarItem(
-            icon: Icon(Icons.person_outline),
-            activeIcon: Icon(Icons.person),
-            label: 'Profile',
+          BottomNavigationBarItem(
+            icon: const Icon(Icons.person_outline),
+            activeIcon: const Icon(Icons.person),
+            label: s.navProfile,
           ),
         ],
       ),
@@ -254,14 +255,10 @@ class _AddNavIcon extends StatelessWidget {
       decoration: BoxDecoration(
         color: highlight
             ? AppColors.accentYellow
-            : AppColors.accentYellow.withOpacity(0.9),
+            : AppColors.accentYellow.withValues(alpha: 0.9),
         borderRadius: BorderRadius.circular(16),
       ),
-      child: const Icon(
-        Icons.add,
-        size: 20,
-        color: AppColors.textPrimary,
-      ),
+      child: const Icon(Icons.add, size: 20, color: AppColors.textPrimary),
     );
   }
 }
@@ -281,14 +278,17 @@ class _WebRootShellState extends State<_WebRootShell> {
   final _pages = const <Widget>[
     WardrobeScreen(),
     DiscoverScreen(),
-    OutfitCanvasScreen(),
+    VisualizationHubScreen(),
     ProfileScreen(),
   ];
 
   void _onAddPressed() {
+    final s = AppStringsProvider.of(context);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final textP = isDark ? AppColors.darkTextPrimary : AppColors.textPrimary;
-    final textS = isDark ? AppColors.darkTextSecondary : AppColors.textSecondary;
+    final textS = isDark
+        ? AppColors.darkTextSecondary
+        : AppColors.textSecondary;
     final accent = isDark ? AppColors.darkAccentBlue : AppColors.accentBlue;
 
     showModalBottomSheet<void>(
@@ -317,7 +317,7 @@ class _WebRootShellState extends State<_WebRootShell> {
                 ),
                 const SizedBox(height: 16),
                 Text(
-                  'Add new',
+                  s.addNew,
                   style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w700,
@@ -326,7 +326,7 @@ class _WebRootShellState extends State<_WebRootShell> {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  'Quickly add clothes or start a new outfit.',
+                  s.addNewSubtitle,
                   style: TextStyle(fontSize: 13, color: textS),
                 ),
                 const SizedBox(height: 20),
@@ -336,17 +336,15 @@ class _WebRootShellState extends State<_WebRootShell> {
                     width: 40,
                     height: 40,
                     decoration: BoxDecoration(
-                      color:
-                          isDark ? AppColors.darkBackground : AppColors.background,
+                      color: isDark
+                          ? AppColors.darkBackground
+                          : AppColors.background,
                       borderRadius: BorderRadius.circular(14),
                     ),
-                    child: Icon(
-                      Icons.checkroom_rounded,
-                      color: textP,
-                    ),
+                    child: Icon(Icons.checkroom_rounded, color: textP),
                   ),
                   title: Text(
-                    'Add clothes',
+                    s.addClothes,
                     style: TextStyle(
                       fontWeight: FontWeight.w600,
                       fontSize: 15,
@@ -354,7 +352,7 @@ class _WebRootShellState extends State<_WebRootShell> {
                     ),
                   ),
                   subtitle: Text(
-                    'Capture or pick photos to add items.',
+                    s.addClothesSubtitle,
                     style: TextStyle(fontSize: 12, color: textS),
                   ),
                   onTap: () {
@@ -369,16 +367,16 @@ class _WebRootShellState extends State<_WebRootShell> {
                     width: 40,
                     height: 40,
                     decoration: BoxDecoration(
-                      color: AppColors.accentYellow.withOpacity(0.18),
+                      color: AppColors.accentBlue.withValues(alpha: 0.18),
                       borderRadius: BorderRadius.circular(14),
                     ),
                     child: Icon(
-                      Icons.style_rounded,
+                      Icons.collections_bookmark_rounded,
                       color: accent,
                     ),
                   ),
                   title: Text(
-                    'Open outfit canvas',
+                    s.createCardPack,
                     style: TextStyle(
                       fontWeight: FontWeight.w600,
                       fontSize: 15,
@@ -386,14 +384,17 @@ class _WebRootShellState extends State<_WebRootShell> {
                     ),
                   ),
                   subtitle: Text(
-                    'Play with pieces on a 2.5D canvas.',
+                    'Create and publish a card pack',
                     style: TextStyle(fontSize: 12, color: textS),
                   ),
-                  onTap: () {
+                  onTap: () async {
                     Navigator.of(context).pop();
-                    setState(() {
-                      _pageIndex = 2;
-                    });
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const CardPackCreatorScreen(),
+                      ),
+                    );
                   },
                 ),
               ],
@@ -415,16 +416,15 @@ class _WebRootShellState extends State<_WebRootShell> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => ProcessingScreen(
-          frontImage: front,
-          backImage: result['back'],
-        ),
+        builder: (_) =>
+            ClothingIntakeScreen(frontImage: front, backImage: result['back']),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final s = AppStringsProvider.of(context);
     return Scaffold(
       body: Row(
         children: [
@@ -444,26 +444,26 @@ class _WebRootShellState extends State<_WebRootShell> {
                     },
                     labelType: NavigationRailLabelType.all,
                     backgroundColor: Colors.transparent,
-                    destinations: const [
+                    destinations: [
                       NavigationRailDestination(
-                        icon: Icon(Icons.inventory_2_outlined),
-                        selectedIcon: Icon(Icons.inventory_2_rounded),
-                        label: Text('Wardrobe'),
+                        icon: const Icon(Icons.inventory_2_outlined),
+                        selectedIcon: const Icon(Icons.inventory_2_rounded),
+                        label: Text(s.navWardrobe),
                       ),
                       NavigationRailDestination(
-                        icon: Icon(Icons.local_fire_department_outlined),
-                        selectedIcon: Icon(Icons.local_fire_department),
-                        label: Text('Discover'),
+                        icon: const Icon(Icons.local_fire_department_outlined),
+                        selectedIcon: const Icon(Icons.local_fire_department),
+                        label: Text(s.navDiscover),
                       ),
                       NavigationRailDestination(
-                        icon: Icon(Icons.style_outlined),
-                        selectedIcon: Icon(Icons.style_rounded),
-                        label: Text('Visualize'),
+                        icon: const Icon(Icons.style_outlined),
+                        selectedIcon: const Icon(Icons.style_rounded),
+                        label: Text(s.navVisualize),
                       ),
                       NavigationRailDestination(
-                        icon: Icon(Icons.person_outline),
-                        selectedIcon: Icon(Icons.person),
-                        label: Text('Profile'),
+                        icon: const Icon(Icons.person_outline),
+                        selectedIcon: const Icon(Icons.person),
+                        label: Text(s.navProfile),
                       ),
                     ],
                   ),
@@ -483,9 +483,9 @@ class _WebRootShellState extends State<_WebRootShell> {
                         ),
                       ),
                       icon: const Icon(Icons.add, size: 18),
-                      label: const Text(
-                        'Add',
-                        style: TextStyle(fontSize: 13),
+                      label: Text(
+                        s.navAdd,
+                        style: const TextStyle(fontSize: 13),
                       ),
                     ),
                   ),
@@ -499,10 +499,7 @@ class _WebRootShellState extends State<_WebRootShell> {
             color: Theme.of(context).dividerColor,
           ),
           Expanded(
-            child: IndexedStack(
-              index: _pageIndex,
-              children: _pages,
-            ),
+            child: IndexedStack(index: _pageIndex, children: _pages),
           ),
         ],
       ),

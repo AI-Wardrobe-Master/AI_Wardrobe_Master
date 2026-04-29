@@ -9,14 +9,19 @@ from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
 from app.core.config import settings
+from app.core.security import get_password_hash
 from app.db.session import SessionLocal, engine
+from app.models.creator import CreatorProfile
 from app.models.user import User
 
 
 DEMO_USER_ID = UUID("00000000-0000-0000-0000-000000000001")
 DEMO_USERNAME = "demo_user"
 DEMO_EMAIL = "demo@example.com"
-DEMO_PASSWORD_PLACEHOLDER = "demo-not-for-login"
+DEMO_PASSWORD = "demo123456"
+DEMO_CREATOR_DISPLAY_NAME = "Demo Creator"
+DEMO_CREATOR_BRAND_NAME = "Demo Brand"
+DEMO_CREATOR_BIO = "Seed creator profile for local Docker integration."
 DB_WAIT_TIMEOUT_SECONDS = 60
 DB_RETRY_INTERVAL_SECONDS = 2
 
@@ -45,10 +50,16 @@ def run_migrations() -> None:
 
 
 def ensure_demo_user() -> None:
-    print("Ensuring demo user exists...", flush=True)
+    print("Ensuring seed user exists...", flush=True)
     with SessionLocal() as session:
         existing_user = session.get(User, DEMO_USER_ID)
         if existing_user is not None:
+            existing_user.username = DEMO_USERNAME
+            existing_user.email = DEMO_EMAIL
+            existing_user.hashed_password = get_password_hash(DEMO_PASSWORD)
+            existing_user.user_type = "CONSUMER"
+            existing_user.is_active = True
+            session.commit()
             return
 
         session.add(
@@ -56,12 +67,48 @@ def ensure_demo_user() -> None:
                 id=DEMO_USER_ID,
                 username=DEMO_USERNAME,
                 email=DEMO_EMAIL,
-                hashed_password=DEMO_PASSWORD_PLACEHOLDER,
+                hashed_password=get_password_hash(DEMO_PASSWORD),
                 user_type="CONSUMER",
                 is_active=True,
             )
         )
         session.commit()
+    print(
+        f"Seed user ready: email={DEMO_EMAIL} password={DEMO_PASSWORD}",
+        flush=True,
+    )
+
+
+def ensure_demo_creator_profile() -> None:
+    print("Ensuring demo creator profile exists...", flush=True)
+    with SessionLocal() as session:
+        profile = session.get(CreatorProfile, DEMO_USER_ID)
+        if profile is not None:
+            profile.status = "ACTIVE"
+            profile.display_name = DEMO_CREATOR_DISPLAY_NAME
+            profile.brand_name = DEMO_CREATOR_BRAND_NAME
+            profile.bio = DEMO_CREATOR_BIO
+            profile.social_links = {}
+            profile.is_verified = False
+            session.commit()
+            return
+
+        session.add(
+            CreatorProfile(
+                user_id=DEMO_USER_ID,
+                status="ACTIVE",
+                display_name=DEMO_CREATOR_DISPLAY_NAME,
+                brand_name=DEMO_CREATOR_BRAND_NAME,
+                bio=DEMO_CREATOR_BIO,
+                social_links={},
+                is_verified=False,
+            )
+        )
+        session.commit()
+    print(
+        f"Seed creator ready: user_id={DEMO_USER_ID} display_name={DEMO_CREATOR_DISPLAY_NAME}",
+        flush=True,
+    )
 
 
 def ensure_storage_path() -> None:
@@ -80,6 +127,7 @@ def main() -> None:
     wait_for_database()
     run_migrations()
     ensure_demo_user()
+    ensure_demo_creator_profile()
     ensure_storage_path()
     start_server()
 
