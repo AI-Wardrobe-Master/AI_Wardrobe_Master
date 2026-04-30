@@ -15,7 +15,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 1600));
     await tester.pumpAndSettle();
 
-    expect(find.text('Continue'), findsOneWidget);
+    expect(find.text('Use Demo Account'), findsOneWidget);
     expect(find.text('Skip for now'), findsOneWidget);
   });
 }

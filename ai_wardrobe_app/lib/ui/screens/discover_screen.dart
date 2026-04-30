@@ -85,14 +85,17 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     });
     try {
       final query = _searchQuery.isNotEmpty ? _searchQuery : null;
-      final results = await Future.wait<Object>([
-        WardrobeService.listPublicWardrobes(search: query),
-        _loadPublishedCardPacks(search: query),
-      ]);
+      List<Wardrobe> wardrobes = const <Wardrobe>[];
+      try {
+        wardrobes = await WardrobeService.listPublicWardrobes(search: query);
+      } catch (_) {
+        wardrobes = const <Wardrobe>[];
+      }
+      final cardPacks = await _loadPublishedCardPacks(search: query);
       if (!mounted) return;
       setState(() {
-        _wardrobes = results[0] as List<Wardrobe>;
-        _cardPacks = results[1] as List<CardPack>;
+        _wardrobes = wardrobes;
+        _cardPacks = cardPacks;
         _loadingWardrobes = false;
       });
     } catch (e) {
@@ -346,7 +349,12 @@ class _DiscoverScreenState extends State<DiscoverScreen>
         itemCount: filteredPacks.length + filteredWardrobes.length,
         itemBuilder: (context, index) {
           if (index < filteredPacks.length) {
-            return _buildCardPackTile(filteredPacks[index], textP, textS, isDark);
+            return _buildCardPackTile(
+              filteredPacks[index],
+              textP,
+              textS,
+              isDark,
+            );
           }
           final wardrobe = filteredWardrobes[index - filteredPacks.length];
           return Card(
@@ -480,7 +488,10 @@ class _DiscoverScreenState extends State<DiscoverScreen>
             child: pack.coverImageUrl == null || pack.coverImageUrl!.isEmpty
                 ? Container(
                     color: textS.withValues(alpha: 0.1),
-                    child: Icon(Icons.collections_bookmark_outlined, color: textS),
+                    child: Icon(
+                      Icons.collections_bookmark_outlined,
+                      color: textS,
+                    ),
                   )
                 : AppRemoteImage(
                     url: pack.coverImageUrl!,
@@ -536,7 +547,10 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                 color: AppColors.accentBlue.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(999),
               ),
-              child: Text('Card Pack', style: TextStyle(fontSize: 11, color: textP)),
+              child: Text(
+                'Card Pack',
+                style: TextStyle(fontSize: 11, color: textP),
+              ),
             ),
             const SizedBox(height: 6),
             Text(

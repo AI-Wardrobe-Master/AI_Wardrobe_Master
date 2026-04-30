@@ -1,14 +1,33 @@
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:shared_preferences/shared_preferences.dart';
 
-//const String apiBaseUrl = 'http://10.0.2.2:8000/api/v1';
-//const String fileBaseUrl = 'http://10.0.2.2:8000';
+const String _apiBaseUrlOverride = String.fromEnvironment('API_BASE_URL');
+const String _fileBaseUrlOverride = String.fromEnvironment('FILE_BASE_URL');
 
-// Use localhost for desktop and physical-device debugging with adb reverse.
-const String apiBaseUrl = 'http://localhost:8000/api/v1';
-const String fileBaseUrl = 'http://localhost:8000';
+String get _defaultHost {
+  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+    return '10.0.2.2';
+  }
+  return 'localhost';
+}
+
+String get apiBaseUrl {
+  if (_apiBaseUrlOverride.isNotEmpty) {
+    return _apiBaseUrlOverride;
+  }
+  return 'http://$_defaultHost:8000/api/v1';
+}
+
+String get fileBaseUrl {
+  if (_fileBaseUrlOverride.isNotEmpty) {
+    return _fileBaseUrlOverride;
+  }
+  return 'http://$_defaultHost:8000';
+}
 
 class ApiSession {
   static const _tokenKey = 'auth_token';
@@ -114,7 +133,14 @@ class ApiSession {
 }
 
 Dio buildApiDio() {
-  final dio = Dio(BaseOptions(baseUrl: apiBaseUrl));
+  final dio = Dio(
+    BaseOptions(
+      baseUrl: apiBaseUrl,
+      connectTimeout: const Duration(seconds: 4),
+      receiveTimeout: const Duration(seconds: 60),
+      sendTimeout: const Duration(seconds: 60),
+    ),
+  );
   dio.interceptors.add(
     InterceptorsWrapper(
       onRequest: (options, handler) async {

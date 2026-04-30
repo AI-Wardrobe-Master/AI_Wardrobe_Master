@@ -1,18 +1,31 @@
+import 'package:ai_wardrobe_app/l10n/app_strings_provider.dart';
 import 'package:ai_wardrobe_app/ui/screens/outfit_canvas_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+Widget _testApp(Widget child) {
+  return MaterialApp(
+    home: AppStringsProvider(locale: const Locale('en'), child: child),
+  );
+}
+
+Future<void> _pumpUi(WidgetTester tester) async {
+  await tester.pump(const Duration(milliseconds: 350));
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
     final view =
         TestWidgetsFlutterBinding.instance.platformDispatcher.views.first;
     view.resetPhysicalSize();
     view.resetDevicePixelRatio();
   });
 
-  testWidgets('picker separates garment details from wear controls', (
+  testWidgets('empty wardrobe does not show demo garments in the picker', (
     WidgetTester tester,
   ) async {
     tester.view.physicalSize = const Size(360, 740);
@@ -20,80 +33,52 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    await tester.pumpWidget(const MaterialApp(home: OutfitCanvasScreen()));
+    await tester.pumpWidget(_testApp(const OutfitCanvasScreen()));
     await tester.pumpAndSettle();
+
+    expect(find.text('0 wardrobe items loaded'), findsOneWidget);
+    expect(find.text('Ivory Turtleneck'), findsNothing);
+    expect(find.text('Relaxed Oxford Shirt'), findsNothing);
+    expect(find.text('Dark Leather Jacket'), findsNothing);
 
     final upperHotspot = find.byTooltip('Select upper body garments');
     await tester.ensureVisible(upperHotspot);
-    await tester.pumpAndSettle();
+    await _pumpUi(tester);
     await tester.tap(upperHotspot, warnIfMissed: false);
-    await tester.pumpAndSettle();
+    await _pumpUi(tester);
 
-    final oxfordTitle = find.text('Relaxed Oxford Shirt');
-    await tester.ensureVisible(oxfordTitle);
-    await tester.pumpAndSettle();
-    await tester.tap(oxfordTitle, warnIfMissed: false);
-    await tester.pumpAndSettle();
-
-    expect(find.text('Garment Details'), findsOneWidget);
-    expect(find.text('Wear on Layer 1'), findsNothing);
-
-    await tester.tap(find.text('Close'));
-    await tester.pumpAndSettle();
-
-    final wearButton = find.text('Wear').first;
-    await tester.ensureVisible(wearButton);
-    await tester.pumpAndSettle();
-    await tester.tap(wearButton);
-    await tester.pumpAndSettle();
-
-    expect(find.text('Choose a Layer'), findsOneWidget);
-    expect(find.text('Wear on Layer 1'), findsOneWidget);
+    expect(find.text('Upper Body Picker'), findsOneWidget);
+    expect(find.text('No wardrobe clothing in this zone yet.'), findsOneWidget);
+    expect(find.text('Wear'), findsNothing);
     expect(find.text('Garment Details'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
   testWidgets(
-    'generated preview is opened from the bottom action and stays responsive',
+    'generated preview stays disabled when no wardrobe garment is selected',
     (WidgetTester tester) async {
       tester.view.physicalSize = const Size(320, 640);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
 
-      await tester.pumpWidget(const MaterialApp(home: OutfitCanvasScreen()));
-      await tester.pumpAndSettle();
-
-      final headHotspot = find.byTooltip('Select head garments');
-      await tester.ensureVisible(headHotspot);
-      await tester.pumpAndSettle();
-      await tester.tap(headHotspot, warnIfMissed: false);
-      await tester.pumpAndSettle();
-
-      final wearButton = find.text('Wear').first;
-      await tester.ensureVisible(wearButton);
-      await tester.pumpAndSettle();
-      await tester.tap(wearButton);
-      await tester.pumpAndSettle();
-
-      await tester.tapAt(const Offset(12, 12));
+      await tester.pumpWidget(_testApp(const OutfitCanvasScreen()));
       await tester.pumpAndSettle();
 
       final previewButton = find.text('Generate Preview');
       await tester.ensureVisible(previewButton);
-      await tester.pumpAndSettle();
+      await _pumpUi(tester);
       expect(previewButton, findsOneWidget);
       await tester.tap(previewButton);
-      await tester.pumpAndSettle();
+      await _pumpUi(tester);
 
-      expect(find.text('Generated Preview'), findsOneWidget);
-      expect(find.text('Save to Gallery'), findsOneWidget);
-      expect(find.text('Close'), findsOneWidget);
+      expect(find.text('Generated Preview'), findsNothing);
+      expect(find.text('No wardrobe clothing selected.'), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );
 
-  testWidgets('three upper-body layers do not overflow on the canvas', (
+  testWidgets('empty wardrobe keeps the reference photo without ghost items', (
     WidgetTester tester,
   ) async {
     tester.view.physicalSize = const Size(360, 740);
@@ -101,44 +86,13 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    await tester.pumpWidget(const MaterialApp(home: OutfitCanvasScreen()));
+    await tester.pumpWidget(_testApp(const OutfitCanvasScreen()));
     await tester.pumpAndSettle();
 
-    final upperHotspot = find.byTooltip('Select upper body garments');
-    await tester.ensureVisible(upperHotspot);
-    await tester.pumpAndSettle();
-    await tester.tap(upperHotspot, warnIfMissed: false);
-    await tester.pumpAndSettle();
-
-    Future<void> wearLayer(String title, int layer) async {
-      final titleFinder = find.text(title);
-      await tester.ensureVisible(titleFinder);
-      await tester.pumpAndSettle();
-      final cardFinder = find.ancestor(
-        of: titleFinder,
-        matching: find.byType(InkWell),
-      );
-      final wearButton = find.descendant(
-        of: cardFinder.first,
-        matching: find.widgetWithText(FilledButton, 'Wear'),
-      );
-      await tester.tap(wearButton.first);
-      await tester.pumpAndSettle();
-      final layerOption = find.text('Wear on Layer $layer');
-      await tester.ensureVisible(layerOption);
-      await tester.pumpAndSettle();
-      await tester.tap(layerOption, warnIfMissed: false);
-      await tester.pumpAndSettle();
-    }
-
-    await wearLayer('Ivory Turtleneck', 1);
-    await wearLayer('Relaxed Oxford Shirt', 2);
-    await wearLayer('Dark Leather Jacket', 3);
-
-    await tester.tapAt(const Offset(12, 12));
-    await tester.pumpAndSettle();
-
-    expect(find.text('L3'), findsOneWidget);
+    expect(find.text('Reference Photo'), findsOneWidget);
+    expect(find.text('Current Styling Map'), findsOneWidget);
+    expect(find.text('No item selected yet.'), findsNWidgets(4));
+    expect(find.text('L3'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 }

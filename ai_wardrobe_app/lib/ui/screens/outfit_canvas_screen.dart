@@ -98,10 +98,15 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
         }
         _loadingCatalog = false;
       });
-    } catch (error) {
+    } catch (_) {
       if (!mounted) return;
       setState(() {
-        _catalogError = error.toString();
+        for (final zone in _BodyZone.values) {
+          _catalog[zone]!.clear();
+          _wornByZone[zone]!.clear();
+        }
+        _catalogError =
+            'Unable to load wardrobe items. Add clothing or retry when the wardrobe service is available.';
         _loadingCatalog = false;
       });
     }
@@ -236,11 +241,13 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
                               ),
                             ),
                             const SizedBox(width: 10),
-                            Text(
-                              'Loading garments from your wardrobe...',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: _textSecondary,
+                            Expanded(
+                              child: Text(
+                                'Loading garments from your wardrobe...',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: _textSecondary,
+                                ),
                               ),
                             ),
                           ],
@@ -1063,36 +1070,46 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
                         ),
                       ),
                       Expanded(
-                        child: ListView.separated(
-                          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-                          itemBuilder: (context, index) {
-                            final item = items[index];
-                            final currentLayer = _layerFor(zone, item.id);
-                            return _buildGarmentCard(
-                              zone,
-                              item,
-                              currentLayer,
-                              onOpenDetails: () => _showGarmentDetails(
-                                zone,
-                                item,
-                                currentLayer: currentLayer,
+                        child: items.isEmpty
+                            ? _buildEmptyPickerState(zone)
+                            : ListView.separated(
+                                padding: const EdgeInsets.fromLTRB(
+                                  20,
+                                  0,
+                                  20,
+                                  24,
+                                ),
+                                itemBuilder: (context, index) {
+                                  final item = items[index];
+                                  final currentLayer = _layerFor(zone, item.id);
+                                  return _buildGarmentCard(
+                                    zone,
+                                    item,
+                                    currentLayer,
+                                    onOpenDetails: () => _showGarmentDetails(
+                                      zone,
+                                      item,
+                                      currentLayer: currentLayer,
+                                    ),
+                                    onWear: () => _handleWearAction(
+                                      zone,
+                                      item,
+                                      refreshPicker,
+                                    ),
+                                    onRemove: currentLayer == null
+                                        ? null
+                                        : () {
+                                            setState(() {
+                                              _removeItem(zone, item.id);
+                                            });
+                                            refreshPicker(() {});
+                                          },
+                                  );
+                                },
+                                separatorBuilder: (_, _) =>
+                                    const SizedBox(height: 12),
+                                itemCount: items.length,
                               ),
-                              onWear: () =>
-                                  _handleWearAction(zone, item, refreshPicker),
-                              onRemove: currentLayer == null
-                                  ? null
-                                  : () {
-                                      setState(() {
-                                        _removeItem(zone, item.id);
-                                      });
-                                      refreshPicker(() {});
-                                    },
-                            );
-                          },
-                          separatorBuilder: (_, _) =>
-                              const SizedBox(height: 12),
-                          itemCount: items.length,
-                        ),
                       ),
                     ],
                   ),
@@ -1102,6 +1119,48 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
           },
         );
       },
+    );
+  }
+
+  Widget _buildEmptyPickerState(_BodyZone zone) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(28, 0, 28, 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 58,
+              height: 58,
+              decoration: BoxDecoration(
+                color: zone.accent.withOpacity(0.12),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(zone.icon, color: zone.accent, size: 26),
+            ),
+            const SizedBox(height: 14),
+            Text(
+              'No wardrobe clothing in this zone yet.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                color: _textPrimary,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Add clothing to your wardrobe first, then return here to wear it on the body reference.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 12,
+                height: 1.5,
+                color: _textSecondary,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -1785,9 +1844,9 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
                 if (!mounted) {
                   return;
                 }
-                ScaffoldMessenger.of(this.context).showSnackBar(
-                  SnackBar(content: Text('Preview saved to $savedPath')),
-                );
+                ScaffoldMessenger.of(
+                  this.context,
+                ).showSnackBar(SnackBar(content: Text(savedPath)));
               } on MissingPluginException {
                 if (!mounted) {
                   return;
