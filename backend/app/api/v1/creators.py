@@ -47,7 +47,7 @@ def list_creators(
             username=user.username,
             displayName=profile.display_name,
             brandName=profile.brand_name,
-            # TODO: migrate avatar_storage_path to blob_hash
+            # TODO: migrate avatar_url to blob_hash
             avatarUrl=None,
             bioSummary=_bio_summary(profile.bio),
             packCount=crud_card_pack.count_published_card_packs_by_creator(
@@ -167,7 +167,7 @@ def _to_creator_detail(db: Session, profile, username: str) -> CreatorDetail:
         displayName=profile.display_name,
         brandName=profile.brand_name,
         bio=profile.bio,
-        # TODO: migrate avatar_storage_path to blob_hash
+        # TODO: migrate avatar_url to blob_hash
         avatarUrl=None,
         websiteUrl=profile.website_url,
         socialLinks=profile.social_links or {},

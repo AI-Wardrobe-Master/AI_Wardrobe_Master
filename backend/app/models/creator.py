@@ -27,10 +27,10 @@ class CreatorProfile(Base):
         primary_key=True,
     )
     status = Column(String(20), nullable=False, default="ACTIVE")
-    display_name = Column(String(120), nullable=False)
+    display_name = Column(String(100), nullable=False)
     brand_name = Column(String(120), nullable=True)
     bio = Column(Text, nullable=True)
-    avatar_storage_path = Column(Text, nullable=True)
+    avatar_url = Column(Text, nullable=True)
     website_url = Column(Text, nullable=True)
     social_links = Column(JSONB, nullable=False, default={})
     is_verified = Column(Boolean, nullable=False, default=False)

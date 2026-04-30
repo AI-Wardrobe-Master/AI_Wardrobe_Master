@@ -27,10 +27,10 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("'ACTIVE'"),
         ),
-        sa.Column("display_name", sa.String(length=120), nullable=False),
+        sa.Column("display_name", sa.String(length=100), nullable=False),
         sa.Column("brand_name", sa.String(length=120), nullable=True),
         sa.Column("bio", sa.Text(), nullable=True),
-        sa.Column("avatar_storage_path", sa.Text(), nullable=True),
+        sa.Column("avatar_url", sa.Text(), nullable=True),
         sa.Column("website_url", sa.Text(), nullable=True),
         sa.Column(
             "social_links",
