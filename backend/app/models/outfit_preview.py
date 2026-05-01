@@ -34,7 +34,7 @@ class OutfitPreviewTask(Base):
     input_count = Column(Integer, nullable=False, default=0)
     prompt_template_key = Column(String(100), nullable=False)
     provider_name = Column(String(50), nullable=False, default="DashScope")
-    provider_model = Column(String(100), nullable=False, default="wan2.7-image-pro")
+    provider_model = Column(String(100), nullable=False, default="wan2.6-image")
     provider_job_id = Column(String(255), nullable=True)
     status = Column(String(20), nullable=False, default="PENDING")
     preview_image_blob_hash = Column(String(64), ForeignKey("blobs.blob_hash"), nullable=True)

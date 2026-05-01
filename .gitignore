@@ -7,3 +7,4 @@ QUICKSTART.md
 AGENTS.md
 *.pyc
 prompts.md
+/harness/*

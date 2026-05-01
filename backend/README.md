@@ -59,6 +59,9 @@ API 文档：http://localhost:8000/docs
 前端开发者推荐直接在仓库根目录运行：
 
 ```bash
+# Outfit Preview 功能需要 DashScope API key
+export DASHSCOPE_API_KEY=sk-your-key-here
+
 docker compose up --build
 ```
 
@@ -107,6 +110,7 @@ docker compose down -v
 
 - `docker-compose.yml` 位于仓库根目录，不在 `backend/` 目录下
 - compose 已经注入数据库连接参数，不需要再手动复制 `.env`
+- `DASHSCOPE_API_KEY` 用于 Outfit Preview（穿搭预览）功能，调用阿里云 DashScope wan2.6-image 模型生成试穿效果图。需要在阿里云 DashScope 控制台获取国内版 API key。不设置此项则 outfit preview 功能不可用，其余功能不受影响。
 - 本地 seed user 默认信息：
   - `email`: `demo@example.com`
   - `password`: `demo123456`
@@ -126,6 +130,7 @@ docker run --rm -p 8000:8000 \
   -e POSTGRES_PORT=5432 \
   -e LOCAL_STORAGE_PATH=/app/storage \
   -e API_BASE_URL=http://localhost:8000 \
+  -e DASHSCOPE_API_KEY=sk-your-key-here \
   ai-wardrobe-backend
 ```
 

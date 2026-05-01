@@ -210,6 +210,24 @@ backend/
 - `Face + Scene` 前端 demo 已接好入口
 - 真实生成模型尚未在后端完成部署
 
+#### DashScope outfit preview 调用约定
+
+Outfit preview 使用 DashScope `wan2.6-image` 时，需要区分两种调用方式：
+
+- HTTP JSON 直调 `/api/v1/services/aigc/multimodal-generation/generation` 时，`content[].image` 必须是 DashScope 服务端可下载的 HTTP(S) URL。直接传后端本机的 `file://...` 路径会失败，DashScope 服务端无法读取本机文件。
+- DashScope Python SDK 支持 `file://` 本地文件路径。SDK 会在请求前识别本地文件，并先上传到 DashScope 文件中转 OSS，再把可访问的临时文件 URL 放入模型请求。因此如果 backend worker 使用本地 CAS 文件作为输入，应优先走 SDK 调用，而不是手写 HTTP JSON 请求。
+
+本地路径格式要求：
+
+```text
+file://test/image/car.webp
+file://test/image/paint.webp
+```
+
+相对路径相对于当前 Python 进程的工作目录解析；生产代码应确保 worker 的 `cwd` 可预测，或者用 `Path(...).resolve().as_uri()` 生成绝对 `file://` URI 后交给 SDK。不要把 `file://` URI 直接传给 HTTP JSON endpoint。
+
+当前 CAS 文件仍通过 `blob_hash -> BlobStorage.path_for(blob_hash)` 找到本地物理文件。DashScope SDK 调用应在 worker 内部用该本地路径构造 `file://...`，由 SDK 负责上传。若未来切到 S3/OSS 存储，也可以改用 storage presigned URL 直接走 HTTP JSON。
+
 ## Data Ownership Rules
 
 1. 删除 wardrobe 不自动删除 `ClothingItem`
