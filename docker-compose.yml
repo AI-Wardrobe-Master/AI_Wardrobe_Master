@@ -52,6 +52,7 @@ services:
       ROBOFLOW_WORKFLOW_ID: ${ROBOFLOW_WORKFLOW_ID:-}
       ROBOFLOW_IMAGE_INPUT_NAME: ${ROBOFLOW_IMAGE_INPUT_NAME:-image}
       ROBOFLOW_TIMEOUT_SECONDS: ${ROBOFLOW_TIMEOUT_SECONDS:-30}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
       PYTHONPATH: /app
     ports:
       - "${BACKEND_HOST_PORT:-8000}:8000"
@@ -75,6 +76,7 @@ services:
       POSTGRES_PORT: 5432
       REDIS_URL: redis://redis:6379/0
       LOCAL_STORAGE_PATH: /app/storage
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
       PYTHONPATH: /app:/opt/Hunyuan3D-2
       PYOPENGL_PLATFORM: egl
       HF_HOME: /models/hunyuan/hf
