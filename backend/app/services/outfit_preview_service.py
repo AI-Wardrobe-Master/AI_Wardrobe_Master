@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import io
+import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Iterable
 from uuid import UUID
 
@@ -24,13 +25,15 @@ from app.services.blob_storage import get_blob_storage
 logger = logging.getLogger(__name__)
 
 DASHSCOPE_ENDPOINT = (
-    "https://dashscope-intl.aliyuncs.com/api/v1"
-    "aigc/multimodal-generation/generation"
+    "https://dashscope.aliyuncs.com/api/v1"
+    "/services/aigc/multimodal-generation/generation"
 )
 DASHSCOPE_MODEL = "wan2.6-image"
+DASHSCOPE_SIZE = "1024*1024"
 DASHSCOPE_PROVIDER = "DashScope"
 MAX_PROVIDER_ATTEMPTS = 3
 RETRYABLE_STATUSES = {500, 502, 503, 504}
+DASHSCOPE_MIN_IMAGE_DIMENSION = 240
 
 
 @dataclass(frozen=True)
@@ -56,10 +59,26 @@ class OutfitPreviewProviderError(RuntimeError):
         self.retryable = retryable
 
 
-def _absolute_blob_url(blob_storage, blob_hash: str) -> str:
-    """Build an absolute file:// URL for a CAS blob (for DashScope API)."""
-    path = blob_storage.path_for(blob_hash)
-    return Path(path).resolve().as_uri()
+async def _blob_to_base64_data_uri(blob_storage, blob_hash: str) -> str:
+    """Read a CAS blob and return a JPEG base64 data URI for the DashScope API.
+
+    The blob may be PNG, WebP, or any format the user originally uploaded.
+    We re-encode to JPEG so the declared MIME and byte content always match.
+    """
+    data = await blob_storage.get_bytes(blob_hash)
+    with PILImage.open(io.BytesIO(data)) as img:
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+        min_dimension = min(img.size)
+        if min_dimension < DASHSCOPE_MIN_IMAGE_DIMENSION:
+            scale = DASHSCOPE_MIN_IMAGE_DIMENSION / min_dimension
+            width = round(img.width * scale)
+            height = round(img.height * scale)
+            img = img.resize((width, height), PILImage.Resampling.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=95)
+    b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+    return f"data:image/jpeg;base64,{b64}"
 
 
 def _select_preview_image_blob_hash(item: ClothingItem) -> str | None:
@@ -276,8 +295,8 @@ def _parse_dashscope_success(payload: dict) -> tuple[str, str | None]:
 
 async def _call_dashscope(
     *,
-    person_image_url: str,
-    garment_image_urls: list[str],
+    person_image_data_uri: str,
+    garment_image_data_uris: list[str],
     prompt_text: str,
 ) -> tuple[str, str | None]:
     if not settings.DASHSCOPE_API_KEY:
@@ -286,63 +305,112 @@ async def _call_dashscope(
             code="CONFIG_ERROR",
         )
 
+    # Build messages: each image in its own user message (domestic API
+    # constrain: at most 1 image per message with enable_interleave=True).
+    messages: list[dict] = [
+        {
+            "role": "user",
+            "content": [
+                {"image": person_image_data_uri},
+                {"text": prompt_text if not garment_image_data_uris else "人物图片"},
+            ],
+        }
+    ]
+    for i, uri in enumerate(garment_image_data_uris):
+        messages.append({"role": "assistant", "content": [{"text": "."}]})
+        is_last = (i == len(garment_image_data_uris) - 1)
+        messages.append(
+            {
+                "role": "user",
+                "content": [
+                    {"image": uri},
+                    {"text": prompt_text if is_last else "服装图片"},
+                ],
+            }
+        )
+
     payload = {
         "model": DASHSCOPE_MODEL,
-        "input": {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"image": person_image_url},
-                        *({"image": url} for url in garment_image_urls),
-                        {"text": prompt_text},
-                    ],
-                }
-            ]
-        },
+        "input": {"messages": messages},
         "parameters": {
-            "size": "2K",
+            "size": DASHSCOPE_SIZE,
             "n": 1,
             "watermark": False,
-            "thinking_mode": True,
+            "enable_interleave": True,
+            "stream": True,
         },
     }
 
     headers = {
         "Authorization": f"Bearer {settings.DASHSCOPE_API_KEY}",
         "Content-Type": "application/json",
+        "X-DashScope-SSE": "enable",
     }
 
-    timeout = httpx.Timeout(120.0)
+    timeout = httpx.Timeout(300.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.post(DASHSCOPE_ENDPOINT, json=payload, headers=headers)
-        request_id: str | None = None
-        try:
-            data = response.json()
-        except ValueError as exc:
-            raise OutfitPreviewProviderError(
-                "DashScope returned invalid JSON",
-                code="INVALID_RESPONSE",
-                retryable=response.status_code in RETRYABLE_STATUSES,
-            ) from exc
+        async with client.stream(
+            "POST", DASHSCOPE_ENDPOINT, json=payload, headers=headers
+        ) as response:
+            if response.status_code >= 400:
+                body = await response.aread()
+                try:
+                    data = json.loads(body)
+                except Exception:
+                    raise OutfitPreviewProviderError(
+                        f"DashScope returned HTTP {response.status_code}",
+                        code=f"HTTP_{response.status_code}",
+                        retryable=response.status_code in RETRYABLE_STATUSES,
+                    ) from None
+                code = data.get("code") or f"HTTP_{response.status_code}"
+                message = data.get("message") or body[:500]
+                raise OutfitPreviewProviderError(
+                    str(message),
+                    code=code,
+                    request_id=data.get("request_id"),
+                    retryable=response.status_code in RETRYABLE_STATUSES,
+                )
 
-        request_id = data.get("request_id")
-        if response.status_code >= 400:
-            code = data.get("code") or f"HTTP_{response.status_code}"
-            message = data.get("message") or response.text[:500]
-            raise OutfitPreviewProviderError(
-                message,
-                code=code,
-                request_id=request_id,
-                retryable=response.status_code in RETRYABLE_STATUSES,
-            )
+            # Parse SSE event stream
+            result_image_url: str | None = None
+            request_id: str | None = None
 
-        try:
-            return _parse_dashscope_success(data)
-        except OutfitPreviewProviderError as exc:
-            if exc.request_id is None:
-                exc.request_id = request_id
-            raise
+            async for line in response.aiter_lines():
+                line = line.strip()
+                if not line or not line.startswith("data:"):
+                    continue
+                json_str = line[5:].strip()
+                if json_str == "[DONE]":
+                    break
+                try:
+                    event = json.loads(json_str)
+                except json.JSONDecodeError:
+                    continue
+
+                if request_id is None:
+                    request_id = event.get("request_id")
+
+                # Check for inline error in stream
+                if event.get("code"):
+                    raise OutfitPreviewProviderError(
+                        str(event.get("message", "")),
+                        code=event["code"],
+                        request_id=request_id,
+                    )
+
+                for choice in event.get("output", {}).get("choices", []):
+                    for item in choice.get("message", {}).get("content", []):
+                        if item.get("type") == "image" and item.get("image"):
+                            result_image_url = item["image"]
+
+            if result_image_url is None:
+                raise OutfitPreviewProviderError(
+                    "DashScope did not return a preview image",
+                    code="INVALID_RESPONSE",
+                    request_id=request_id,
+                )
+
+            return result_image_url, request_id
 
 
 async def create_preview_task(
@@ -367,17 +435,7 @@ async def create_preview_task(
     )
 
     person_bytes = await _read_upload_bytes(person_image)
-
-    task = crud_outfit_preview.create_outfit_preview_task(
-        db,
-        user_id=user_id,
-        person_image_blob_hash="",
-        person_view_type=person_view_type.strip().upper(),
-        garment_categories=[item.garment_category for item in resolved_items],
-        prompt_template_key=prompt_template_key,
-        provider_name=DASHSCOPE_PROVIDER,
-        provider_model=DASHSCOPE_MODEL,
-    )
+    person_blob = None
 
     try:
         person_blob = await blob_service.ingest_upload(
@@ -385,7 +443,16 @@ async def create_preview_task(
             claimed_mime_type=person_image.content_type or "image/jpeg",
             max_size=settings.MAX_UPLOAD_SIZE_BYTES,
         )
-        task.person_image_blob_hash = person_blob.blob_hash
+        task = crud_outfit_preview.create_outfit_preview_task(
+            db,
+            user_id=user_id,
+            person_image_blob_hash=person_blob.blob_hash,
+            person_view_type=person_view_type.strip().upper(),
+            garment_categories=[item.garment_category for item in resolved_items],
+            prompt_template_key=prompt_template_key,
+            provider_name=DASHSCOPE_PROVIDER,
+            provider_model=DASHSCOPE_MODEL,
+        )
         crud_outfit_preview.replace_outfit_preview_task_items(
             db,
             task=task,
@@ -402,12 +469,12 @@ async def create_preview_task(
         db.commit()
         db.refresh(task)
     except Exception:
+        if person_blob is not None:
+            try:
+                blob_service.release(db, person_blob.blob_hash)
+            except Exception:
+                logger.warning("Failed to release person image blob", exc_info=True)
         db.rollback()
-        try:
-            blob_service.release(db, person_blob.blob_hash)
-            db.commit()
-        except Exception:
-            logger.warning("Failed to release person image blob", exc_info=True)
         raise
 
     return task
@@ -437,11 +504,17 @@ def save_outfit_from_preview_task(
     )
     if existing is not None:
         return existing
-    return crud_outfit_preview.create_outfit_from_preview_task(
-        db,
-        task=task,
-        name=name,
-    )
+    blob_service = get_blob_service()
+    blob_service.addref(db, task.preview_image_blob_hash)
+    try:
+        return crud_outfit_preview.create_outfit_from_preview_task(
+            db,
+            task=task,
+            name=name,
+        )
+    except Exception:
+        db.rollback()
+        raise
 
 
 async def run_outfit_preview_task(
@@ -473,9 +546,11 @@ async def run_outfit_preview_task(
             task.prompt_template_key,
         )
 
-        person_image_url = _absolute_blob_url(blob_storage, task.person_image_blob_hash)
-        garment_image_urls = [
-            _absolute_blob_url(blob_storage, item.garment_image_blob_hash)
+        person_image_data_uri = await _blob_to_base64_data_uri(
+            blob_storage, task.person_image_blob_hash
+        )
+        garment_image_data_uris = [
+            await _blob_to_base64_data_uri(blob_storage, item.garment_image_blob_hash)
             for item in task.items
         ]
 
@@ -484,8 +559,8 @@ async def run_outfit_preview_task(
         for attempt in range(1, MAX_PROVIDER_ATTEMPTS + 1):
             try:
                 result_image_url, request_id = await _call_dashscope(
-                    person_image_url=person_image_url,
-                    garment_image_urls=garment_image_urls,
+                    person_image_data_uri=person_image_data_uri,
+                    garment_image_data_uris=garment_image_data_uris,
                     prompt_text=prompt_text,
                 )
                 break

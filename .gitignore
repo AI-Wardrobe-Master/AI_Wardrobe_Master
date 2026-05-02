@@ -7,3 +7,7 @@ QUICKSTART.md
 AGENTS.md
 *.pyc
 prompts.md
+/harness/*
+/backend/storage/
+test/image
+test/output

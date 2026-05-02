@@ -4,6 +4,19 @@
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
+CREATE TABLE IF NOT EXISTS blobs (
+    blob_hash VARCHAR(64) PRIMARY KEY,
+    byte_size BIGINT NOT NULL,
+    mime_type VARCHAR(100) NOT NULL,
+    ref_count INTEGER NOT NULL DEFAULT 0 CHECK (ref_count >= 0),
+    first_seen_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_referenced_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    pending_delete_at TIMESTAMP WITH TIME ZONE
+);
+CREATE INDEX IF NOT EXISTS idx_blobs_pending_delete
+ON blobs(pending_delete_at)
+WHERE pending_delete_at IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     username VARCHAR(50) UNIQUE NOT NULL,
@@ -110,16 +123,16 @@ WHERE status IN ('PENDING', 'PROCESSING');
 CREATE TABLE IF NOT EXISTS outfit_preview_tasks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    person_image_path TEXT NOT NULL,
+    person_image_blob_hash VARCHAR(64) NOT NULL REFERENCES blobs(blob_hash),
     person_view_type VARCHAR(20) NOT NULL CHECK (person_view_type IN ('FULL_BODY', 'UPPER_BODY')),
     garment_categories JSONB NOT NULL DEFAULT '[]',
     input_count INTEGER NOT NULL DEFAULT 0 CHECK (input_count >= 0),
     prompt_template_key VARCHAR(100) NOT NULL,
     provider_name VARCHAR(50) NOT NULL DEFAULT 'DashScope',
-    provider_model VARCHAR(100) NOT NULL DEFAULT 'wan2.7-image-pro',
+    provider_model VARCHAR(100) NOT NULL DEFAULT 'wan2.6-image',
     provider_job_id VARCHAR(255),
     status VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED')),
-    preview_image_path TEXT,
+    preview_image_blob_hash VARCHAR(64) REFERENCES blobs(blob_hash),
     error_code VARCHAR(100),
     error_message TEXT,
     started_at TIMESTAMP WITH TIME ZONE,
@@ -137,7 +150,7 @@ CREATE TABLE IF NOT EXISTS outfit_preview_task_items (
     clothing_item_id UUID NOT NULL REFERENCES clothing_items(id) ON DELETE CASCADE,
     garment_category VARCHAR(20) NOT NULL CHECK (garment_category IN ('TOP', 'BOTTOM', 'SHOES')),
     sort_order INTEGER NOT NULL DEFAULT 0 CHECK (sort_order >= 0),
-    garment_image_path TEXT NOT NULL,
+    garment_image_blob_hash VARCHAR(64) NOT NULL REFERENCES blobs(blob_hash),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(task_id, clothing_item_id),
     UNIQUE(task_id, garment_category)
@@ -154,7 +167,7 @@ CREATE TABLE IF NOT EXISTS outfits (
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     preview_task_id UUID UNIQUE REFERENCES outfit_preview_tasks(id) ON DELETE SET NULL,
     name VARCHAR(120),
-    preview_image_path TEXT NOT NULL,
+    preview_image_blob_hash VARCHAR(64) NOT NULL REFERENCES blobs(blob_hash),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );

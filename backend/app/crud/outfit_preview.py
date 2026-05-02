@@ -20,7 +20,7 @@ def create_outfit_preview_task(
     garment_categories: list[str],
     prompt_template_key: str,
     provider_name: str = "DashScope",
-    provider_model: str = "wan2.7-image-pro",
+    provider_model: str = "wan2.6-image",
 ) -> OutfitPreviewTask:
     now = datetime.now(timezone.utc)
     task = OutfitPreviewTask(

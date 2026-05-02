@@ -53,7 +53,7 @@ def upgrade() -> None:
             "provider_model",
             sa.String(length=100),
             nullable=False,
-            server_default=sa.text("'wan2.7-image-pro'"),
+            server_default=sa.text("'wan2.6-image'"),
         ),
         sa.Column("provider_job_id", sa.String(length=255), nullable=True),
         sa.Column(
