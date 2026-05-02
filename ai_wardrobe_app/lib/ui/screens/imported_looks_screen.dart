@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_strings_provider.dart';
-import '../../models/import_history.dart';
-import '../../services/import_api_service.dart';
+import '../../services/api_config.dart';
+import '../../services/outfit_preview_api_service.dart';
 import '../../theme/app_theme.dart';
-import 'card_pack_detail_screen.dart';
+import '../widgets/app_remote_image.dart';
 
 class ImportedLooksScreen extends StatefulWidget {
   const ImportedLooksScreen({super.key});
@@ -14,7 +14,7 @@ class ImportedLooksScreen extends StatefulWidget {
 }
 
 class _ImportedLooksScreenState extends State<ImportedLooksScreen> {
-  List<ImportHistory> _imports = [];
+  List<Map<String, dynamic>> _outfits = [];
   bool _loading = true;
   String? _error;
 
@@ -30,10 +30,10 @@ class _ImportedLooksScreenState extends State<ImportedLooksScreen> {
       _error = null;
     });
     try {
-      final imports = await ImportApiService.getImportHistory();
+      final outfits = await OutfitPreviewApiService.listSavedOutfits();
       if (!mounted) return;
       setState(() {
-        _imports = imports;
+        _outfits = outfits;
         _loading = false;
       });
     } catch (e) {
@@ -50,126 +50,141 @@ class _ImportedLooksScreenState extends State<ImportedLooksScreen> {
     final s = AppStringsProvider.of(context);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final textP = isDark ? AppColors.darkTextPrimary : AppColors.textPrimary;
-    final textS = isDark ? AppColors.darkTextSecondary : AppColors.textSecondary;
+    final textS = isDark
+        ? AppColors.darkTextSecondary
+        : AppColors.textSecondary;
 
     return Scaffold(
       appBar: AppBar(title: Text(s.importedLooks)),
       body: _loading
           ? Center(child: CircularProgressIndicator(color: textP))
           : _error != null
-              ? Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.error_outline, size: 48, color: textS),
-                      const SizedBox(height: 8),
-                      Text('Error: $_error', style: TextStyle(color: textP)),
-                      const SizedBox(height: 16),
-                      TextButton(
-                        onPressed: _loadImports,
-                        child: const Text('Retry'),
-                      ),
-                    ],
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.error_outline, size: 48, color: textS),
+                  const SizedBox(height: 8),
+                  Text('Error: $_error', style: TextStyle(color: textP)),
+                  const SizedBox(height: 16),
+                  TextButton(
+                    onPressed: _loadImports,
+                    child: const Text('Retry'),
                   ),
-                )
-              : _imports.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
+                ],
+              ),
+            )
+          : _outfits.isEmpty
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.inventory_2_outlined, size: 48, color: textS),
+                  const SizedBox(height: 8),
+                  Text(
+                    'No imported looks yet',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: textP,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Save generated outfit previews to see them here',
+                    style: TextStyle(fontSize: 12, color: textS),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            )
+          : RefreshIndicator(
+              onRefresh: _loadImports,
+              child: ListView.builder(
+                padding: const EdgeInsets.all(16),
+                itemCount: _outfits.length,
+                itemBuilder: (context, index) {
+                  final outfit = _outfits[index];
+                  final name =
+                      outfit['name']?.toString().trim().isNotEmpty == true
+                      ? outfit['name'].toString()
+                      : 'Generated outfit';
+                  final previewImageUrl = outfit['previewImageUrl']?.toString();
+                  final itemCount =
+                      (outfit['clothingItemIds'] as List<dynamic>?)?.length ??
+                      0;
+                  final createdAt =
+                      DateTime.tryParse(
+                        outfit['createdAt']?.toString() ?? '',
+                      ) ??
+                      DateTime.now();
+                  return Card(
+                    margin: const EdgeInsets.only(bottom: 12),
+                    color: isDark ? AppColors.darkSurface : Colors.white,
+                    child: ListTile(
+                      contentPadding: const EdgeInsets.all(16),
+                      leading: ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: SizedBox(
+                          width: 56,
+                          height: 72,
+                          child: previewImageUrl == null
+                              ? Icon(Icons.image_outlined, color: textS)
+                              : AppRemoteImage(
+                                  url: resolveFileUrl(previewImageUrl),
+                                  fit: BoxFit.cover,
+                                ),
+                        ),
+                      ),
+                      title: Text(
+                        name,
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: textP,
+                        ),
+                      ),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Icon(Icons.inventory_2_outlined,
-                              size: 48, color: textS),
-                          const SizedBox(height: 8),
-                          Text(
-                            'No imported looks yet',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: textP,
-                            ),
-                          ),
                           const SizedBox(height: 4),
                           Text(
-                            'Import card packs from creators to see them here',
+                            'Generated full-body preview',
                             style: TextStyle(fontSize: 12, color: textS),
-                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.inventory_2_outlined,
+                                size: 14,
+                                color: textS,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                '$itemCount items',
+                                style: TextStyle(fontSize: 12, color: textS),
+                              ),
+                              const Spacer(),
+                              Text(
+                                _formatDate(createdAt),
+                                style: TextStyle(fontSize: 12, color: textS),
+                              ),
+                            ],
                           ),
                         ],
                       ),
-                    )
-                  : RefreshIndicator(
-                      onRefresh: _loadImports,
-                      child: ListView.builder(
-                        padding: const EdgeInsets.all(16),
-                        itemCount: _imports.length,
-                        itemBuilder: (context, index) {
-                          final import = _imports[index];
-                          return Card(
-                            margin: const EdgeInsets.only(bottom: 12),
-                            color: isDark ? AppColors.darkSurface : Colors.white,
-                            child: ListTile(
-                              contentPadding: const EdgeInsets.all(16),
-                              title: Text(
-                                import.cardPackName,
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w600,
-                                  color: textP,
-                                ),
-                              ),
-                              subtitle: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    'by ${import.creatorName}',
-                                    style: TextStyle(fontSize: 12, color: textS),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Row(
-                                    children: [
-                                      Icon(Icons.inventory_2_outlined,
-                                          size: 14, color: textS),
-                                      const SizedBox(width: 4),
-                                      Text(
-                                        '${import.itemCount} items',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          color: textS,
-                                        ),
-                                      ),
-                                      const Spacer(),
-                                      Text(
-                                        _formatDate(import.importedAt),
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          color: textS,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                              trailing: Icon(
-                                Icons.arrow_forward_ios_rounded,
-                                size: 16,
-                                color: textS,
-                              ),
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => CardPackDetailScreen(
-                                      packId: import.cardPackId,
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                          );
-                        },
+                      trailing: Icon(
+                        Icons.arrow_forward_ios_rounded,
+                        size: 16,
+                        color: textS,
                       ),
+                      onTap: () {},
                     ),
+                  );
+                },
+              ),
+            ),
     );
   }
 

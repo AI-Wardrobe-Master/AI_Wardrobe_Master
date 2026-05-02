@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import io
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Iterable
 from uuid import UUID
 
@@ -23,10 +23,7 @@ from app.services.blob_storage import get_blob_storage
 
 logger = logging.getLogger(__name__)
 
-DASHSCOPE_ENDPOINT = (
-    "https://dashscope-intl.aliyuncs.com/api/v1"
-    "aigc/multimodal-generation/generation"
-)
+DASHSCOPE_ENDPOINT = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
 DASHSCOPE_MODEL = "wan2.6-image"
 DASHSCOPE_PROVIDER = "DashScope"
 MAX_PROVIDER_ATTEMPTS = 3
@@ -56,10 +53,45 @@ class OutfitPreviewProviderError(RuntimeError):
         self.retryable = retryable
 
 
-def _absolute_blob_url(blob_storage, blob_hash: str) -> str:
-    """Build an absolute file:// URL for a CAS blob (for DashScope API)."""
-    path = blob_storage.path_for(blob_hash)
-    return Path(path).resolve().as_uri()
+async def _blob_as_data_url(blob_storage, db: Session, blob_hash: str) -> str:
+    """Build a DashScope-compatible base64 data URL for a CAS blob."""
+    from app.models.blob import Blob
+
+    blob = db.query(Blob).filter(Blob.blob_hash == blob_hash).first()
+    mime_type = blob.mime_type if blob is not None else "image/png"
+    payload = await blob_storage.get_bytes(blob_hash)
+    payload, mime_type = _ensure_dashscope_image_size(payload, mime_type)
+    encoded = base64.b64encode(payload).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"
+
+
+def _ensure_dashscope_image_size(payload: bytes, mime_type: str) -> tuple[bytes, str]:
+    """DashScope rejects images with either side below 240px."""
+    try:
+        from PIL import Image
+    except Exception:
+        return payload, mime_type
+
+    with Image.open(io.BytesIO(payload)) as image:
+        width, height = image.size
+        if width >= 240 and height >= 240:
+            return payload, mime_type
+
+        scale = max(240 / max(width, 1), 240 / max(height, 1))
+        resized = image.resize(
+            (max(240, int(width * scale)), max(240, int(height * scale))),
+            Image.Resampling.LANCZOS,
+        )
+        if resized.mode in ("RGBA", "LA"):
+            canvas = Image.new("RGB", resized.size, "white")
+            canvas.paste(resized, mask=resized.getchannel("A"))
+            resized = canvas
+        elif resized.mode != "RGB":
+            resized = resized.convert("RGB")
+
+        output = io.BytesIO()
+        resized.save(output, format="PNG")
+        return output.getvalue(), "image/png"
 
 
 def _select_preview_image_blob_hash(item: ClothingItem) -> str | None:
@@ -197,12 +229,12 @@ async def _read_upload_bytes(file) -> bytes:
 
 def _prompt_text(template_key: str) -> str:
     prompts = {
-        "full_body_top_tryon": "根据输入图片生成自然真实的全身上衣试穿预览图",
-        "full_body_bottom_tryon": "根据输入图片生成自然真实的全身下装试穿预览图",
-        "full_body_shoes_tryon": "根据输入图片生成自然真实的全身鞋子试穿预览图",
-        "full_body_outfit_tryon": "根据输入图片生成自然真实的全身穿搭试穿预览图",
-        "upper_body_top_tryon": "根据输入图片生成自然真实的上半身上衣试穿预览图",
-        "upper_body_bottom_tryon": "根据输入图片生成自然真实的上半身下装试穿预览图",
+        "full_body_top_tryon": "Generate a realistic full-body outfit preview. Keep the person's face, pose, and body natural, and replace only the upper-body garment with the provided clothing item.",
+        "full_body_bottom_tryon": "Generate a realistic full-body outfit preview. Keep the person's face and upper body natural, and replace only the lower-body garment with the provided clothing item.",
+        "full_body_shoes_tryon": "Generate a realistic full-body outfit preview. Keep the person's face and clothing natural, and replace only the shoes with the provided footwear item.",
+        "full_body_outfit_tryon": "Generate a realistic full-body outfit preview. Keep the person's face, pose, and proportions natural, and dress the person with the provided garments as a coordinated outfit.",
+        "upper_body_top_tryon": "Generate a realistic upper-body outfit preview. Keep the person's face and body natural, and replace only the upper-body garment with the provided clothing item.",
+        "upper_body_bottom_tryon": "Generate a realistic upper-body outfit preview with the provided lower-body item visible where possible, while keeping the person natural.",
     }
     prompt = prompts.get(template_key)
     if prompt is None:
@@ -367,17 +399,7 @@ async def create_preview_task(
     )
 
     person_bytes = await _read_upload_bytes(person_image)
-
-    task = crud_outfit_preview.create_outfit_preview_task(
-        db,
-        user_id=user_id,
-        person_image_blob_hash="",
-        person_view_type=person_view_type.strip().upper(),
-        garment_categories=[item.garment_category for item in resolved_items],
-        prompt_template_key=prompt_template_key,
-        provider_name=DASHSCOPE_PROVIDER,
-        provider_model=DASHSCOPE_MODEL,
-    )
+    person_blob = None
 
     try:
         person_blob = await blob_service.ingest_upload(
@@ -385,7 +407,16 @@ async def create_preview_task(
             claimed_mime_type=person_image.content_type or "image/jpeg",
             max_size=settings.MAX_UPLOAD_SIZE_BYTES,
         )
-        task.person_image_blob_hash = person_blob.blob_hash
+        task = crud_outfit_preview.create_outfit_preview_task(
+            db,
+            user_id=user_id,
+            person_image_blob_hash=person_blob.blob_hash,
+            person_view_type=person_view_type.strip().upper(),
+            garment_categories=[item.garment_category for item in resolved_items],
+            prompt_template_key=prompt_template_key,
+            provider_name=DASHSCOPE_PROVIDER,
+            provider_model=DASHSCOPE_MODEL,
+        )
         crud_outfit_preview.replace_outfit_preview_task_items(
             db,
             task=task,
@@ -403,11 +434,12 @@ async def create_preview_task(
         db.refresh(task)
     except Exception:
         db.rollback()
-        try:
-            blob_service.release(db, person_blob.blob_hash)
-            db.commit()
-        except Exception:
-            logger.warning("Failed to release person image blob", exc_info=True)
+        if person_blob is not None:
+            try:
+                blob_service.release(db, person_blob.blob_hash)
+                db.commit()
+            except Exception:
+                logger.warning("Failed to release person image blob", exc_info=True)
         raise
 
     return task
@@ -473,9 +505,13 @@ async def run_outfit_preview_task(
             task.prompt_template_key,
         )
 
-        person_image_url = _absolute_blob_url(blob_storage, task.person_image_blob_hash)
+        person_image_url = await _blob_as_data_url(
+            blob_storage,
+            db,
+            task.person_image_blob_hash,
+        )
         garment_image_urls = [
-            _absolute_blob_url(blob_storage, item.garment_image_blob_hash)
+            await _blob_as_data_url(blob_storage, db, item.garment_image_blob_hash)
             for item in task.items
         ]
 

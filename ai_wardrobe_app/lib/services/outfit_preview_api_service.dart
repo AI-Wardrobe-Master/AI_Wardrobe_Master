@@ -57,4 +57,19 @@ class OutfitPreviewApiService {
     final responseData = resp.data as Map<String, dynamic>;
     return responseData['data'] as Map<String, dynamic>;
   }
+
+  static Future<List<Map<String, dynamic>>> listSavedOutfits({
+    int page = 1,
+    int limit = 20,
+  }) async {
+    final resp = await _dio.get(
+      '/outfit-preview-tasks/saved/outfits',
+      queryParameters: {'page': page, 'limit': limit},
+    );
+    final responseData = resp.data as Map<String, dynamic>;
+    final data = responseData['data'] as Map<String, dynamic>;
+    return (data['items'] as List<dynamic>? ?? const <dynamic>[])
+        .map((entry) => Map<String, dynamic>.from(entry as Map))
+        .toList();
+  }
 }

@@ -94,3 +94,13 @@ class OutfitDetail(BaseModel):
 class OutfitPreviewSaveResponse(BaseModel):
     success: bool = True
     data: OutfitDetail
+
+
+class OutfitListData(BaseModel):
+    items: list[OutfitDetail]
+    pagination: Pagination
+
+
+class OutfitListResponse(BaseModel):
+    success: bool = True
+    data: OutfitListData

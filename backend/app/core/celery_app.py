@@ -20,6 +20,7 @@ celery_app.conf.update(
     task_routes={
         "clothing.process_pipeline": {"queue": "clothing_pipeline"},
         "styled_generation.run": {"queue": "styled_generation"},
+        "outfit_preview.process": {"queue": "styled_generation"},
     },
 )
 

@@ -10,6 +10,8 @@ from app.schemas.creator import Pagination
 from app.schemas.outfit_preview import (
     OutfitDetail,
     OutfitItemSummary,
+    OutfitListData,
+    OutfitListResponse,
     OutfitPreviewSaveResponse,
     OutfitPreviewTaskCreateResponse,
     OutfitPreviewTaskCreateResponseData,
@@ -69,22 +71,6 @@ async def create_outfit_preview_task_route(
     )
 
 
-@router.get("/{task_id}", response_model=OutfitPreviewTaskDetail)
-def get_outfit_preview_task(
-    task_id: UUID,
-    db: Session = Depends(get_db),
-    user_id: UUID = Depends(get_current_user_id),
-):
-    task = crud_outfit_preview.get_owned_outfit_preview_task(
-        db,
-        task_id=task_id,
-        user_id=user_id,
-    )
-    if task is None:
-        raise HTTPException(status_code=404, detail="Preview task not found")
-    return _to_task_detail(task)
-
-
 @router.get("", response_model=OutfitPreviewTaskListResponse)
 def list_outfit_preview_tasks(
     db: Session = Depends(get_db),
@@ -112,6 +98,43 @@ def list_outfit_preview_tasks(
             pagination=Pagination.build(page=page, limit=limit, total=total),
         )
     )
+
+
+@router.get("/saved/outfits", response_model=OutfitListResponse)
+def list_saved_outfits(
+    db: Session = Depends(get_db),
+    user_id: UUID = Depends(get_current_user_id),
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+):
+    outfits, total = crud_outfit_preview.list_owned_outfits(
+        db,
+        user_id=user_id,
+        page=page,
+        limit=limit,
+    )
+    return OutfitListResponse(
+        data=OutfitListData(
+            items=[_to_outfit_detail(outfit) for outfit in outfits],
+            pagination=Pagination.build(page=page, limit=limit, total=total),
+        )
+    )
+
+
+@router.get("/{task_id}", response_model=OutfitPreviewTaskDetail)
+def get_outfit_preview_task(
+    task_id: UUID,
+    db: Session = Depends(get_db),
+    user_id: UUID = Depends(get_current_user_id),
+):
+    task = crud_outfit_preview.get_owned_outfit_preview_task(
+        db,
+        task_id=task_id,
+        user_id=user_id,
+    )
+    if task is None:
+        raise HTTPException(status_code=404, detail="Preview task not found")
+    return _to_task_detail(task)
 
 
 @router.post("/{task_id}/save", response_model=OutfitPreviewSaveResponse, status_code=201)

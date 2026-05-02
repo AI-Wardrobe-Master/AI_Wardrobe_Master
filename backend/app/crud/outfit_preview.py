@@ -181,6 +181,24 @@ def get_owned_outfit_by_preview_task(
     )
 
 
+def list_owned_outfits(
+    db: Session,
+    *,
+    user_id: UUID,
+    page: int = 1,
+    limit: int = 20,
+) -> tuple[list[Outfit], int]:
+    query = db.query(Outfit).filter(Outfit.user_id == user_id)
+    total = query.count()
+    items = (
+        query.order_by(Outfit.created_at.desc())
+        .offset((page - 1) * limit)
+        .limit(limit)
+        .all()
+    )
+    return items, total
+
+
 def create_outfit_from_preview_task(
     db: Session,
     *,
