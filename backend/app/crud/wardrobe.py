@@ -54,7 +54,7 @@ def _dedupe_tags(tags: list[str]) -> list[str]:
 
 
 def _default_export_name() -> str:
-    return f"Outfit Export {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+    return f"Styled Look {datetime.now().strftime('%Y-%m-%d %H:%M')}"
 
 
 def get_main_wardrobe(db: Session, user_id: UUID) -> Wardrobe | None:
@@ -111,10 +111,7 @@ def list_public_wardrobes(
     query = (
         db.query(Wardrobe)
         .join(User, User.id == Wardrobe.user_id)
-        .filter(
-            Wardrobe.is_public.is_(True),
-            Wardrobe.kind == "SUB",
-        )
+        .filter(Wardrobe.is_public.is_(True))
     )
     normalized_search = (search or "").strip()
     if normalized_search:
@@ -154,7 +151,8 @@ def get_wardrobe_by_wid(
     *,
     viewer_user_id: UUID | None = None,
 ) -> Wardrobe | None:
-    query = db.query(Wardrobe).filter(Wardrobe.wid == wid)
+    normalized_wid = wid.strip().upper()
+    query = db.query(Wardrobe).filter(func.upper(Wardrobe.wid) == normalized_wid)
     if viewer_user_id is not None:
         query = query.filter(
             or_(Wardrobe.user_id == viewer_user_id, Wardrobe.is_public.is_(True))

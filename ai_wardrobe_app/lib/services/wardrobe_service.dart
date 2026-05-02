@@ -30,8 +30,12 @@ class WardrobeService {
     String wid, {
     bool cacheRemote = true,
   }) async {
+    final normalizedWid = wid.trim().toUpperCase();
+    if (normalizedWid.isEmpty) {
+      return null;
+    }
     try {
-      final resp = await _dio.get('/wardrobes/by-wid/$wid');
+      final resp = await _dio.get('/wardrobes/by-wid/$normalizedWid');
       final raw = resp.data;
       if (raw is! Map<String, dynamic>) {
         return null;
@@ -48,7 +52,7 @@ class WardrobeService {
       }
       final wardrobes = await _readCachedWardrobes();
       return wardrobes.cast<Wardrobe?>().firstWhere(
-        (wardrobe) => wardrobe?.wid == wid,
+        (wardrobe) => wardrobe?.wid.toUpperCase() == normalizedWid,
         orElse: () => null,
       );
     }
@@ -107,8 +111,8 @@ class WardrobeService {
       }
 
       final merged = <String, WardrobeItemWithClothing>{
-        for (final item in remoteItems) item.clothingItemId: item,
         for (final item in localItems) item.clothingItemId: item,
+        for (final item in remoteItems) item.clothingItemId: item,
       };
       return merged.values.toList();
     } on DioException {
@@ -205,7 +209,7 @@ class WardrobeService {
       return _wardrobeFromRecord(record);
     } on DioException {
       final record = await LocalWardrobeService.createWardrobe(
-        name: name ?? 'Outfit Export',
+        name: name ?? 'Styled Look',
         type: 'VIRTUAL',
         description: description,
         coverImageUrl: coverImageUrl,

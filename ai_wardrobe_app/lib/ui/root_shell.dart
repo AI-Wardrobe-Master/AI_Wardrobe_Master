@@ -42,13 +42,7 @@ class _MobileRootShell extends StatefulWidget {
 class _MobileRootShellState extends State<_MobileRootShell> {
   int _pageIndex = 0;
   int _navIndex = 0;
-
-  final _pages = const <Widget>[
-    WardrobeScreen(),
-    DiscoverScreen(),
-    VisualizationHubScreen(),
-    ProfileScreen(),
-  ];
+  int _discoverRefreshSignal = 0;
 
   void _onNavTap(int index) {
     if (index == 2) {
@@ -58,6 +52,9 @@ class _MobileRootShellState extends State<_MobileRootShell> {
     setState(() {
       _navIndex = index;
       _pageIndex = index > 2 ? index - 1 : index;
+      if (index == 1) {
+        _discoverRefreshSignal++;
+      }
     });
   }
 
@@ -205,7 +202,15 @@ class _MobileRootShellState extends State<_MobileRootShell> {
   Widget build(BuildContext context) {
     final s = AppStringsProvider.of(context);
     return Scaffold(
-      body: IndexedStack(index: _pageIndex, children: _pages),
+      body: IndexedStack(
+        index: _pageIndex,
+        children: [
+          const WardrobeScreen(),
+          DiscoverScreen(refreshSignal: _discoverRefreshSignal),
+          const VisualizationHubScreen(),
+          const ProfileScreen(),
+        ],
+      ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _navIndex,
         onTap: _onNavTap,
@@ -273,13 +278,7 @@ class _WebRootShell extends StatefulWidget {
 
 class _WebRootShellState extends State<_WebRootShell> {
   int _pageIndex = 0;
-
-  final _pages = const <Widget>[
-    WardrobeScreen(),
-    DiscoverScreen(),
-    VisualizationHubScreen(),
-    ProfileScreen(),
-  ];
+  int _discoverRefreshSignal = 0;
 
   void _onAddPressed() {
     final s = AppStringsProvider.of(context);
@@ -439,6 +438,9 @@ class _WebRootShellState extends State<_WebRootShell> {
                     onDestinationSelected: (index) {
                       setState(() {
                         _pageIndex = index;
+                        if (index == 1) {
+                          _discoverRefreshSignal++;
+                        }
                       });
                     },
                     labelType: NavigationRailLabelType.all,
@@ -498,7 +500,15 @@ class _WebRootShellState extends State<_WebRootShell> {
             color: Theme.of(context).dividerColor,
           ),
           Expanded(
-            child: IndexedStack(index: _pageIndex, children: _pages),
+            child: IndexedStack(
+              index: _pageIndex,
+              children: [
+                const WardrobeScreen(),
+                DiscoverScreen(refreshSignal: _discoverRefreshSignal),
+                const VisualizationHubScreen(),
+                const ProfileScreen(),
+              ],
+            ),
           ),
         ],
       ),

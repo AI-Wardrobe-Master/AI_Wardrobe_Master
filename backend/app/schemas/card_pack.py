@@ -55,7 +55,14 @@ class CardPackItemSummary(BaseModel):
     catalog_visibility: str = Field(alias="catalogVisibility")
     processing_status: str = Field(alias="processingStatus")
     cover_url: str | None = Field(default=None, alias="coverUrl")
+    original_front_url: str | None = Field(default=None, alias="originalFrontUrl")
+    processed_front_url: str | None = Field(default=None, alias="processedFrontUrl")
+    model3d_url: str | None = Field(default=None, alias="model3dUrl")
+    angle_views: dict[int, str] = Field(default_factory=dict, alias="angleViews")
     final_tags: list[Tag] = Field(default_factory=list, alias="finalTags")
+    category: str | None = None
+    material: str | None = None
+    style: str | None = None
     view_count: int = Field(default=0, alias="viewCount")
     created_at: datetime = Field(alias="createdAt")
 

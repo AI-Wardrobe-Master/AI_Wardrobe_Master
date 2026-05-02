@@ -60,121 +60,52 @@ class _WardrobeManagementScreenState extends State<WardrobeManagementScreen> {
 
   Future<void> _createWardrobe() async {
     final s = AppStringsProvider.of(context);
-    final nameController = TextEditingController();
-    String type = 'REGULAR';
-    String? nameError;
-    await showDialog<void>(
+    final result = await showDialog<_WardrobeNameResult>(
       context: context,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx2, setDialogState) {
-            return AlertDialog(
-              title: Text(s.createWardrobe),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  TextField(
-                    controller: nameController,
-                    decoration: InputDecoration(
-                      labelText: s.wardrobeName,
-                      errorText: nameError,
-                      border: const OutlineInputBorder(),
-                    ),
-                    autofocus: true,
-                  ),
-                  const SizedBox(height: 16),
-                  SegmentedButton<String>(
-                    segments: [
-                      ButtonSegment(
-                        value: 'REGULAR',
-                        label: Text(s.regularWardrobeLabel),
-                      ),
-                      ButtonSegment(
-                        value: 'VIRTUAL',
-                        label: Text(s.virtualWardrobeLabel),
-                      ),
-                    ],
-                    selected: {type},
-                    onSelectionChanged: (v) =>
-                        setDialogState(() => type = v.first),
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(ctx).pop(),
-                  child: Text(s.cancel),
-                ),
-                FilledButton(
-                  onPressed: () async {
-                    final name = nameController.text.trim();
-                    if (name.isEmpty) {
-                      setDialogState(() => nameError = s.wardrobeNameRequired);
-                      return;
-                    }
-                    Navigator.of(ctx).pop();
-                    try {
-                      await WardrobeService.createWardrobe(
-                        name: name,
-                        type: type,
-                      );
-                      _load();
-                    } catch (e) {
-                      _showSnackBar(e.toString());
-                    }
-                  },
-                  child: Text(s.create),
-                ),
-              ],
-            );
-          },
-        );
-      },
+      builder: (_) => _WardrobeNameDialog(
+        title: s.createWardrobe,
+        initialName: '',
+        initialType: 'REGULAR',
+        showTypeSelector: true,
+        nameLabel: s.wardrobeName,
+        requiredMessage: s.wardrobeNameRequired,
+        cancelLabel: s.cancel,
+        submitLabel: s.create,
+        regularLabel: s.regularWardrobeLabel,
+        virtualLabel: s.virtualWardrobeLabel,
+      ),
     );
-    nameController.dispose();
+    if (result == null) return;
+    try {
+      await WardrobeService.createWardrobe(
+        name: result.name,
+        type: result.type,
+      );
+      _load();
+    } catch (e) {
+      _showSnackBar(e.toString());
+    }
   }
 
   Future<void> _renameWardrobe(Wardrobe w) async {
     final s = AppStringsProvider.of(context);
-    final nameController = TextEditingController(text: w.name);
-    String? nameError;
-    final ok = await showDialog<bool>(
+    final result = await showDialog<_WardrobeNameResult>(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx2, setDialogState) => AlertDialog(
-          title: Text(s.renameWardrobe),
-          content: TextField(
-            controller: nameController,
-            decoration: InputDecoration(
-              labelText: s.wardrobeName,
-              errorText: nameError,
-              border: const OutlineInputBorder(),
-            ),
-            autofocus: true,
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: Text(s.cancel),
-            ),
-            FilledButton(
-              onPressed: () {
-                if (nameController.text.trim().isEmpty) {
-                  setDialogState(() => nameError = s.wardrobeNameRequired);
-                  return;
-                }
-                Navigator.of(ctx).pop(true);
-              },
-              child: Text(s.save),
-            ),
-          ],
-        ),
+      builder: (_) => _WardrobeNameDialog(
+        title: s.renameWardrobe,
+        initialName: w.name,
+        initialType: w.type,
+        showTypeSelector: false,
+        nameLabel: s.wardrobeName,
+        requiredMessage: s.wardrobeNameRequired,
+        cancelLabel: s.cancel,
+        submitLabel: s.save,
+        regularLabel: s.regularWardrobeLabel,
+        virtualLabel: s.virtualWardrobeLabel,
       ),
     );
-    final name = nameController.text.trim();
-    nameController.dispose();
-    if (ok != true) return;
+    if (result == null) return;
+    final name = result.name;
     if (name == w.name) return;
     try {
       await WardrobeService.updateWardrobe(w.id, name: name);
@@ -216,6 +147,36 @@ class _WardrobeManagementScreenState extends State<WardrobeManagementScreen> {
   }
 
   Future<void> _shareWardrobe(Wardrobe wardrobe) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+          wardrobe.isPublic
+              ? 'Wardrobe already shared'
+              : 'Publish wardrobe to Discover?',
+        ),
+        content: Text(
+          wardrobe.isPublic
+              ? '"${wardrobe.name}" is already visible in Discover. You can copy its WID again for sharing or testing.'
+              : 'After publishing, "${wardrobe.name}" will appear in Discover and can be opened by searching its WID (${wardrobe.wid}). Its clothing items stay in your wardrobe.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            icon: Icon(
+              wardrobe.isPublic ? Icons.copy_rounded : Icons.public_rounded,
+            ),
+            label: Text(wardrobe.isPublic ? 'Copy WID' : 'Publish'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
     try {
       var latestWardrobe = wardrobe;
       if (!wardrobe.isPublic) {
@@ -229,7 +190,11 @@ class _WardrobeManagementScreenState extends State<WardrobeManagementScreen> {
       final shareText =
           'AI Wardrobe share code: ${latestWardrobe.wid}\nWardrobe: ${latestWardrobe.name}';
       await Clipboard.setData(ClipboardData(text: shareText));
-      _showSnackBar('Share code copied: ${latestWardrobe.wid}');
+      _showSnackBar(
+        latestWardrobe.isPublic
+            ? 'Published to Discover. WID copied: ${latestWardrobe.wid}'
+            : 'Share code copied: ${latestWardrobe.wid}',
+      );
     } catch (e) {
       _showSnackBar(e.toString());
     }
@@ -360,6 +325,132 @@ class _WardrobeManagementScreenState extends State<WardrobeManagementScreen> {
               child: const Icon(Icons.add),
             )
           : null,
+    );
+  }
+}
+
+class _WardrobeNameResult {
+  const _WardrobeNameResult({required this.name, required this.type});
+
+  final String name;
+  final String type;
+}
+
+class _WardrobeNameDialog extends StatefulWidget {
+  const _WardrobeNameDialog({
+    required this.title,
+    required this.initialName,
+    required this.initialType,
+    required this.showTypeSelector,
+    required this.nameLabel,
+    required this.requiredMessage,
+    required this.cancelLabel,
+    required this.submitLabel,
+    required this.regularLabel,
+    required this.virtualLabel,
+  });
+
+  final String title;
+  final String initialName;
+  final String initialType;
+  final bool showTypeSelector;
+  final String nameLabel;
+  final String requiredMessage;
+  final String cancelLabel;
+  final String submitLabel;
+  final String regularLabel;
+  final String virtualLabel;
+
+  @override
+  State<_WardrobeNameDialog> createState() => _WardrobeNameDialogState();
+}
+
+class _WardrobeNameDialogState extends State<_WardrobeNameDialog> {
+  late final TextEditingController _nameController;
+  late final FocusNode _nameFocusNode;
+  late String _type;
+  String? _nameError;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameController = TextEditingController(text: widget.initialName);
+    _nameFocusNode = FocusNode();
+    _type = widget.initialType == 'VIRTUAL' ? 'VIRTUAL' : 'REGULAR';
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _nameFocusNode.requestFocus();
+      _nameController.selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: _nameController.text.length,
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    _nameFocusNode.dispose();
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final name = _nameController.text.trim();
+    if (name.isEmpty) {
+      setState(() => _nameError = widget.requiredMessage);
+      return;
+    }
+    Navigator.of(context).pop(_WardrobeNameResult(name: name, type: _type));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            controller: _nameController,
+            focusNode: _nameFocusNode,
+            keyboardType: TextInputType.text,
+            textInputAction: TextInputAction.done,
+            decoration: InputDecoration(
+              labelText: widget.nameLabel,
+              errorText: _nameError,
+              border: const OutlineInputBorder(),
+            ),
+            onSubmitted: (_) => _submit(),
+          ),
+          if (widget.showTypeSelector) ...[
+            const SizedBox(height: 16),
+            SegmentedButton<String>(
+              segments: [
+                ButtonSegment(
+                  value: 'REGULAR',
+                  label: Text(widget.regularLabel),
+                ),
+                ButtonSegment(
+                  value: 'VIRTUAL',
+                  label: Text(widget.virtualLabel),
+                ),
+              ],
+              selected: {_type},
+              onSelectionChanged: (value) {
+                setState(() => _type = value.first);
+              },
+            ),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(widget.cancelLabel),
+        ),
+        FilledButton(onPressed: _submit, child: Text(widget.submitLabel)),
+      ],
     );
   }
 }

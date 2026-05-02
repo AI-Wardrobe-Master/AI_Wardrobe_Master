@@ -95,6 +95,9 @@ def import_card_pack(
     if not pack:
         raise HTTPException(404, "Pack not found or not published")
 
+    if pack.creator_id == user_id:
+        raise HTTPException(409, "You cannot import your own card pack")
+
     existing = db.query(CardPackImport).filter_by(
         user_id=user_id, card_pack_id=pack.id,
     ).first()

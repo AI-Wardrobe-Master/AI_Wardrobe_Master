@@ -146,39 +146,42 @@ class _ScenePreviewDemoScreenState extends State<ScenePreviewDemoScreen> {
       orElse: () => null,
     );
 
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-      children: [
-        Text(
-          'Face + Scene Demo',
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.w800,
-            color: _textPrimary,
+    return Material(
+      type: MaterialType.transparency,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+        children: [
+          Text(
+            'Face + Scene Demo',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+              color: _textPrimary,
+            ),
           ),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          'This flow automatically uses the face source saved on your Profile page. Choose one clothing card and describe the scene to generate a preview.',
-          style: TextStyle(fontSize: 13, height: 1.5, color: _textSecondary),
-        ),
-        const SizedBox(height: 16),
-        _buildFaceCard(),
-        const SizedBox(height: 16),
-        _buildSceneField(),
-        const SizedBox(height: 16),
-        _buildCatalog(selected),
-        const SizedBox(height: 16),
-        FilledButton.icon(
-          onPressed: _selectedItemId == null || _faceImageBytes == null
-              ? null
-              : _generatePreview,
-          icon: const Icon(Icons.auto_awesome_rounded),
-          label: const Text('Generate Demo Preview'),
-        ),
-        const SizedBox(height: 16),
-        if (_showGeneratedDemo) _buildResultCard(selected),
-      ],
+          const SizedBox(height: 6),
+          Text(
+            'This flow automatically uses the face source saved on your Profile page. Choose one clothing card and describe the scene to generate a preview.',
+            style: TextStyle(fontSize: 13, height: 1.5, color: _textSecondary),
+          ),
+          const SizedBox(height: 16),
+          _buildFaceCard(),
+          const SizedBox(height: 16),
+          _buildSceneField(),
+          const SizedBox(height: 16),
+          _buildCatalog(selected),
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            onPressed: _selectedItemId == null || _faceImageBytes == null
+                ? null
+                : _generatePreview,
+            icon: const Icon(Icons.auto_awesome_rounded),
+            label: const Text('Generate Demo Preview'),
+          ),
+          const SizedBox(height: 16),
+          if (_showGeneratedDemo) _buildResultCard(selected),
+        ],
+      ),
     );
   }
 

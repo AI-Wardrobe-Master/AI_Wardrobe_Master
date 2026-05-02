@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -120,6 +122,19 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
     });
     final allItems = <WardrobeItemWithClothing>[];
 
+    void publishItems() {
+      allItems.sort(
+        (a, b) => (b.addedAt ?? DateTime(1970)).compareTo(
+          a.addedAt ?? DateTime(1970),
+        ),
+      );
+      if (!mounted) return;
+      setState(() {
+        _items = List<WardrobeItemWithClothing>.of(allItems);
+        _loadingItems = false;
+      });
+    }
+
     if (_currentWardrobe != null) {
       try {
         final list = await WardrobeService.fetchWardrobeItems(
@@ -130,6 +145,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
         _error = e.toString();
       }
     }
+    publishItems();
 
     // Regular wardrobes should only supplement remote data with true local-only
     // entries for the currently selected wardrobe.
@@ -139,12 +155,27 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
 
     if (includeOwnedLocals) {
       try {
-        final localItems = await LocalClothingService.listItems(
-          wardrobeId: _currentWardrobe?.id,
-          includeCachedRemote: false,
-        );
+        final localItems =
+            await LocalClothingService.listItems(
+              wardrobeId: _currentWardrobe?.id,
+              includeCachedRemote: false,
+            ).timeout(
+              const Duration(seconds: 2),
+              onTimeout: () => const <Map<String, dynamic>>[],
+            );
         for (final item in localItems) {
+          final source = item['source']?.toString();
+          final sourceType = item['sourceType']?.toString();
+          final syncStatus = item['syncStatus']?.toString();
           final itemId = item['id'] as String;
+          if (source == 'IMPORTED' ||
+              sourceType == 'CARD_PACK_IMPORT' ||
+              sourceType == 'REMOTE_CACHE' ||
+              sourceType == 'DEMO_3D_PREVIEW' ||
+              syncStatus == 'SYNCED' ||
+              !itemId.startsWith('local_')) {
+            continue;
+          }
           if (allItems.any((entry) => entry.clothingItemId == itemId)) continue;
 
           allItems.add(
@@ -175,7 +206,10 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
 
     if (includeImported) {
       try {
-        final importedItems = await ImportApiService.getImportedItems();
+        final importedItems = await ImportApiService.getImportedItems().timeout(
+          const Duration(seconds: 2),
+          onTimeout: () => const <Map<String, dynamic>>[],
+        );
         for (final item in importedItems) {
           final itemId = item['id'] as String;
           if (allItems.any((entry) => entry.clothingItemId == itemId)) continue;
@@ -206,16 +240,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
       } catch (_) {}
     }
 
-    allItems.sort(
-      (a, b) =>
-          (b.addedAt ?? DateTime(1970)).compareTo(a.addedAt ?? DateTime(1970)),
-    );
-
-    if (!mounted) return;
-    setState(() {
-      _items = allItems;
-      _loadingItems = false;
-    });
+    publishItems();
   }
 
   List<WardrobeItemWithClothing> get _filteredItems {
@@ -257,6 +282,38 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
 
   Future<void> _shareWardrobe(Wardrobe wardrobe) async {
     var latestWardrobe = wardrobe;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+          wardrobe.isPublic
+              ? 'Wardrobe already shared'
+              : 'Publish wardrobe to Discover?',
+        ),
+        content: Text(
+          wardrobe.isPublic
+              ? '"${wardrobe.name}" is already public. Its WID can be copied again for testing or sharing.'
+              : 'This will make "${wardrobe.name}" visible in Discover. Other users can find it by WID (${wardrobe.wid}), name, publisher, or clothing tags. The original clothing cards stay in your wardrobe.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            icon: Icon(
+              wardrobe.isPublic ? Icons.copy_rounded : Icons.public_rounded,
+            ),
+            label: Text(wardrobe.isPublic ? 'Copy WID' : 'Publish'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
+
     if (!wardrobe.isPublic) {
       latestWardrobe = await WardrobeService.updateWardrobe(
         wardrobe.id,
@@ -270,7 +327,13 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
     await Clipboard.setData(ClipboardData(text: shareText));
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Share code copied: ${latestWardrobe.wid}')),
+      SnackBar(
+        content: Text(
+          latestWardrobe.isPublic
+              ? 'Published to Discover. WID copied: ${latestWardrobe.wid}'
+              : 'Share code copied: ${latestWardrobe.wid}',
+        ),
+      ),
     );
   }
 
@@ -550,40 +613,59 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                   }
                   final picked = await showModalBottomSheet<Wardrobe>(
                     context: context,
-                    builder: (ctx) => SafeArea(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Padding(
-                            padding: const EdgeInsets.all(16),
-                            child: Text(
-                              s.wardrobeTitle,
-                              style: Theme.of(ctx).textTheme.titleMedium,
-                            ),
+                    isScrollControlled: true,
+                    builder: (ctx) {
+                      final height = MediaQuery.sizeOf(ctx).height;
+                      return SafeArea(
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(maxHeight: height * 0.72),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.all(16),
+                                child: Text(
+                                  s.wardrobeTitle,
+                                  style: Theme.of(ctx).textTheme.titleMedium,
+                                ),
+                              ),
+                              Flexible(
+                                child: ListView.builder(
+                                  shrinkWrap: true,
+                                  itemCount: _wardrobes.length,
+                                  itemBuilder: (context, index) {
+                                    final w = _wardrobes[index];
+                                    return ListTile(
+                                      title: Text(
+                                        w.name,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      subtitle: w.isVirtual
+                                          ? Text(s.virtualWardrobeLabel)
+                                          : null,
+                                      trailing: _currentWardrobe?.id == w.id
+                                          ? Icon(Icons.check, color: _accent)
+                                          : null,
+                                      onTap: () => Navigator.of(ctx).pop(w),
+                                    );
+                                  },
+                                ),
+                              ),
+                              const Divider(height: 1),
+                              ListTile(
+                                leading: const Icon(Icons.settings),
+                                title: Text(s.manageWardrobes),
+                                onTap: () {
+                                  Navigator.of(ctx).pop();
+                                  _openManageWardrobes();
+                                },
+                              ),
+                            ],
                           ),
-                          ..._wardrobes.map(
-                            (w) => ListTile(
-                              title: Text(w.name),
-                              subtitle: w.isVirtual
-                                  ? Text(s.virtualWardrobeLabel)
-                                  : null,
-                              trailing: _currentWardrobe?.id == w.id
-                                  ? Icon(Icons.check, color: _accent)
-                                  : null,
-                              onTap: () => Navigator.of(ctx).pop(w),
-                            ),
-                          ),
-                          ListTile(
-                            leading: const Icon(Icons.settings),
-                            title: Text(s.manageWardrobes),
-                            onTap: () {
-                              Navigator.of(ctx).pop();
-                              _openManageWardrobes();
-                            },
-                          ),
-                        ],
-                      ),
-                    ),
+                        ),
+                      );
+                    },
                   );
                   if (picked != null && picked.id != _currentWardrobe?.id) {
                     setState(() {

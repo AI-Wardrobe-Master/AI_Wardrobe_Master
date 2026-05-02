@@ -52,14 +52,11 @@ class FaceProfileService {
   static Future<void> saveCustom(Uint8List pngBytes) async {
     final prefs = await SharedPreferences.getInstance();
     final suffix = await _scopeSuffix();
-    await prefs.setString(
-      '$_kindKeyPrefix$suffix',
-      FaceProfileKind.custom.name,
-    );
-    await prefs.setString(
-      '$_customImageKeyPrefix$suffix',
-      base64Encode(pngBytes),
-    );
+    final encoded = base64Encode(pngBytes);
+    await Future.wait([
+      prefs.setString('$_kindKeyPrefix$suffix', FaceProfileKind.custom.name),
+      prefs.setString('$_customImageKeyPrefix$suffix', encoded),
+    ]);
   }
 
   static Future<void> saveVirtual(FaceProfileKind kind) async {
@@ -69,7 +66,10 @@ class FaceProfileService {
     }
     final prefs = await SharedPreferences.getInstance();
     final suffix = await _scopeSuffix();
-    await prefs.setString('$_kindKeyPrefix$suffix', kind.name);
+    await Future.wait([
+      prefs.setString('$_kindKeyPrefix$suffix', kind.name),
+      prefs.remove('$_customImageKeyPrefix$suffix'),
+    ]);
   }
 
   static Future<void> clear() async {

@@ -30,6 +30,7 @@ class LocalClothingService {
     await _cleanupLegacyResidue();
     await _cleanupOversizedWebImageCache();
     await _cleanupDemoPreviewItems();
+    await _cleanupPresentationResidueItems();
     await _cleanupForeignUserItems();
     await _migrateLegacyItems();
   }
@@ -54,6 +55,8 @@ class LocalClothingService {
     String previewSvgState = 'PLACEHOLDER',
     bool previewSvgAvailable = false,
     String? previewSvg,
+    Map<dynamic, dynamic> angleViews = const <dynamic, dynamic>{},
+    String? model3dUrl,
   }) async {
     await ensureReady();
     final prefs = await SharedPreferences.getInstance();
@@ -98,6 +101,12 @@ class LocalClothingService {
       'previewSvgAvailable': previewSvgAvailable,
       'previewSvgStoredLocally': previewSvg != null,
       'previewSvg': previewSvg,
+      'model3dUrl': model3dUrl,
+      'angleViews': Map<String, dynamic>.fromEntries(
+        angleViews.entries.map(
+          (entry) => MapEntry(entry.key.toString(), entry.value),
+        ),
+      ),
       'wardrobeIds': _normalizeStringList(wardrobeIds),
       ...imageCache,
       'createdAt': now.toIso8601String(),
@@ -124,6 +133,9 @@ class LocalClothingService {
     }
     final images = Map<String, dynamic>.from(
       item['images'] as Map<String, dynamic>? ?? const <String, dynamic>{},
+    );
+    final angleViews = Map<String, dynamic>.from(
+      images['angleViews'] as Map? ?? const <String, dynamic>{},
     );
     final autoTags = _normalizeStructuredTags(item['predictedTags']);
     final manualTags = _normalizeStringList(item['customTags']);
@@ -208,6 +220,13 @@ class LocalClothingService {
           existing?['previewSvgStoredLocally'] == true,
       'previewSvg':
           item['previewSvg'] as String? ?? existing?['previewSvg'] as String?,
+      'model3dUrl':
+          item['model3dUrl'] as String? ?? existing?['model3dUrl'] as String?,
+      'angleViews': angleViews.isNotEmpty
+          ? angleViews
+          : Map<String, dynamic>.from(
+              existing?['angleViews'] as Map? ?? const <String, dynamic>{},
+            ),
       'wardrobeIds': mergedWardrobeIds,
       if (kIsWeb) ...{
         'originalFrontUrl': originalFrontPath,
@@ -431,6 +450,9 @@ class LocalClothingService {
         images['originalBackUrl'] as String?;
     final mergedTags = _normalizeStructuredTags(sourceItem['finalTags']);
     final previewSvg = sourceItem['previewSvg'] as String?;
+    final angleViews = Map<dynamic, dynamic>.from(
+      images['angleViews'] as Map? ?? const <dynamic, dynamic>{},
+    );
 
     return saveItem(
       frontImageBytes: await _loadBytes(frontSource),
@@ -457,6 +479,8 @@ class LocalClothingService {
           sourceItem['previewSvgState'] as String? ?? 'PLACEHOLDER',
       previewSvgAvailable: sourceItem['previewSvgAvailable'] as bool? ?? false,
       previewSvg: previewSvg,
+      angleViews: angleViews,
+      model3dUrl: sourceItem['model3dUrl'] as String?,
     );
   }
 
@@ -629,6 +653,71 @@ class LocalClothingService {
     await prefs.remove(_demoItemKey);
   }
 
+  static Future<void> _cleanupPresentationResidueItems() async {
+    final prefs = await SharedPreferences.getInstance();
+    final ids = prefs.getStringList(_idsKey) ?? <String>[];
+    final keptIds = <String>[];
+
+    for (final itemId in ids) {
+      final key = '$_recordPrefix$itemId';
+      final raw = prefs.getString(key);
+      if (raw == null || raw.isEmpty) {
+        continue;
+      }
+
+      try {
+        final record = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+        if (record['localOnly'] == true &&
+            _containsPresentationResidue(record)) {
+          await prefs.remove(key);
+          continue;
+        }
+      } catch (_) {
+        await prefs.remove(key);
+        continue;
+      }
+
+      keptIds.add(itemId);
+    }
+
+    if (keptIds.length != ids.length) {
+      await prefs.setStringList(_idsKey, keptIds);
+    }
+  }
+
+  static bool _containsPresentationResidue(Map<String, dynamic> record) {
+    final buffer = StringBuffer()
+      ..write(record['name'])
+      ..write(' ')
+      ..write(record['description'])
+      ..write(' ')
+      ..write(record['category'])
+      ..write(' ')
+      ..write(record['material'])
+      ..write(' ')
+      ..write(record['style']);
+    for (final collectionName in ['manualTags', 'mergedTags', 'autoTags']) {
+      final raw = record[collectionName];
+      if (raw is Iterable) {
+        for (final entry in raw) {
+          if (entry is Map) {
+            buffer
+              ..write(' ')
+              ..write(entry['value']);
+          } else {
+            buffer
+              ..write(' ')
+              ..write(entry);
+          }
+        }
+      }
+    }
+    final text = buffer.toString().toLowerCase();
+    return text.contains('demo') ||
+        text.contains('a.zip') ||
+        text.contains('8-view');
+  }
+
   static Future<void> _cleanupForeignUserItems() async {
     final currentUserId = ApiSession.currentUserId;
     if (currentUserId == null || currentUserId.isEmpty) {
@@ -718,6 +807,7 @@ class LocalClothingService {
       'previewSvg': record['previewSvg'] as String? ?? emptyPreviewSvg,
       'previewSvgAvailable': record['previewSvgAvailable'] ?? false,
       'previewSvgStoredLocally': record['previewSvgStoredLocally'] ?? false,
+      'model3dUrl': record['model3dUrl'],
       'imageUrl':
           record['processedFrontUrl'] as String? ??
           record['originalFrontUrl'] as String? ??
@@ -748,6 +838,10 @@ class LocalClothingService {
             record['processedBackUrl'] as String? ??
             record['processedBackDataUri'] as String? ??
             _filePathToDataUri(record['processedBackPath'] as String?),
+        'angleViews': Map<String, dynamic>.from(
+          record['angleViews'] as Map? ?? const <String, dynamic>{},
+        ),
+        if (record['model3dUrl'] != null) 'model3dUrl': record['model3dUrl'],
       },
     };
   }

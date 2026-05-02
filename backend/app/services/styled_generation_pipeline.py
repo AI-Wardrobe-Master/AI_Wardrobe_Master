@@ -44,6 +44,7 @@ from app.services.blob_storage import get_blob_storage
 logger = logging.getLogger(__name__)
 
 LEASE_DURATION = timedelta(minutes=15)
+MAX_POSTGRES_INTEGER = 2_147_483_647
 
 _SLOT_ORDER_MAP = {"HAT": 1, "TOP": 2, "PANTS": 3, "SHOES": 4}
 
@@ -178,7 +179,7 @@ async def run_styled_generation_task(generation_id: UUID) -> bool:
             max_size=settings.SELFIE_MAX_UPLOAD_SIZE_BYTES * 4,
         )
         gen.result_image_blob_hash = result_blob.blob_hash
-        gen.seed = seed_used
+        gen.seed = int(seed_used) % MAX_POSTGRES_INTEGER
         gen.status = "SUCCEEDED"
         gen.progress = 100
         now = datetime.now(timezone.utc)

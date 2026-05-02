@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/import_history.dart';
@@ -24,6 +25,15 @@ class ImportApiService {
         data: {'card_pack_id': cardPackId},
       );
       return resp.data as Map<String, dynamic>;
+    } on DioException catch (e) {
+      final statusCode = e.response?.statusCode;
+      if (statusCode != null && statusCode < 500) {
+        rethrow;
+      }
+      // The current backend does not fully cover module 4 yet, so keep the
+      // import flow testable by persisting a local import record.
+      final importedRecord = await _importLocally(cardPackId);
+      return {'message': 'Imported locally', 'data': importedRecord};
     } catch (_) {
       // The current backend does not fully cover module 4 yet, so keep the
       // import flow testable by persisting a local import record.

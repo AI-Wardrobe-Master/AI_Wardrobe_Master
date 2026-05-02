@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:model_viewer_plus/model_viewer_plus.dart';
 
 import '../../models/wardrobe.dart';
+import '../../services/api_config.dart';
 import '../../services/clothing_api_service.dart';
 import '../../services/local_clothing_service.dart';
 import '../../theme/app_theme.dart';
@@ -29,6 +31,7 @@ class _ClothingDetailScreenState extends State<ClothingDetailScreen> {
   Map<String, dynamic>? _item;
   bool _loading = true;
   bool _deleting = false;
+  String? _loadError;
   int _selectedSection = 0;
   int _selectedAngleIndex = 0;
 
@@ -38,6 +41,46 @@ class _ClothingDetailScreenState extends State<ClothingDetailScreen> {
     'Back',
     'Right',
   ];
+
+  List<MapEntry<int, String>> get _angleViewEntries {
+    final images = _item?['images'];
+    if (images is! Map) {
+      return const <MapEntry<int, String>>[];
+    }
+    final raw = images['angleViews'];
+    if (raw is! Map) {
+      return const <MapEntry<int, String>>[];
+    }
+    final entries = <MapEntry<int, String>>[];
+    for (final entry in raw.entries) {
+      final angle = int.tryParse(entry.key.toString());
+      final url = entry.value?.toString();
+      if (angle != null && url != null && url.isNotEmpty) {
+        entries.add(MapEntry(angle, url));
+      }
+    }
+    entries.sort((left, right) => left.key.compareTo(right.key));
+    return entries;
+  }
+
+  bool get _hasAngleViews => _angleViewEntries.isNotEmpty;
+
+  String? get _model3dUrl {
+    final direct = _item?['model3dUrl']?.toString();
+    if (direct != null && direct.isNotEmpty) {
+      return direct;
+    }
+    final images = _item?['images'];
+    if (images is Map) {
+      final nested = images['model3dUrl']?.toString();
+      if (nested != null && nested.isNotEmpty) {
+        return nested;
+      }
+    }
+    return null;
+  }
+
+  bool get _has3DAssets => _hasAngleViews || _model3dUrl != null;
 
   bool get _isDark => Theme.of(context).brightness == Brightness.dark;
   Color get _textPrimary =>
@@ -64,12 +107,16 @@ class _ClothingDetailScreenState extends State<ClothingDetailScreen> {
       setState(() {
         _item = Map<String, dynamic>.from(data);
         _loading = false;
+        _loadError = null;
       });
-    } catch (_) {
+    } catch (error) {
       if (!mounted) {
         return;
       }
-      setState(() => _loading = false);
+      setState(() {
+        _loading = false;
+        _loadError = 'This clothing card is no longer available.';
+      });
     }
   }
 
@@ -90,7 +137,7 @@ class _ClothingDetailScreenState extends State<ClothingDetailScreen> {
         in _item?['finalTags'] as List<dynamic>? ?? const <dynamic>[]) {
       if (raw is Map) {
         final value = raw['value']?.toString().trim();
-        if (value != null && value.isNotEmpty) {
+        if (value != null && _isPresentationTag(value)) {
           tags.add(value);
         }
       }
@@ -98,11 +145,32 @@ class _ClothingDetailScreenState extends State<ClothingDetailScreen> {
     for (final raw
         in _item?['customTags'] as List<dynamic>? ?? const <dynamic>[]) {
       final value = raw.toString().trim();
-      if (value.isNotEmpty) {
+      if (_isPresentationTag(value)) {
         tags.add(value);
       }
     }
-    return tags.toList();
+    return tags.where(_isPresentationTag).take(8).toList();
+  }
+
+  bool _isPresentationTag(String value) {
+    final normalized = value.trim().toLowerCase();
+    if (normalized.isEmpty) {
+      return false;
+    }
+    const hidden = {
+      '3d demo',
+      '8-view',
+      'a.zip demo',
+      'demo',
+      'pipeline',
+      'source',
+    };
+    if (hidden.contains(normalized)) {
+      return false;
+    }
+    return !normalized.contains('demo') &&
+        !normalized.contains('a.zip') &&
+        !normalized.startsWith('pack:');
   }
 
   String get _previewSvg =>
@@ -141,6 +209,8 @@ class _ClothingDetailScreenState extends State<ClothingDetailScreen> {
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
+          : _loadError != null
+          ? _buildLoadError()
           : SafeArea(
               child: Column(
                 children: [
@@ -174,6 +244,47 @@ class _ClothingDetailScreenState extends State<ClothingDetailScreen> {
                 ],
               ),
             ),
+    );
+  }
+
+  Widget _buildLoadError() {
+    return SafeArea(
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.error_outline_rounded,
+                size: 42,
+                color: _textSecondary,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                _loadError!,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  color: _textPrimary,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Go back to refresh the wardrobe list.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13, color: _textSecondary),
+              ),
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Go Back'),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -237,8 +348,19 @@ class _ClothingDetailScreenState extends State<ClothingDetailScreen> {
           _DetailRow(label: 'Preview State', value: _previewState),
           _DetailRow(
             label: '3D Ready',
-            value: _previewAvailable ? 'Yes' : 'Placeholder only',
+            value: _has3DAssets
+                ? 'Generated assets available'
+                : _previewAvailable
+                ? 'SVG preview available'
+                : 'Placeholder only',
           ),
+          if (_model3dUrl != null)
+            _DetailRow(label: '3D Model', value: 'GLB available'),
+          if (_hasAngleViews)
+            _DetailRow(
+              label: 'Angle Views',
+              value: '${_angleViewEntries.length} images',
+            ),
           const SizedBox(height: 12),
           Text(
             'Tags',
@@ -299,7 +421,7 @@ class _ClothingDetailScreenState extends State<ClothingDetailScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '3D Preview Browser',
+            '3D Model Viewer',
             style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.w800,
@@ -308,9 +430,11 @@ class _ClothingDetailScreenState extends State<ClothingDetailScreen> {
           ),
           const SizedBox(height: 6),
           Text(
-            _previewAvailable
-                ? 'This item is using a blank SVG viewer placeholder so we can validate the browsing flow before the real 3D pipeline is deployed.'
-                : 'The full 3D pipeline is not deployed yet, but the browsing interface is already wired and falls back to a blank SVG canvas.',
+            _model3dUrl != null
+                ? 'Drag to rotate the garment model and pinch to zoom.'
+                : _hasAngleViews
+                ? 'A model file is not available yet; showing rendered reference views instead.'
+                : 'The model is not available for this clothing item yet.',
             style: TextStyle(fontSize: 13, color: _textSecondary, height: 1.5),
           ),
           const SizedBox(height: 16),
@@ -326,74 +450,150 @@ class _ClothingDetailScreenState extends State<ClothingDetailScreen> {
               children: [
                 AspectRatio(
                   aspectRatio: 1,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: const Color(0xFFE5E7EB)),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(20),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: const Color(0xFFE5E7EB)),
+                      ),
+                      child: _buildPreviewCanvas(),
                     ),
-                    child: SvgPicture.string(_previewSvg, fit: BoxFit.contain),
                   ),
                 ),
-                const SizedBox(height: 14),
-                Row(
-                  children: [
-                    _AngleButton(
-                      icon: Icons.rotate_left_rounded,
-                      label: 'Prev',
-                      onTap: () {
-                        setState(() {
-                          _selectedAngleIndex =
-                              (_selectedAngleIndex - 1 + _angles.length) %
-                              _angles.length;
-                        });
-                      },
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        _angles[_selectedAngleIndex],
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                          color: _textPrimary,
+                if (_model3dUrl == null && _hasAngleViews) ...[
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      _AngleButton(
+                        icon: Icons.rotate_left_rounded,
+                        label: 'Prev',
+                        onTap: () {
+                          final count = _previewAngleCount;
+                          setState(() {
+                            _selectedAngleIndex =
+                                (_selectedAngleIndex - 1 + count) % count;
+                          });
+                        },
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          _selectedAngleLabel,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: _textPrimary,
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    _AngleButton(
-                      icon: Icons.rotate_right_rounded,
-                      label: 'Next',
-                      onTap: () {
-                        setState(() {
-                          _selectedAngleIndex =
-                              (_selectedAngleIndex + 1) % _angles.length;
-                        });
-                      },
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: List<Widget>.generate(_angles.length, (index) {
-                    final selected = index == _selectedAngleIndex;
-                    return ChoiceChip(
-                      label: Text(_angles[index]),
-                      selected: selected,
-                      onSelected: (_) =>
-                          setState(() => _selectedAngleIndex = index),
-                    );
-                  }),
-                ),
+                      const SizedBox(width: 12),
+                      _AngleButton(
+                        icon: Icons.rotate_right_rounded,
+                        label: 'Next',
+                        onTap: () {
+                          final count = _previewAngleCount;
+                          setState(() {
+                            _selectedAngleIndex =
+                                (_selectedAngleIndex + 1) % count;
+                          });
+                        },
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: List<Widget>.generate(_previewAngleCount, (
+                      index,
+                    ) {
+                      final selected = index == _selectedAngleIndex;
+                      return ChoiceChip(
+                        label: Text(_angleLabelAt(index)),
+                        selected: selected,
+                        onSelected: (_) =>
+                            setState(() => _selectedAngleIndex = index),
+                      );
+                    }),
+                  ),
+                ],
               ],
             ),
           ),
         ],
       ),
     );
+  }
+
+  int get _previewAngleCount =>
+      _hasAngleViews ? _angleViewEntries.length : _angles.length;
+
+  String get _selectedAngleLabel => _angleLabelAt(_selectedAngleIndex);
+
+  String _angleLabelAt(int index) {
+    if (_hasAngleViews) {
+      final entries = _angleViewEntries;
+      final safeIndex = index.clamp(0, entries.length - 1).toInt();
+      final angle = entries[safeIndex].key;
+      return _labelForAngle(angle);
+    }
+    final safeIndex = index.clamp(0, _angles.length - 1).toInt();
+    return _angles[safeIndex];
+  }
+
+  String _labelForAngle(int angle) {
+    return switch (angle) {
+      0 => 'Front',
+      45 => 'Front-left',
+      90 => 'Left',
+      135 => 'Back-left',
+      180 => 'Back',
+      225 => 'Back-right',
+      270 => 'Right',
+      315 => 'Front-right',
+      _ => '$angle deg',
+    };
+  }
+
+  Widget _buildPreviewCanvas() {
+    final modelUrl = _model3dUrl;
+    if (modelUrl != null) {
+      return ModelViewer(
+        src: resolveFileUrl(modelUrl),
+        alt: '3D garment model for $_title',
+        cameraControls: true,
+        autoRotate: true,
+        autoRotateDelay: 2500,
+        interactionPrompt: InteractionPrompt.auto,
+        loading: Loading.eager,
+        reveal: Reveal.auto,
+        backgroundColor: Colors.white,
+        ar: false,
+        disableTap: true,
+      );
+    }
+    if (_hasAngleViews) {
+      final entries = _angleViewEntries;
+      final safeIndex = _selectedAngleIndex
+          .clamp(0, entries.length - 1)
+          .toInt();
+      final imageUrl = entries[safeIndex].value;
+      return Padding(
+        padding: const EdgeInsets.all(12),
+        child: AppRemoteImage(
+          url: imageUrl,
+          fit: BoxFit.contain,
+          placeholder: Center(
+            child: CircularProgressIndicator(strokeWidth: 2, color: _accent),
+          ),
+          errorWidget: Icon(Icons.image_outlined, color: _textSecondary),
+        ),
+      );
+    }
+    return SvgPicture.string(_previewSvg, fit: BoxFit.contain);
   }
 
   Widget _buildImageCard() {

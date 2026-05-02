@@ -231,7 +231,7 @@ class _SharedWardrobeDetailScreenState
         final uri = Uri.parse(imageUrl);
         final data = uri.data;
         if (data != null) {
-          return Image.memory(data.contentAsBytes(), fit: BoxFit.cover);
+          return Image.memory(data.contentAsBytes(), fit: BoxFit.contain);
         }
       } catch (_) {}
       return _imageFallback(textSecondary);
@@ -239,7 +239,7 @@ class _SharedWardrobeDetailScreenState
     if (imageUrl.startsWith('data:image')) {
       try {
         final imageBytes = base64Decode(imageUrl.split(',')[1]);
-        return Image.memory(imageBytes, fit: BoxFit.cover);
+        return Image.memory(imageBytes, fit: BoxFit.contain);
       } catch (_) {
         return _imageFallback(textSecondary);
       }
@@ -247,7 +247,7 @@ class _SharedWardrobeDetailScreenState
     return CachedNetworkImage(
       imageUrl: resolveFileUrl(imageUrl),
       httpHeaders: ApiSession.authHeaders,
-      fit: BoxFit.cover,
+      fit: BoxFit.contain,
       errorWidget: (context, url, error) => _imageFallback(textSecondary),
       placeholder: (context, url) =>
           const Center(child: CircularProgressIndicator(strokeWidth: 2)),

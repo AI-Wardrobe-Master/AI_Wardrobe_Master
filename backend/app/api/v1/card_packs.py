@@ -299,16 +299,25 @@ def _to_card_pack_item_summary(
 
     clothing_item = pack_item.clothing_item
     cover_url = None
+    original_front_url = None
+    processed_front_url = None
+    angle_views: dict[int, str] = {}
+    model3d_url = None
     processing_status = "PENDING"
     if clothing_item is not None:
-        has_processed = any(
-            image.image_type == "PROCESSED_FRONT"
-            for image in clothing_item.images
-        )
-        if has_processed:
-            cover_url = f"/files/clothing-items/{clothing_item.id}/processed-front"
-        elif any(image.image_type == "ORIGINAL_FRONT" for image in clothing_item.images):
-            cover_url = f"/files/clothing-items/{clothing_item.id}/original-front"
+        for image in clothing_item.images:
+            match image.image_type:
+                case "ORIGINAL_FRONT":
+                    original_front_url = f"/files/clothing-items/{clothing_item.id}/original-front"
+                case "PROCESSED_FRONT":
+                    processed_front_url = f"/files/clothing-items/{clothing_item.id}/processed-front"
+                case "ANGLE_VIEW" if image.angle is not None:
+                    angle_views[image.angle] = (
+                        f"/files/clothing-items/{clothing_item.id}/angle-{image.angle}"
+                    )
+        cover_url = processed_front_url or original_front_url
+        if getattr(clothing_item, "model_3d", None) is not None:
+            model3d_url = f"/files/clothing-items/{clothing_item.id}/model"
         latest_task = get_latest_task(db, clothing_item.id)
         if latest_task is not None:
             processing_status = latest_task.status
@@ -323,7 +332,14 @@ def _to_card_pack_item_summary(
         catalogVisibility=clothing_item.catalog_visibility if clothing_item else "PACK_ONLY",
         processingStatus=processing_status,
         coverUrl=cover_url,
+        originalFrontUrl=original_front_url,
+        processedFrontUrl=processed_front_url,
+        model3dUrl=model3d_url,
+        angleViews=angle_views,
         finalTags=(clothing_item.final_tags or []) if clothing_item else [],
+        category=clothing_item.category if clothing_item else None,
+        material=clothing_item.material if clothing_item else None,
+        style=clothing_item.style if clothing_item else None,
         viewCount=(clothing_item.view_count or 0) if clothing_item else 0,
         createdAt=pack_item.created_at,
     )

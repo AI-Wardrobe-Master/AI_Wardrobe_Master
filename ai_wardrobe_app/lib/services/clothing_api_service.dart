@@ -115,7 +115,11 @@ class ClothingApiService {
       return data['data'] != null
           ? <String, dynamic>{...data, 'data': mergedPayload}
           : mergedPayload;
-    } on DioException {
+    } on DioException catch (error) {
+      if (error.response?.statusCode == 404) {
+        await LocalClothingService.deleteItem(itemId);
+        rethrow;
+      }
       final local = await LocalClothingService.getItem(itemId);
       if (local != null) {
         return local;
@@ -203,10 +207,7 @@ class ClothingApiService {
     final inner = data['data'] as Map<String, dynamic>;
     return Map.fromEntries(
       inner.entries.map(
-        (e) => MapEntry(
-          e.key,
-          (e.value as List).cast<String>(),
-        ),
+        (e) => MapEntry(e.key, (e.value as List).cast<String>()),
       ),
     );
   }
@@ -280,10 +281,10 @@ class ClothingApiService {
       }
 
       final merged = <String, Map<String, dynamic>>{};
-      for (final item in itemsWithImages) {
+      for (final item in localOnly) {
         merged[item['id'].toString()] = item;
       }
-      for (final item in localOnly) {
+      for (final item in itemsWithImages) {
         merged[item['id'].toString()] = item;
       }
       return merged.values.toList();

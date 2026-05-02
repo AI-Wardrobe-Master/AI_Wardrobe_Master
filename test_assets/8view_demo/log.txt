@@ -1,0 +1,15 @@
+[Timing Summary]
+  Load image:        0.03s
+  Background removal:3.25s
+  Load shape model:  23.99s
+  Shape generation:  10.19s
+  Texture (total):   60.04s
+    - Face reduction:17.98s
+    - Load tex model:17.22s
+    - Tex generation:23.36s
+  Rendering:         1.01s
+  --------------------------------
+  Total time:        99.76s
+
+[GPU Memory Summary]
+  Peak memory used:  14869.4MB (14.52GB)

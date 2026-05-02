@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_strings_provider.dart';
@@ -17,7 +19,9 @@ import 'creator/creator_profile_screen.dart';
 import 'shared_wardrobe_detail_screen.dart';
 
 class DiscoverScreen extends StatefulWidget {
-  const DiscoverScreen({super.key});
+  const DiscoverScreen({super.key, this.refreshSignal = 0});
+
+  final int refreshSignal;
 
   @override
   State<DiscoverScreen> createState() => _DiscoverScreenState();
@@ -27,12 +31,14 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late final TabController _tabController;
   final TextEditingController _searchController = TextEditingController();
+  Timer? _searchDebounce;
 
   List<Wardrobe> _wardrobes = [];
   List<CardPack> _cardPacks = [];
   List<Creator> _creators = [];
   bool _loadingWardrobes = false;
   bool _loadingCreators = false;
+  bool _openingWid = false;
   String? _errorWardrobes;
   String? _errorCreators;
   String _searchQuery = '';
@@ -48,14 +54,33 @@ class _DiscoverScreenState extends State<DiscoverScreen>
       }
     });
     _searchController.addListener(() {
-      setState(() => _searchQuery = _searchController.text.trim());
+      final nextQuery = _searchController.text.trim();
+      if (nextQuery == _searchQuery) {
+        return;
+      }
+      setState(() => _searchQuery = nextQuery);
+      _searchDebounce?.cancel();
+      _searchDebounce = Timer(const Duration(milliseconds: 250), () {
+        if (mounted) {
+          _loadData();
+        }
+      });
     });
     _loadData();
   }
 
   @override
+  void didUpdateWidget(covariant DiscoverScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.refreshSignal != widget.refreshSignal) {
+      _loadData();
+    }
+  }
+
+  @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _searchDebounce?.cancel();
     _tabController.dispose();
     _searchController.dispose();
     super.dispose();
@@ -126,6 +151,9 @@ class _DiscoverScreenState extends State<DiscoverScreen>
       status: 'PUBLISHED',
     );
     for (final pack in localPacks) {
+      if (pack.type == PackType.outfit) {
+        continue;
+      }
       final query = search?.trim().toLowerCase();
       final matchesQuery =
           query == null ||
@@ -178,8 +206,71 @@ class _DiscoverScreenState extends State<DiscoverScreen>
           wardrobe.wid.toLowerCase().contains(query) ||
           (wardrobe.ownerUid?.toLowerCase().contains(query) ?? false) ||
           (wardrobe.ownerUsername?.toLowerCase().contains(query) ?? false) ||
-          (wardrobe.description?.toLowerCase().contains(query) ?? false);
+          (wardrobe.description?.toLowerCase().contains(query) ?? false) ||
+          wardrobe.tags.any((tag) => tag.toLowerCase().contains(query));
     }).toList();
+  }
+
+  Future<void> _openWardrobeIdSearch() async {
+    final query = _searchController.text.trim();
+    if (query.isEmpty || _openingWid) {
+      return;
+    }
+    setState(() => _openingWid = true);
+    try {
+      final wardrobe = await _resolveWardrobeSearchTarget(query);
+      if (!mounted) {
+        return;
+      }
+      if (wardrobe == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('No shared wardrobe found for WID: $query')),
+        );
+        return;
+      }
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => SharedWardrobeDetailScreen(wardrobeWid: wardrobe.wid),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _openingWid = false);
+      }
+    }
+  }
+
+  Future<Wardrobe?> _resolveWardrobeSearchTarget(String rawQuery) async {
+    final query = rawQuery.trim();
+    final normalized = query.toLowerCase();
+    final exactMatch = _wardrobes.cast<Wardrobe?>().firstWhere(
+      (wardrobe) => wardrobe?.wid.toLowerCase() == normalized,
+      orElse: () => null,
+    );
+    if (exactMatch != null) {
+      return exactMatch;
+    }
+
+    final visibleMatches = _filteredWardrobes
+        .where((wardrobe) => wardrobe.wid.toLowerCase().contains(normalized))
+        .toList();
+    if (visibleMatches.length == 1) {
+      return visibleMatches.single;
+    }
+
+    final remote = await WardrobeService.fetchWardrobeByWid(
+      query,
+      cacheRemote: false,
+    );
+    if (remote != null) {
+      return remote;
+    }
+
+    if (visibleMatches.isNotEmpty) {
+      return visibleMatches.first;
+    }
+    return null;
   }
 
   List<Creator> get _filteredCreators {
@@ -228,13 +319,38 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                 TextField(
                   controller: _searchController,
                   decoration: InputDecoration(
-                    hintText: 'Search...',
+                    hintText:
+                        'Search by WID, tag, creator, or wardrobe name...',
                     hintStyle: TextStyle(color: textS),
                     prefixIcon: Icon(Icons.search, color: textS),
                     suffixIcon: _searchQuery.isNotEmpty
-                        ? IconButton(
-                            icon: Icon(Icons.clear, color: textS),
-                            onPressed: _searchController.clear,
+                        ? Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                tooltip: 'Open WID',
+                                icon: _openingWid
+                                    ? SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: textS,
+                                        ),
+                                      )
+                                    : Icon(
+                                        Icons.open_in_new_rounded,
+                                        color: textS,
+                                      ),
+                                onPressed: _openingWid
+                                    ? null
+                                    : _openWardrobeIdSearch,
+                              ),
+                              IconButton(
+                                icon: Icon(Icons.clear, color: textS),
+                                onPressed: _searchController.clear,
+                              ),
+                            ],
                           )
                         : null,
                     filled: true,
@@ -246,7 +362,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                       borderSide: BorderSide.none,
                     ),
                   ),
-                  onChanged: (_) => _loadData(),
+                  onSubmitted: (_) => _openWardrobeIdSearch(),
                 ),
                 const SizedBox(height: 12),
                 TabBar(
@@ -399,6 +515,29 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(fontSize: 12, color: textS),
                       ),
+                    if (wardrobe.tags.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: wardrobe.tags.take(5).map((tag) {
+                          return Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 3,
+                            ),
+                            decoration: BoxDecoration(
+                              color: textS.withValues(alpha: 0.10),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              tag,
+                              style: TextStyle(fontSize: 10, color: textP),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -495,7 +634,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                   )
                 : AppRemoteImage(
                     url: pack.coverImageUrl!,
-                    fit: BoxFit.cover,
+                    fit: BoxFit.contain,
                     placeholder: Container(color: textS.withValues(alpha: 0.1)),
                     errorWidget: Container(
                       color: textS.withValues(alpha: 0.1),

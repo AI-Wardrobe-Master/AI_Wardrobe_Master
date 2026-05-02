@@ -31,29 +31,23 @@ class WardrobeApp extends StatelessWidget {
       animation: Listenable.merge([themeController, localeController]),
       builder: (context, _) {
         final locale = localeController.locale;
-        return MaterialApp(
-          title: 'AI Wardrobe Master',
-          debugShowCheckedModeBanner: false,
-          theme: buildLightTheme(),
-          darkTheme: buildDarkTheme(),
-          themeMode: themeController.mode,
+        return AppStringsProvider(
           locale: locale,
-          supportedLocales: const [
-            Locale('en'),
-            Locale('zh'),
-          ],
-          localizationsDelegates: const [
-            GlobalMaterialLocalizations.delegate,
-            GlobalWidgetsLocalizations.delegate,
-            GlobalCupertinoLocalizations.delegate,
-          ],
-          builder: (context, child) {
-            return AppStringsProvider(
-              locale: locale,
-              child: child ?? const SizedBox.shrink(),
-            );
-          },
-          home: const SplashScreen(),
+          child: MaterialApp(
+            title: 'AI Wardrobe Master',
+            debugShowCheckedModeBanner: false,
+            theme: buildLightTheme(),
+            darkTheme: buildDarkTheme(),
+            themeMode: themeController.mode,
+            locale: locale,
+            supportedLocales: const [Locale('en'), Locale('zh')],
+            localizationsDelegates: const [
+              GlobalMaterialLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate,
+            ],
+            home: const SplashScreen(),
+          ),
         );
       },
     );

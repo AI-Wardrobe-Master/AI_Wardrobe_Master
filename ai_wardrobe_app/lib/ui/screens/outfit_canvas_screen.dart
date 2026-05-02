@@ -8,6 +8,7 @@ import '../../l10n/app_strings_provider.dart';
 import '../../models/wardrobe.dart';
 import '../../services/api_config.dart';
 import '../../services/wardrobe_service.dart';
+import '../../state/wardrobe_refresh_notifier.dart';
 import '../../theme/app_theme.dart';
 import 'scene_preview_demo_screen.dart';
 
@@ -73,7 +74,9 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
               fitNote: clothing.description?.isNotEmpty == true
                   ? clothing.description!
                   : 'From ${wardrobe.isMain ? 'Main Wardrobe' : wardrobe.name}',
-              material: wardrobe.name,
+              material: _displayMaterialFor(clothing),
+              category: _displayCategoryFor(clothing),
+              style: _displayStyleFor(clothing),
               icon: _iconForZone(zone),
               accent: zone.accent,
               imageUrl: clothing.imageUrl,
@@ -110,6 +113,49 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
         _loadingCatalog = false;
       });
     }
+  }
+
+  String _displayMaterialFor(ClothingItemBrief clothing) {
+    final material = clothing.material?.trim();
+    if (material != null && material.isNotEmpty) {
+      return material;
+    }
+    return _tagValueFor(clothing, const ['material', 'fabric']) ??
+        'Not specified';
+  }
+
+  String? _displayCategoryFor(ClothingItemBrief clothing) {
+    final category = clothing.category?.trim() ?? clothing.categoryTag?.trim();
+    if (category != null && category.isNotEmpty) {
+      return category;
+    }
+    return _tagValueFor(clothing, const ['category', 'type']);
+  }
+
+  String? _displayStyleFor(ClothingItemBrief clothing) {
+    final style = clothing.style?.trim();
+    if (style != null && style.isNotEmpty) {
+      return style;
+    }
+    return _tagValueFor(clothing, const ['style']);
+  }
+
+  String? _tagValueFor(ClothingItemBrief clothing, List<String> keys) {
+    final keySet = keys.map((key) => key.toLowerCase()).toSet();
+    for (final tag in clothing.finalTags) {
+      if (tag is! Map) {
+        continue;
+      }
+      final key = tag['key']?.toString().trim().toLowerCase();
+      final value = tag['value']?.toString().trim();
+      if (key != null &&
+          keySet.contains(key) &&
+          value != null &&
+          value.isNotEmpty) {
+        return value;
+      }
+    }
+    return null;
   }
 
   _BodyZone _zoneForClothing(ClothingItemBrief clothing) {
@@ -630,7 +676,7 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
                       ),
                       Text(
                         zone.layered
-                            ? 'Layer ${worn.layer} • ${worn.item.material}'
+                            ? 'Layer ${worn.layer} - ${worn.item.material}'
                             : worn.item.material,
                         style: TextStyle(fontSize: 11, color: _textSecondary),
                       ),
@@ -1332,7 +1378,7 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
                   borderRadius: BorderRadius.circular(999),
                 ),
                 child: Text(
-                  zone.layered ? 'Wearing • L$currentLayer' : 'Wearing',
+                  zone.layered ? 'Wearing - L$currentLayer' : 'Wearing',
                   style: TextStyle(
                     fontSize: 10,
                     fontWeight: FontWeight.w700,
@@ -1366,7 +1412,7 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
         if (item.tags.isNotEmpty) ...[
           const SizedBox(height: 8),
           Text(
-            item.tags.take(4).join(' • '),
+            item.tags.take(4).join(' - '),
             style: TextStyle(fontSize: 11, color: _textSecondary),
           ),
         ],
@@ -1613,22 +1659,19 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
                               ),
                             ),
                             const SizedBox(height: 16),
-                            Text(
-                              'Material',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                                color: _textPrimary,
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              item.material,
-                              style: TextStyle(
-                                fontSize: 14,
-                                height: 1.5,
-                                color: _textSecondary,
-                              ),
+                            if (item.category?.isNotEmpty == true) ...[
+                              _buildGarmentInfoRow('Category', item.category!),
+                              const SizedBox(height: 16),
+                            ],
+                            _buildGarmentInfoRow('Material', item.material),
+                            const SizedBox(height: 16),
+                            if (item.style?.isNotEmpty == true) ...[
+                              _buildGarmentInfoRow('Style', item.style!),
+                              const SizedBox(height: 16),
+                            ],
+                            _buildGarmentInfoRow(
+                              'Source wardrobe',
+                              item.wardrobeName,
                             ),
                             const SizedBox(height: 16),
                             Container(
@@ -1641,7 +1684,7 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
                                 borderRadius: BorderRadius.circular(20),
                               ),
                               child: Text(
-                                'Next step: connect this sheet to the dedicated garment detail page once the detail module is ready.',
+                                'This sheet summarizes the garment metadata used by the visualization canvas.',
                                 style: TextStyle(
                                   fontSize: 12,
                                   height: 1.5,
@@ -1673,6 +1716,27 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildGarmentInfoRow(String label, String value) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+            color: _textPrimary,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          value,
+          style: TextStyle(fontSize: 14, height: 1.5, color: _textSecondary),
+        ),
+      ],
     );
   }
 
@@ -1840,13 +1904,15 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
               }
               setDialogState(() => isSaving = true);
               try {
-                final savedPath = await _savePreview();
+                await _savePreview();
                 if (!mounted) {
                   return;
                 }
-                ScaffoldMessenger.of(
-                  this.context,
-                ).showSnackBar(SnackBar(content: Text(savedPath)));
+                ScaffoldMessenger.of(this.context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Saved to Gallery and Wardrobe'),
+                  ),
+                );
               } on MissingPluginException {
                 if (!mounted) {
                   return;
@@ -2055,23 +2121,30 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
       );
     }
 
-    final wardrobe = await WardrobeService.exportSelectionToWardrobe(
+    final now = DateTime.now();
+    final wardrobeName =
+        'Styled Look ${now.month.toString().padLeft(2, '0')}/${now.day.toString().padLeft(2, '0')} ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+    final fileName = 'ai_wardrobe_preview_${now.millisecondsSinceEpoch}.jpg';
+    final previewBytesFuture = rootBundle
+        .load(_previewImagePath)
+        .then((byteData) => byteData.buffer.asUint8List());
+    final wardrobeFuture = WardrobeService.exportSelectionToWardrobe(
       clothingItemIds: selectionIds,
-      name: 'Outfit Export',
+      name: wardrobeName,
     );
-
-    final byteData = await rootBundle.load(_previewImagePath);
-    final fileName =
-        'ai_wardrobe_preview_${DateTime.now().millisecondsSinceEpoch}.jpg';
-    final savedPath = await _downloadChannel.invokeMethod<String>(
-      'saveImageToGallery',
-      <String, dynamic>{
-        'fileName': fileName,
-        'bytes': byteData.buffer.asUint8List(),
-      },
+    final savedPathFuture = previewBytesFuture.then(
+      (previewBytes) => _downloadChannel.invokeMethod<String>(
+        'saveImageToGallery',
+        <String, dynamic>{'fileName': fileName, 'bytes': previewBytes},
+      ),
     );
-    final galleryPath = savedPath ?? fileName;
-    return 'Created ${wardrobe.name} (${wardrobe.wid}) and saved image to $galleryPath';
+    final results = await Future.wait<Object?>([
+      wardrobeFuture,
+      savedPathFuture,
+    ]);
+    final wardrobe = results[0] as Wardrobe;
+    WardrobeRefreshNotifier.requestRefresh();
+    return wardrobe.wid;
   }
 
   List<_WornGarment> _sortedSelections(_BodyZone zone) {
@@ -2189,6 +2262,8 @@ class _GarmentItem {
     required this.title,
     required this.fitNote,
     required this.material,
+    required this.category,
+    required this.style,
     required this.icon,
     required this.accent,
     required this.imageUrl,
@@ -2202,6 +2277,8 @@ class _GarmentItem {
   final String title;
   final String fitNote;
   final String material;
+  final String? category;
+  final String? style;
   final IconData icon;
   final Color accent;
   final String? imageUrl;

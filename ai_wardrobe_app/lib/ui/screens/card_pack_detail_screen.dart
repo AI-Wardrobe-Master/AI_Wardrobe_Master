@@ -3,11 +3,14 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import '../../models/card_pack.dart';
+import '../../models/wardrobe.dart';
 import '../../services/api_config.dart';
 import '../../services/card_pack_api_service.dart';
 import '../../services/import_api_service.dart';
 import '../../services/local_card_pack_service.dart';
 import '../../theme/app_theme.dart';
+import '../widgets/app_remote_image.dart';
+import 'shared_clothing_detail_screen.dart';
 
 class CardPackDetailScreen extends StatefulWidget {
   final String packId;
@@ -23,6 +26,9 @@ class _CardPackDetailScreenState extends State<CardPackDetailScreen> {
   bool _loading = true;
   String? _error;
   bool _importing = false;
+
+  List<Map<String, dynamic>> get _packItems =>
+      _pack?.items ?? const <Map<String, dynamic>>[];
 
   @override
   void initState() {
@@ -125,9 +131,20 @@ class _CardPackDetailScreenState extends State<CardPackDetailScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   if (_pack!.coverImageUrl != null)
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: _buildCover(textS),
+                    Container(
+                      width: double.infinity,
+                      height: 220,
+                      decoration: BoxDecoration(
+                        color: isDark ? AppColors.darkSurface : Colors.white,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: Theme.of(context).dividerColor,
+                        ),
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: _buildCover(textS),
+                      ),
                     ),
                   const SizedBox(height: 16),
                   Text(
@@ -181,6 +198,8 @@ class _CardPackDetailScreenState extends State<CardPackDetailScreen> {
                     ],
                   ],
                   const SizedBox(height: 24),
+                  _buildItemsSection(textP, textS, isDark),
+                  const SizedBox(height: 24),
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton(
@@ -208,6 +227,118 @@ class _CardPackDetailScreenState extends State<CardPackDetailScreen> {
     );
   }
 
+  Widget _buildItemsSection(Color textP, Color textS, bool isDark) {
+    if (_packItems.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: isDark ? AppColors.darkSurface : Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Theme.of(context).dividerColor),
+        ),
+        child: Text(
+          'No item details are available for this pack.',
+          style: TextStyle(fontSize: 13, color: textS),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Items',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w800,
+            color: textP,
+          ),
+        ),
+        const SizedBox(height: 12),
+        GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: _packItems.length,
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
+            mainAxisSpacing: 12,
+            crossAxisSpacing: 12,
+            childAspectRatio: 0.68,
+          ),
+          itemBuilder: (context, index) {
+            final item = _packItems[index];
+            final name = (item['name'] as String?)?.trim();
+            final coverUrl = item['coverUrl'] as String?;
+            final tags = _tagValues(item['finalTags']);
+            return InkWell(
+              borderRadius: BorderRadius.circular(16),
+              onTap: () => _openPackItem(item),
+              child: Container(
+                clipBehavior: Clip.antiAlias,
+                decoration: BoxDecoration(
+                  color: isDark ? AppColors.darkSurface : Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Theme.of(context).dividerColor),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(
+                        alpha: isDark ? 0.18 : 0.07,
+                      ),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.all(8),
+                        child: _buildItemImage(coverUrl, textS),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            name?.isNotEmpty == true
+                                ? name!
+                                : item['clothingItemId'].toString(),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 13,
+                              height: 1.2,
+                              fontWeight: FontWeight.w700,
+                              color: textP,
+                            ),
+                          ),
+                          if (tags.isNotEmpty) ...[
+                            const SizedBox(height: 6),
+                            Text(
+                              tags.take(2).join(' / '),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(fontSize: 11, color: textS),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
   Widget _buildCover(Color textS) {
     final coverImageUrl = _pack!.coverImageUrl!;
     if (coverImageUrl.startsWith('data:image')) {
@@ -216,8 +347,8 @@ class _CardPackDetailScreenState extends State<CardPackDetailScreen> {
         return Image.memory(
           imageBytes,
           width: double.infinity,
-          height: 200,
-          fit: BoxFit.cover,
+          height: double.infinity,
+          fit: BoxFit.contain,
           errorBuilder: (context, error, stackTrace) => _imageFallback(textS),
         );
       } catch (_) {
@@ -229,18 +360,94 @@ class _CardPackDetailScreenState extends State<CardPackDetailScreen> {
       resolveFileUrl(coverImageUrl),
       headers: ApiSession.authHeaders,
       width: double.infinity,
-      height: 200,
-      fit: BoxFit.cover,
+      height: double.infinity,
+      fit: BoxFit.contain,
       errorBuilder: (context, error, stackTrace) => _imageFallback(textS),
+    );
+  }
+
+  Widget _buildItemImage(String? imageUrl, Color textS) {
+    if (imageUrl == null || imageUrl.isEmpty) {
+      return _imageFallback(textS);
+    }
+    return AppRemoteImage(
+      url: imageUrl,
+      fit: BoxFit.contain,
+      placeholder: const Center(
+        child: CircularProgressIndicator(strokeWidth: 2),
+      ),
+      errorWidget: _imageFallback(textS),
     );
   }
 
   Widget _imageFallback(Color textS) {
     return Container(
       width: double.infinity,
-      height: 200,
       color: textS.withValues(alpha: 0.1),
       child: Icon(Icons.image_outlined, color: textS),
+    );
+  }
+
+  List<String> _tagValues(dynamic rawTags) {
+    final tags = <String>[];
+    for (final tag in rawTags as List<dynamic>? ?? const []) {
+      if (tag is Map) {
+        final value = tag['value'] ?? tag['key'];
+        if (value != null && value.toString().trim().isNotEmpty) {
+          tags.add(value.toString());
+        }
+      } else if (tag != null && tag.toString().trim().isNotEmpty) {
+        tags.add(tag.toString());
+      }
+    }
+    return tags;
+  }
+
+  void _openPackItem(Map<String, dynamic> item) {
+    final clothingItemId = item['clothingItemId']?.toString();
+    if (clothingItemId == null || clothingItemId.isEmpty || _pack == null) {
+      return;
+    }
+    final brief = ClothingItemBrief(
+      id: clothingItemId,
+      name: item['name'] as String?,
+      description: item['description'] as String?,
+      source: 'OWNED',
+      finalTags: item['finalTags'] as List<dynamic>? ?? const [],
+      imageUrl: item['coverUrl'] as String?,
+      images: {
+        if (item['processedFrontUrl'] != null)
+          'processedFrontUrl': item['processedFrontUrl'],
+        if (item['originalFrontUrl'] != null)
+          'originalFrontUrl': item['originalFrontUrl'],
+        if (item['coverUrl'] != null) 'imageUrl': item['coverUrl'],
+        if (item['angleViews'] != null) 'angleViews': item['angleViews'],
+        if (item['model3dUrl'] != null) 'model3dUrl': item['model3dUrl'],
+      },
+      category: item['category'] as String?,
+      material: item['material'] as String?,
+      style: item['style'] as String?,
+    );
+    final wardrobe = Wardrobe(
+      id: _pack!.wardrobeId ?? _pack!.id,
+      wid: _pack!.wardrobeWid ?? '',
+      userId: _pack!.creatorId,
+      ownerUid: _pack!.creatorUid,
+      ownerUsername: _pack!.creatorUsername,
+      name: _pack!.name,
+      kind: 'SUB',
+      type: 'VIRTUAL',
+      source: 'CARD_PACK',
+      description: _pack!.description,
+      coverImageUrl: _pack!.coverImageUrl,
+      isPublic: true,
+      itemCount: _pack!.itemCount,
+    );
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) =>
+            SharedClothingDetailScreen(item: brief, wardrobe: wardrobe),
+      ),
     );
   }
 }

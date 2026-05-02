@@ -1,0 +1,25 @@
+{
+  "time": {
+    "load_image": 0.030763864517211914,
+    "rembg": 3.2501468658447266,
+    "load_shapegen_model": 23.991297721862793,
+    "shape_generation": 10.189928770065308,
+    "face_reduction": 17.97867178916931,
+    "load_texgen_model": 17.223490476608276,
+    "texture_generation": 23.36113739013672,
+    "texture_total": 60.0386438369751,
+    "rendering": 1.0096192359924316,
+    "total": 99.75716066360474
+  },
+  "peak_gpu_memory_mb": 14869.400390625,
+  "mesh": {
+    "vertices": 36805,
+    "faces": 40000
+  },
+  "params": {
+    "steps": 30,
+    "guidance_scale": 5.0,
+    "seed": 1234,
+    "octree_resolution": 256
+  }
+}
