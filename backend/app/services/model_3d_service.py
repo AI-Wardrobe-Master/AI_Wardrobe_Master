@@ -3,7 +3,6 @@ import logging
 from typing import Optional
 
 from PIL import Image
-import torch
 
 from app.core.config import settings
 
@@ -57,6 +56,7 @@ async def generate_3d_model(
     _load_pipelines()
 
     front = Image.open(io.BytesIO(front_image_bytes)).convert("RGBA")
+    import torch
 
     with torch.inference_mode():
         mesh = _shape_pipeline(

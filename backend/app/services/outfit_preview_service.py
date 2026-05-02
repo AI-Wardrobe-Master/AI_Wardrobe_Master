@@ -33,6 +33,7 @@ DASHSCOPE_SIZE = "1024*1024"
 DASHSCOPE_PROVIDER = "DashScope"
 MAX_PROVIDER_ATTEMPTS = 3
 RETRYABLE_STATUSES = {500, 502, 503, 504}
+DASHSCOPE_MIN_IMAGE_DIMENSION = 240
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,12 @@ async def _blob_to_base64_data_uri(blob_storage, blob_hash: str) -> str:
     with PILImage.open(io.BytesIO(data)) as img:
         if img.mode in ("RGBA", "P"):
             img = img.convert("RGB")
+        min_dimension = min(img.size)
+        if min_dimension < DASHSCOPE_MIN_IMAGE_DIMENSION:
+            scale = DASHSCOPE_MIN_IMAGE_DIMENSION / min_dimension
+            width = round(img.width * scale)
+            height = round(img.height * scale)
+            img = img.resize((width, height), PILImage.Resampling.LANCZOS)
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=95)
     b64 = base64.b64encode(buf.getvalue()).decode("ascii")
