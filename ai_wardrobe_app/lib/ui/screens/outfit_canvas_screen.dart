@@ -1,20 +1,23 @@
+import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../../l10n/app_strings_provider.dart';
 import '../../models/wardrobe.dart';
 import '../../services/api_config.dart';
+import '../../services/outfit_preview_api_service.dart';
 import '../../services/wardrobe_service.dart';
 import '../../state/wardrobe_refresh_notifier.dart';
 import '../../theme/app_theme.dart';
 
 const _referenceImagePath =
     'assets/visualization/source/full_body_reference.jpg';
-const _previewImagePath =
-    'assets/visualization/preview/generated_outfit_preview.jpg';
 const _downloadChannel = MethodChannel('ai_wardrobe_app/downloads');
 
 class OutfitCanvasScreen extends StatefulWidget {
@@ -1871,6 +1874,75 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
   }
 
   Future<void> _showPreviewDialog() async {
+    _GeneratedOutfitPreview preview;
+    var loadingDialogOpen = true;
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => PopScope(
+          canPop: false,
+          child: Dialog(
+            backgroundColor: Colors.transparent,
+            child: Container(
+              padding: const EdgeInsets.all(22),
+              decoration: BoxDecoration(
+                color: _isDark ? AppColors.darkSurface : Colors.white,
+                borderRadius: BorderRadius.circular(24),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: _accent,
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Flexible(
+                    child: Text(
+                      'Generating preview with API...',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: _textPrimary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ).whenComplete(() => loadingDialogOpen = false),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+
+    try {
+      preview = await _generateOutfitPreview();
+    } catch (error) {
+      if (mounted && loadingDialogOpen) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Preview generation failed: $error')),
+      );
+      return;
+    }
+
+    if (!mounted) {
+      return;
+    }
+    if (loadingDialogOpen) {
+      Navigator.of(context, rootNavigator: true).pop();
+    }
+
     await showDialog<void>(
       context: context,
       barrierDismissible: true,
@@ -1886,7 +1958,7 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
               }
               setDialogState(() => isSaving = true);
               try {
-                await _savePreview();
+                await _savePreview(preview);
                 if (!mounted) {
                   return;
                 }
@@ -1985,9 +2057,24 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
                                         ? const Color(0xFF11161E)
                                         : const Color(0xFFF6F1E8),
                                   ),
-                                  Image.asset(
-                                    _previewImagePath,
+                                  CachedNetworkImage(
+                                    imageUrl: resolveFileUrl(
+                                      preview.previewImageUrl,
+                                    ),
+                                    httpHeaders: ApiSession.authHeaders,
                                     fit: BoxFit.contain,
+                                    placeholder: (_, __) => Center(
+                                      child: CircularProgressIndicator(
+                                        color: _accent,
+                                      ),
+                                    ),
+                                    errorWidget: (_, __, ___) => Center(
+                                      child: Icon(
+                                        Icons.broken_image_outlined,
+                                        size: 42,
+                                        color: _textSecondary,
+                                      ),
+                                    ),
                                   ),
                                 ],
                               ),
@@ -2091,7 +2178,121 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
     );
   }
 
-  Future<String> _savePreview() async {
+  Future<_GeneratedOutfitPreview> _generateOutfitPreview() async {
+    final garments = _previewApiGarments();
+    if (garments.isEmpty) {
+      throw PlatformException(
+        code: 'unsupported_selection',
+        message:
+            'Select at least one upper, lower, or shoe item before generating.',
+      );
+    }
+
+    final personImage = await _writeReferenceImageToTempFile();
+    final created = await OutfitPreviewApiService.createTask(
+      personImage: personImage,
+      clothingItemIds: garments.map((item) => item.clothingItemId).toList(),
+      personViewType: 'FULL_BODY',
+      garmentCategories: garments.map((item) => item.category).toList(),
+    );
+    final taskId = created['id']?.toString();
+    if (taskId == null || taskId.isEmpty) {
+      throw StateError('Preview task did not return an id.');
+    }
+
+    Map<String, dynamic>? completedTask;
+    for (var attempt = 0; attempt < 75; attempt++) {
+      await Future<void>.delayed(const Duration(seconds: 4));
+      final response = await OutfitPreviewApiService.getTask(taskId);
+      final task = Map<String, dynamic>.from(
+        (response['data'] ?? response) as Map,
+      );
+      final status = task['status']?.toString();
+      if (status == 'COMPLETED') {
+        completedTask = task;
+        break;
+      }
+      if (status == 'FAILED') {
+        final message = task['errorMessage']?.toString();
+        throw StateError(
+          message == null || message.isEmpty
+              ? 'The preview task failed.'
+              : message,
+        );
+      }
+    }
+
+    if (completedTask == null) {
+      throw TimeoutException('Preview generation timed out.');
+    }
+
+    final saved = await OutfitPreviewApiService.saveTask(taskId);
+    final previewImageUrl =
+        saved['previewImageUrl']?.toString() ??
+        completedTask['previewImageUrl']?.toString();
+    if (previewImageUrl == null || previewImageUrl.isEmpty) {
+      throw StateError('Generated preview did not return an image URL.');
+    }
+    return _GeneratedOutfitPreview(
+      taskId: taskId,
+      outfitId: saved['id']?.toString(),
+      previewImageUrl: previewImageUrl,
+    );
+  }
+
+  List<_PreviewApiGarment> _previewApiGarments() {
+    final upper = _sortedSelections(_BodyZone.upper).lastOrNull?.item;
+    final lower = _sortedSelections(_BodyZone.lower).lastOrNull?.item;
+    final shoes = _sortedSelections(_BodyZone.feet).lastOrNull?.item;
+
+    if (upper != null && lower != null && shoes != null) {
+      return [
+        _PreviewApiGarment(upper.id, 'TOP'),
+        _PreviewApiGarment(lower.id, 'BOTTOM'),
+        _PreviewApiGarment(shoes.id, 'SHOES'),
+      ];
+    }
+    if (upper != null && lower != null) {
+      return [
+        _PreviewApiGarment(upper.id, 'TOP'),
+        _PreviewApiGarment(lower.id, 'BOTTOM'),
+      ];
+    }
+    if (upper != null) {
+      return [_PreviewApiGarment(upper.id, 'TOP')];
+    }
+    if (lower != null) {
+      return [_PreviewApiGarment(lower.id, 'BOTTOM')];
+    }
+    if (shoes != null) {
+      return [_PreviewApiGarment(shoes.id, 'SHOES')];
+    }
+    return const [];
+  }
+
+  Future<File> _writeReferenceImageToTempFile() async {
+    final bytes = await rootBundle.load(_referenceImagePath);
+    final directory = await getTemporaryDirectory();
+    final file = File('${directory.path}/ai_wardrobe_reference.jpg');
+    return file.writeAsBytes(bytes.buffer.asUint8List(), flush: true);
+  }
+
+  Future<Uint8List> _downloadPreviewBytes(String previewImageUrl) async {
+    final response = await buildApiDio().get<List<int>>(
+      resolveFileUrl(previewImageUrl),
+      options: Options(responseType: ResponseType.bytes),
+    );
+    final data = response.data;
+    if (data == null || data.isEmpty) {
+      throw PlatformException(
+        code: 'empty_preview',
+        message: 'Generated preview image is empty.',
+      );
+    }
+    return Uint8List.fromList(data);
+  }
+
+  Future<String> _savePreview(_GeneratedOutfitPreview preview) async {
     final selectionIds = _wornByZone.values
         .expand((items) => items.map((worn) => worn.item.id))
         .toSet()
@@ -2106,10 +2307,8 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
     final now = DateTime.now();
     final wardrobeName =
         'Styled Look ${now.month.toString().padLeft(2, '0')}/${now.day.toString().padLeft(2, '0')} ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
-    final fileName = 'ai_wardrobe_preview_${now.millisecondsSinceEpoch}.jpg';
-    final previewBytesFuture = rootBundle
-        .load(_previewImagePath)
-        .then((byteData) => byteData.buffer.asUint8List());
+    final fileName = 'ai_wardrobe_preview_${now.millisecondsSinceEpoch}.png';
+    final previewBytesFuture = _downloadPreviewBytes(preview.previewImageUrl);
     final wardrobeFuture = WardrobeService.exportSelectionToWardrobe(
       clothingItemIds: selectionIds,
       name: wardrobeName,
@@ -2275,4 +2474,23 @@ class _WornGarment {
 
   final _GarmentItem item;
   final int layer;
+}
+
+class _PreviewApiGarment {
+  const _PreviewApiGarment(this.clothingItemId, this.category);
+
+  final String clothingItemId;
+  final String category;
+}
+
+class _GeneratedOutfitPreview {
+  const _GeneratedOutfitPreview({
+    required this.taskId,
+    required this.previewImageUrl,
+    this.outfitId,
+  });
+
+  final String taskId;
+  final String? outfitId;
+  final String previewImageUrl;
 }
