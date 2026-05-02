@@ -1,8 +1,10 @@
 """Container startup workflow for local frontend/backend integration."""
 
 import os
+import shutil
 import subprocess
 import time
+from pathlib import Path
 from uuid import UUID
 
 from sqlalchemy import text
@@ -24,6 +26,9 @@ DEMO_CREATOR_BRAND_NAME = "Demo Brand"
 DEMO_CREATOR_BIO = "Seed creator profile for local Docker integration."
 DB_WAIT_TIMEOUT_SECONDS = 60
 DB_RETRY_INTERVAL_SECONDS = 2
+DEMO_DATA_DIR = Path(__file__).resolve().parents[1] / "demo_data"
+DEMO_SQL_PATH = DEMO_DATA_DIR / "demo_snapshot.sql"
+DEMO_STORAGE_PATH = DEMO_DATA_DIR / "storage"
 
 
 def wait_for_database() -> None:
@@ -47,6 +52,56 @@ def wait_for_database() -> None:
 def run_migrations() -> None:
     print("Applying Alembic migrations...", flush=True)
     subprocess.run(["alembic", "upgrade", "head"], check=True)
+
+
+def _table_count(table_name: str) -> int:
+    with engine.connect() as connection:
+        result = connection.execute(text(f"SELECT COUNT(*) FROM {table_name}"))
+        return int(result.scalar_one())
+
+
+def maybe_restore_demo_snapshot() -> None:
+    """Restore bundled demo records and blobs for fresh local Docker installs."""
+    if not DEMO_SQL_PATH.exists():
+        print("No bundled demo snapshot found; skipping demo restore.", flush=True)
+        return
+
+    existing_wardrobes = _table_count("wardrobes")
+    existing_clothes = _table_count("clothing_items")
+    if existing_wardrobes > 0 or existing_clothes > 0:
+        print("Existing wardrobe data found; skipping bundled demo restore.", flush=True)
+        return
+
+    print("Restoring bundled demo database snapshot...", flush=True)
+    env = os.environ.copy()
+    env["PGPASSWORD"] = settings.POSTGRES_PASSWORD
+    subprocess.run(
+        [
+            "psql",
+            "-h",
+            settings.POSTGRES_SERVER,
+            "-p",
+            str(settings.POSTGRES_PORT),
+            "-U",
+            settings.POSTGRES_USER,
+            "-d",
+            settings.POSTGRES_DB,
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-f",
+            str(DEMO_SQL_PATH),
+        ],
+        check=True,
+        env=env,
+    )
+
+    if DEMO_STORAGE_PATH.exists():
+        print("Restoring bundled demo media and 3D assets...", flush=True)
+        shutil.copytree(
+            DEMO_STORAGE_PATH,
+            settings.LOCAL_STORAGE_PATH,
+            dirs_exist_ok=True,
+        )
 
 
 def ensure_demo_user() -> None:
@@ -126,6 +181,7 @@ def start_server() -> None:
 def main() -> None:
     wait_for_database()
     run_migrations()
+    maybe_restore_demo_snapshot()
     ensure_demo_user()
     ensure_demo_creator_profile()
     ensure_storage_path()

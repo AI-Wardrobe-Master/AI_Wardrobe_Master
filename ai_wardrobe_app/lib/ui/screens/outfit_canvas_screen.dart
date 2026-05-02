@@ -10,7 +10,6 @@ import '../../services/api_config.dart';
 import '../../services/wardrobe_service.dart';
 import '../../state/wardrobe_refresh_notifier.dart';
 import '../../theme/app_theme.dart';
-import 'scene_preview_demo_screen.dart';
 
 const _referenceImagePath =
     'assets/visualization/source/full_body_reference.jpg';
@@ -236,23 +235,6 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
                         fontSize: 13,
                         height: 1.5,
                         color: _textSecondary,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: OutlinedButton.icon(
-                        onPressed: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute<void>(
-                              builder: (_) => const ScenePreviewDemoScreen(),
-                            ),
-                          );
-                        },
-                        icon: const Icon(
-                          Icons.face_retouching_natural_outlined,
-                        ),
-                        label: const Text('Face + Scene Demo'),
                       ),
                     ),
                     const SizedBox(height: 16),

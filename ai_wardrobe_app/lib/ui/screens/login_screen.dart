@@ -14,9 +14,9 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _usernameController = TextEditingController(text: 'demo');
-  final _emailController = TextEditingController(text: 'demo@example.com');
-  final _passwordController = TextEditingController(text: 'demo123456');
+  final _usernameController = TextEditingController();
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
 
   bool _isSigningIn = false;
   bool _isRegisterMode = false;
@@ -71,15 +71,6 @@ class _LoginScreenState extends State<LoginScreen> {
         setState(() => _isSigningIn = false);
       }
     }
-  }
-
-  Future<void> _continueWithDemo() async {
-    setState(() {
-      _isRegisterMode = false;
-      _emailController.text = 'demo@example.com';
-      _passwordController.text = 'demo123456';
-    });
-    await _submit();
   }
 
   @override
@@ -224,11 +215,6 @@ class _LoginScreenState extends State<LoginScreen> {
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
-                      ),
-                      const SizedBox(height: 10),
-                      OutlinedButton(
-                        onPressed: _isSigningIn ? null : _continueWithDemo,
-                        child: const Text('Use Demo Account'),
                       ),
                       const SizedBox(height: 8),
                       TextButton(

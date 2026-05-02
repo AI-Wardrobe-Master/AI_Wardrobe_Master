@@ -3,6 +3,8 @@
 .codex
 venv/
 storage/
+!demo_data/
+!demo_data/**
 __pycache__/
 *.pyc
 *.pyo

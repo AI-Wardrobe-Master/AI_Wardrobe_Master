@@ -7,7 +7,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential git libegl1 libgl1 libglib2.0-0 libgomp1 libglvnd0 && \
+    build-essential git libegl1 libgl1 libglib2.0-0 libgomp1 libglvnd0 postgresql-client && \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
