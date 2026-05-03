@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_strings_provider.dart';
-import '../../services/api_config.dart';
-import '../../services/outfit_preview_api_service.dart';
+import '../../models/wardrobe.dart';
+import '../../services/wardrobe_service.dart';
 import '../../theme/app_theme.dart';
 import '../widgets/app_remote_image.dart';
+import 'wardrobe_screen.dart';
 
 class ImportedLooksScreen extends StatefulWidget {
   const ImportedLooksScreen({super.key});
@@ -14,7 +15,7 @@ class ImportedLooksScreen extends StatefulWidget {
 }
 
 class _ImportedLooksScreenState extends State<ImportedLooksScreen> {
-  List<Map<String, dynamic>> _outfits = [];
+  List<Wardrobe> _wardrobes = [];
   bool _loading = true;
   String? _error;
 
@@ -30,10 +31,13 @@ class _ImportedLooksScreenState extends State<ImportedLooksScreen> {
       _error = null;
     });
     try {
-      final outfits = await OutfitPreviewApiService.listSavedOutfits();
+      final wardrobes = await WardrobeService.fetchWardrobes();
+      final imported = wardrobes
+          .where((wardrobe) => wardrobe.source == 'IMPORTED')
+          .toList();
       if (!mounted) return;
       setState(() {
-        _outfits = outfits;
+        _wardrobes = imported;
         _loading = false;
       });
     } catch (e) {
@@ -74,7 +78,7 @@ class _ImportedLooksScreenState extends State<ImportedLooksScreen> {
                 ],
               ),
             )
-          : _outfits.isEmpty
+          : _wardrobes.isEmpty
           ? Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -82,7 +86,7 @@ class _ImportedLooksScreenState extends State<ImportedLooksScreen> {
                   Icon(Icons.inventory_2_outlined, size: 48, color: textS),
                   const SizedBox(height: 8),
                   Text(
-                    'No imported looks yet',
+                    'No imported wardrobes yet',
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w600,
@@ -91,7 +95,7 @@ class _ImportedLooksScreenState extends State<ImportedLooksScreen> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Save generated outfit previews to see them here',
+                    'Import a shared wardrobe from Discover to see it here',
                     style: TextStyle(fontSize: 12, color: textS),
                     textAlign: TextAlign.center,
                   ),
@@ -102,22 +106,9 @@ class _ImportedLooksScreenState extends State<ImportedLooksScreen> {
               onRefresh: _loadImports,
               child: ListView.builder(
                 padding: const EdgeInsets.all(16),
-                itemCount: _outfits.length,
+                itemCount: _wardrobes.length,
                 itemBuilder: (context, index) {
-                  final outfit = _outfits[index];
-                  final name =
-                      outfit['name']?.toString().trim().isNotEmpty == true
-                      ? outfit['name'].toString()
-                      : 'Generated outfit';
-                  final previewImageUrl = outfit['previewImageUrl']?.toString();
-                  final itemCount =
-                      (outfit['clothingItemIds'] as List<dynamic>?)?.length ??
-                      0;
-                  final createdAt =
-                      DateTime.tryParse(
-                        outfit['createdAt']?.toString() ?? '',
-                      ) ??
-                      DateTime.now();
+                  final wardrobe = _wardrobes[index];
                   return Card(
                     margin: const EdgeInsets.only(bottom: 12),
                     color: isDark ? AppColors.darkSurface : Colors.white,
@@ -128,16 +119,16 @@ class _ImportedLooksScreenState extends State<ImportedLooksScreen> {
                         child: SizedBox(
                           width: 56,
                           height: 72,
-                          child: previewImageUrl == null
-                              ? Icon(Icons.image_outlined, color: textS)
+                          child: wardrobe.coverImageUrl == null
+                              ? Icon(Icons.inventory_2_outlined, color: textS)
                               : AppRemoteImage(
-                                  url: resolveFileUrl(previewImageUrl),
+                                  url: wardrobe.coverImageUrl!,
                                   fit: BoxFit.cover,
                                 ),
                         ),
                       ),
                       title: Text(
-                        name,
+                        wardrobe.name,
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w600,
@@ -149,25 +140,29 @@ class _ImportedLooksScreenState extends State<ImportedLooksScreen> {
                         children: [
                           const SizedBox(height: 4),
                           Text(
-                            'Generated full-body preview',
+                            wardrobe.description?.isNotEmpty == true
+                                ? wardrobe.description!
+                                : 'Imported shared wardrobe',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
                             style: TextStyle(fontSize: 12, color: textS),
                           ),
                           const SizedBox(height: 8),
                           Row(
                             children: [
                               Icon(
-                                Icons.inventory_2_outlined,
+                                Icons.checkroom_outlined,
                                 size: 14,
                                 color: textS,
                               ),
                               const SizedBox(width: 4),
                               Text(
-                                '$itemCount items',
+                                '${wardrobe.itemCount} items',
                                 style: TextStyle(fontSize: 12, color: textS),
                               ),
                               const Spacer(),
                               Text(
-                                _formatDate(createdAt),
+                                wardrobe.wid,
                                 style: TextStyle(fontSize: 12, color: textS),
                               ),
                             ],
@@ -179,20 +174,19 @@ class _ImportedLooksScreenState extends State<ImportedLooksScreen> {
                         size: 16,
                         color: textS,
                       ),
-                      onTap: () {},
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) =>
+                                WardrobeScreen(initialWardrobeId: wardrobe.id),
+                          ),
+                        );
+                      },
                     ),
                   );
                 },
               ),
             ),
     );
-  }
-
-  String _formatDate(DateTime date) {
-    final difference = DateTime.now().difference(date);
-    if (difference.inDays == 0) return 'Today';
-    if (difference.inDays == 1) return 'Yesterday';
-    if (difference.inDays < 7) return '${difference.inDays} days ago';
-    return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
   }
 }

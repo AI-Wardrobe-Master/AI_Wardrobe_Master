@@ -15,19 +15,34 @@ from app.models.card_pack_import import CardPackImport
 from app.models.clothing_item import ClothingItem, Image, Model3D
 from app.models.creator import CardPack, CardPackItem, CreatorProfile
 from app.models.user import User
-from app.models.wardrobe import WardrobeItem
+from app.models.wardrobe import Wardrobe, WardrobeItem
 from app.schemas.imports import (
     ImportCardPackRequest,
     ImportCardPackResponse,
     ImportHistoryData,
     ImportHistoryItem,
     ImportHistoryResponse,
+    ImportWardrobeRequest,
+    ImportWardrobeResponse,
 )
 from app.services.blob_service import get_blob_service
 from app.services.blob_storage import BlobNotFoundError
 
 router = APIRouter(prefix="/imports", tags=["Imports"])
 logger = logging.getLogger(__name__)
+
+
+def _dedupe_strings(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        cleaned = (value or "").strip()
+        key = cleaned.lower()
+        if not cleaned or key in seen:
+            continue
+        seen.add(key)
+        result.append(cleaned)
+    return result
 
 
 def _delete_clothing_item_internal(db: Session, item: ClothingItem) -> None:
@@ -49,6 +64,84 @@ def _delete_clothing_item_internal(db: Session, item: ClothingItem) -> None:
 
     for h in blob_hashes:
         blob_service.release(db, h)
+
+
+def _clone_clothing_item(
+    db: Session,
+    *,
+    canonical: ClothingItem,
+    user_id: UUID,
+    target_wardrobe_id: UUID,
+    blob_service,
+) -> ClothingItem | None:
+    if canonical.deleted_at is not None:
+        return None
+
+    new_item = ClothingItem(
+        user_id=user_id,
+        source="IMPORTED",
+        name=canonical.name,
+        description=canonical.description,
+        predicted_tags=list(canonical.predicted_tags)
+        if canonical.predicted_tags
+        else [],
+        final_tags=list(canonical.final_tags) if canonical.final_tags else [],
+        is_confirmed=True,
+        custom_tags=list(canonical.custom_tags) if canonical.custom_tags else [],
+        category=canonical.category,
+        material=canonical.material,
+        style=canonical.style,
+        preview_svg_state=canonical.preview_svg_state,
+        preview_svg_available=canonical.preview_svg_available,
+        catalog_visibility="PRIVATE",
+        imported_from_card_pack_id=canonical.imported_from_card_pack_id,
+        imported_from_clothing_item_id=canonical.id,
+    )
+    db.add(new_item)
+    db.flush()
+
+    for img in canonical.images:
+        db.add(
+            Image(
+                clothing_item_id=new_item.id,
+                image_type=img.image_type,
+                angle=img.angle,
+                blob_hash=img.blob_hash,
+            )
+        )
+        try:
+            blob_service.addref(db, img.blob_hash)
+        except BlobNotFoundError:
+            raise HTTPException(
+                409,
+                "Shared wardrobe contents changed during import; retry.",
+            )
+
+    if canonical.model_3d:
+        db.add(
+            Model3D(
+                clothing_item_id=new_item.id,
+                model_format=canonical.model_3d.model_format,
+                blob_hash=canonical.model_3d.blob_hash,
+                vertex_count=canonical.model_3d.vertex_count,
+                face_count=canonical.model_3d.face_count,
+            )
+        )
+        try:
+            blob_service.addref(db, canonical.model_3d.blob_hash)
+        except BlobNotFoundError:
+            raise HTTPException(
+                409,
+                "Shared wardrobe contents changed during import; retry.",
+            )
+
+    crud_wardrobe.ensure_item_in_wardrobe(
+        db,
+        user_id=user_id,
+        wardrobe_id=target_wardrobe_id,
+        clothing_item_id=new_item.id,
+    )
+    return new_item
 
 
 @router.get("/history", response_model=ImportHistoryResponse)
@@ -183,6 +276,85 @@ def import_card_pack(
 
     return ImportCardPackResponse(
         cardPackId=str(pack.id),
+        importedItemIds=imported_item_ids,
+    )
+
+
+@router.post("/wardrobe", status_code=201, response_model=ImportWardrobeResponse)
+def import_public_wardrobe(
+    body: ImportWardrobeRequest,
+    db: Session = Depends(get_db),
+    user_id: UUID = Depends(get_current_user_id),
+):
+    if body.wardrobe_id is None and not (body.wardrobe_wid or "").strip():
+        raise HTTPException(422, "wardrobeWid or wardrobeId is required")
+
+    source = None
+    if body.wardrobe_id is not None:
+        source = (
+            db.query(Wardrobe)
+            .filter(Wardrobe.id == body.wardrobe_id, Wardrobe.is_public.is_(True))
+            .first()
+        )
+    else:
+        source = crud_wardrobe.get_wardrobe_by_wid(
+            db,
+            body.wardrobe_wid or "",
+            viewer_user_id=None,
+        )
+    if source is None:
+        raise HTTPException(404, "Shared wardrobe not found")
+    if source.user_id == user_id:
+        raise HTTPException(409, "You cannot import your own shared wardrobe")
+
+    rows = crud_wardrobe.list_public_wardrobe_items(db, source.id)
+    if not rows:
+        raise HTTPException(422, "Shared wardrobe has no importable clothing items")
+
+    main_wardrobe = crud_wardrobe.ensure_main_wardrobe(db, user_id)
+    auto_tags = _dedupe_strings(
+        [
+            *(source.auto_tags or []),
+            *(source.manual_tags or []),
+            source.wid,
+            "imported",
+        ]
+    )
+    target = crud_wardrobe.create_wardrobe(
+        db,
+        user_id,
+        name=source.name,
+        type="VIRTUAL",
+        description=(
+            source.description
+            or f"Imported shared wardrobe {source.wid} into your wardrobe."
+        ),
+        cover_image_url=source.cover_image_url,
+        manual_tags=list(source.manual_tags or []),
+        source="IMPORTED",
+        parent_wardrobe_id=main_wardrobe.id,
+        auto_tags=auto_tags,
+        is_public=False,
+    )
+
+    blob_service = get_blob_service()
+    imported_item_ids: list[str] = []
+    for _, canonical in rows:
+        new_item = _clone_clothing_item(
+            db,
+            canonical=canonical,
+            user_id=user_id,
+            target_wardrobe_id=target.id,
+            blob_service=blob_service,
+        )
+        if new_item is not None:
+            imported_item_ids.append(str(new_item.id))
+
+    db.commit()
+    db.refresh(target)
+    return ImportWardrobeResponse(
+        wardrobeId=str(target.id),
+        wardrobeWid=target.wid,
         importedItemIds=imported_item_ids,
     )
 

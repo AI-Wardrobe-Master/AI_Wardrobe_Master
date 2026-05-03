@@ -1964,7 +1964,7 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
                 }
                 ScaffoldMessenger.of(this.context).showSnackBar(
                   const SnackBar(
-                    content: Text('Saved to Gallery and Wardrobe'),
+                    content: Text('Saved preview image to Gallery'),
                   ),
                 );
               } on MissingPluginException {
@@ -2038,7 +2038,7 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
                           ),
                           const SizedBox(height: 6),
                           Text(
-                            'Review the generated outfit in this modal, then either close it or save the image to your gallery.',
+                            'A child wardrobe has been created from the garments you selected. You can find it from the wardrobe selector on the home screen.',
                             style: TextStyle(
                               fontSize: 12,
                               height: 1.5,
@@ -2233,10 +2233,21 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
     if (previewImageUrl == null || previewImageUrl.isEmpty) {
       throw StateError('Generated preview did not return an image URL.');
     }
+    final wardrobe = await WardrobeService.exportSelectionToWardrobe(
+      clothingItemIds: _selectedClothingItemIds(),
+      name: _newStyledLookName(),
+      description:
+          'Generated from the visualization canvas and saved as a child wardrobe.',
+      coverImageUrl: previewImageUrl,
+      manualTags: const ['Styled Look', 'Generated Preview'],
+    );
+    WardrobeRefreshNotifier.requestRefresh();
     return _GeneratedOutfitPreview(
       taskId: taskId,
       outfitId: saved['id']?.toString(),
       previewImageUrl: previewImageUrl,
+      wardrobeId: wardrobe.id,
+      wardrobeWid: wardrobe.wid,
     );
   }
 
@@ -2292,40 +2303,27 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
     return Uint8List.fromList(data);
   }
 
-  Future<String> _savePreview(_GeneratedOutfitPreview preview) async {
-    final selectionIds = _wornByZone.values
+  List<String> _selectedClothingItemIds() {
+    return _wornByZone.values
         .expand((items) => items.map((worn) => worn.item.id))
         .toSet()
         .toList();
-    if (selectionIds.isEmpty) {
-      throw PlatformException(
-        code: 'no_selection',
-        message: 'Select at least one wardrobe item before saving.',
-      );
-    }
+  }
 
+  String _newStyledLookName() {
     final now = DateTime.now();
-    final wardrobeName =
-        'Styled Look ${now.month.toString().padLeft(2, '0')}/${now.day.toString().padLeft(2, '0')} ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+    return 'Styled Look ${now.month.toString().padLeft(2, '0')}/${now.day.toString().padLeft(2, '0')} ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+  }
+
+  Future<String> _savePreview(_GeneratedOutfitPreview preview) async {
+    final now = DateTime.now();
     final fileName = 'ai_wardrobe_preview_${now.millisecondsSinceEpoch}.png';
-    final previewBytesFuture = _downloadPreviewBytes(preview.previewImageUrl);
-    final wardrobeFuture = WardrobeService.exportSelectionToWardrobe(
-      clothingItemIds: selectionIds,
-      name: wardrobeName,
+    final previewBytes = await _downloadPreviewBytes(preview.previewImageUrl);
+    await _downloadChannel.invokeMethod<String>(
+      'saveImageToGallery',
+      <String, dynamic>{'fileName': fileName, 'bytes': previewBytes},
     );
-    final savedPathFuture = previewBytesFuture.then(
-      (previewBytes) => _downloadChannel.invokeMethod<String>(
-        'saveImageToGallery',
-        <String, dynamic>{'fileName': fileName, 'bytes': previewBytes},
-      ),
-    );
-    final results = await Future.wait<Object?>([
-      wardrobeFuture,
-      savedPathFuture,
-    ]);
-    final wardrobe = results[0] as Wardrobe;
-    WardrobeRefreshNotifier.requestRefresh();
-    return wardrobe.wid;
+    return preview.wardrobeWid;
   }
 
   List<_WornGarment> _sortedSelections(_BodyZone zone) {
@@ -2487,10 +2485,14 @@ class _GeneratedOutfitPreview {
   const _GeneratedOutfitPreview({
     required this.taskId,
     required this.previewImageUrl,
+    required this.wardrobeId,
+    required this.wardrobeWid,
     this.outfitId,
   });
 
   final String taskId;
   final String? outfitId;
   final String previewImageUrl;
+  final String wardrobeId;
+  final String wardrobeWid;
 }

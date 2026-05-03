@@ -225,6 +225,25 @@ class WardrobeService {
     }
   }
 
+  static Future<Wardrobe> importSharedWardrobe({
+    required String wardrobeWid,
+  }) async {
+    final resp = await _dio.post(
+      '/imports/wardrobe',
+      data: {'wardrobeWid': wardrobeWid},
+    );
+    final raw = Map<String, dynamic>.from(resp.data as Map);
+    final importedWid = raw['wardrobeWid']?.toString();
+    if (importedWid == null || importedWid.isEmpty) {
+      throw Exception('Imported wardrobe did not return a WID');
+    }
+    final wardrobe = await fetchWardrobeByWid(importedWid);
+    if (wardrobe == null) {
+      throw Exception('Imported wardrobe could not be loaded');
+    }
+    return wardrobe;
+  }
+
   static Future<Wardrobe> updateWardrobe(
     String wardrobeId, {
     String? name,

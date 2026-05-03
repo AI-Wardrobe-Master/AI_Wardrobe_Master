@@ -16,6 +16,19 @@ class ImportCardPackResponse(BaseModel):
     importedItemIds: list[str]
 
 
+class ImportWardrobeRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    wardrobe_wid: str | None = Field(default=None, alias="wardrobeWid")
+    wardrobe_id: UUID | None = Field(default=None, alias="wardrobeId")
+
+
+class ImportWardrobeResponse(BaseModel):
+    wardrobeId: str
+    wardrobeWid: str
+    importedItemIds: list[str]
+
+
 class ImportHistoryItem(BaseModel):
     id: str
     userId: str

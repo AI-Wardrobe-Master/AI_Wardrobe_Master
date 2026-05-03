@@ -6,8 +6,10 @@ import 'package:flutter/material.dart';
 import '../../models/wardrobe.dart';
 import '../../services/api_config.dart';
 import '../../services/wardrobe_service.dart';
+import '../../state/wardrobe_refresh_notifier.dart';
 import '../../theme/app_theme.dart';
 import 'shared_clothing_detail_screen.dart';
+import 'wardrobe_screen.dart';
 
 class SharedWardrobeDetailScreen extends StatefulWidget {
   const SharedWardrobeDetailScreen({super.key, required this.wardrobeWid});
@@ -24,6 +26,7 @@ class _SharedWardrobeDetailScreenState
   Wardrobe? _wardrobe;
   List<WardrobeItemWithClothing> _items = [];
   bool _loading = true;
+  bool _importing = false;
   String? _error;
 
   @override
@@ -132,6 +135,25 @@ class _SharedWardrobeDetailScreenState
                       textPrimary: textPrimary,
                       textSecondary: textSecondary,
                     ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: _importing || _items.isEmpty
+                          ? null
+                          : _importWardrobe,
+                      icon: _importing
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.download_rounded),
+                      label: Text(
+                        _importing ? 'Importing...' : 'Import to My Wardrobe',
+                      ),
+                    ),
+                  ),
                   const SizedBox(height: 20),
                   Text(
                     'Items',
@@ -259,6 +281,40 @@ class _SharedWardrobeDetailScreenState
       color: textSecondary.withValues(alpha: 0.1),
       child: Icon(Icons.checkroom_rounded, color: textSecondary),
     );
+  }
+
+  Future<void> _importWardrobe() async {
+    final wardrobe = _wardrobe;
+    if (wardrobe == null) {
+      return;
+    }
+    setState(() => _importing = true);
+    try {
+      final imported = await WardrobeService.importSharedWardrobe(
+        wardrobeWid: wardrobe.wid,
+      );
+      WardrobeRefreshNotifier.requestRefresh();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Imported "${imported.name}" to your wardrobe.'),
+        ),
+      );
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => WardrobeScreen(initialWardrobeId: imported.id),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.toString())));
+    } finally {
+      if (mounted) {
+        setState(() => _importing = false);
+      }
+    }
   }
 }
 

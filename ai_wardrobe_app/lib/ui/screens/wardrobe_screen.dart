@@ -19,7 +19,9 @@ import 'wardrobe_management_screen.dart';
 
 /// Module 3: Wardrobe tab — multi-wardrobe selector, items grid, add/remove, category filter, virtual support.
 class WardrobeScreen extends StatefulWidget {
-  const WardrobeScreen({super.key});
+  const WardrobeScreen({super.key, this.initialWardrobeId});
+
+  final String? initialWardrobeId;
 
   @override
   State<WardrobeScreen> createState() => _WardrobeScreenState();
@@ -88,8 +90,11 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
         _wardrobes = list;
         _loadingWardrobes = false;
         if (_currentWardrobe == null && list.isNotEmpty) {
-          _currentWardrobe = list.first;
-          CurrentWardrobeController.setCurrentWardrobeId(list.first.id);
+          _currentWardrobe = list.firstWhere(
+            (wardrobe) => wardrobe.id == widget.initialWardrobeId,
+            orElse: () => list.first,
+          );
+          CurrentWardrobeController.setCurrentWardrobeId(_currentWardrobe!.id);
           _loadItems();
         } else if (_currentWardrobe != null) {
           final id = _currentWardrobe!.id;
