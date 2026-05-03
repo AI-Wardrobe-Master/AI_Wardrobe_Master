@@ -211,11 +211,7 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
     if (_itemId == null) {
       return;
     }
-    final mergedTags = <Map<String, String>>[
-      ...widget.autoTags,
-      ...widget.manualTags.map(
-        (tag) => <String, String>{'key': 'manual', 'value': tag},
-      ),
+    final metadataTags = <Map<String, String>>[
       if ((widget.category ?? '').trim().isNotEmpty)
         <String, String>{'key': 'category', 'value': widget.category!.trim()},
       if ((widget.material ?? '').trim().isNotEmpty)
@@ -223,6 +219,13 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
       if ((widget.style ?? '').trim().isNotEmpty)
         <String, String>{'key': 'style', 'value': widget.style!.trim()},
     ];
+    final mergedTags = _mergeTags(
+      widget.autoTags,
+      widget.manualTags.map(
+        (tag) => <String, String>{'key': 'manual', 'value': tag},
+      ),
+      metadataTags,
+    );
 
     await ClothingApiService.updateClothingItem(
       _itemId!,
@@ -255,6 +258,39 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
         builder: (_) => ClothingResultScreen(itemId: _itemId!),
       ),
     );
+  }
+
+  List<Map<String, String>> _mergeTags(
+    Iterable<Map<String, String>> primary,
+    Iterable<Map<String, String>> manual,
+    Iterable<Map<String, String>> metadata,
+  ) {
+    final merged = <Map<String, String>>[];
+    final seen = <String>{};
+
+    void addTag(Map<String, String>? tag) {
+      final key = (tag?['key'] ?? '').trim();
+      final value = (tag?['value'] ?? '').trim();
+      if (key.isEmpty || value.isEmpty) {
+        return;
+      }
+      final fingerprint = '${key.toLowerCase()}=${value.toLowerCase()}';
+      if (!seen.add(fingerprint)) {
+        return;
+      }
+      merged.add(<String, String>{'key': key, 'value': value});
+    }
+
+    for (final tag in primary) {
+      addTag(tag);
+    }
+    for (final tag in manual) {
+      addTag(tag);
+    }
+    for (final tag in metadata) {
+      addTag(tag);
+    }
+    return merged;
   }
 
   Future<void> _saveOffline() async {

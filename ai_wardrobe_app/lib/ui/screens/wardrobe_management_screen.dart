@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../../l10n/app_strings_provider.dart';
 import '../../models/wardrobe.dart';
 import '../../services/wardrobe_service.dart';
+import '../../state/wardrobe_refresh_notifier.dart';
 import '../../theme/app_theme.dart';
 
 /// 3.1 Wardrobe management: create, rename, delete. Virtual wardrobes shown with label.
@@ -81,6 +82,7 @@ class _WardrobeManagementScreenState extends State<WardrobeManagementScreen> {
         name: result.name,
         type: result.type,
       );
+      WardrobeRefreshNotifier.requestRefresh();
       _load();
     } catch (e) {
       _showSnackBar(e.toString());
@@ -109,6 +111,7 @@ class _WardrobeManagementScreenState extends State<WardrobeManagementScreen> {
     if (name == w.name) return;
     try {
       await WardrobeService.updateWardrobe(w.id, name: name);
+      WardrobeRefreshNotifier.requestRefresh();
       _load();
     } catch (e) {
       _showSnackBar(e.toString());
@@ -140,6 +143,7 @@ class _WardrobeManagementScreenState extends State<WardrobeManagementScreen> {
     if (ok != true) return;
     try {
       await WardrobeService.deleteWardrobe(w.id);
+      WardrobeRefreshNotifier.requestRefresh();
       _load();
     } catch (e) {
       _showSnackBar(e.toString());
@@ -179,6 +183,7 @@ class _WardrobeManagementScreenState extends State<WardrobeManagementScreen> {
 
     try {
       var latestWardrobe = wardrobe;
+      final wasAlreadyPublic = wardrobe.isPublic;
       if (!wardrobe.isPublic) {
         latestWardrobe = await WardrobeService.updateWardrobe(
           wardrobe.id,
@@ -190,10 +195,11 @@ class _WardrobeManagementScreenState extends State<WardrobeManagementScreen> {
       final shareText =
           'AI Wardrobe share code: ${latestWardrobe.wid}\nWardrobe: ${latestWardrobe.name}';
       await Clipboard.setData(ClipboardData(text: shareText));
+      WardrobeRefreshNotifier.requestRefresh();
       _showSnackBar(
-        latestWardrobe.isPublic
-            ? 'Published to Discover. WID copied: ${latestWardrobe.wid}'
-            : 'Share code copied: ${latestWardrobe.wid}',
+        wasAlreadyPublic
+            ? 'WID copied: ${latestWardrobe.wid}'
+            : 'Published to Discover. WID copied: ${latestWardrobe.wid}',
       );
     } catch (e) {
       _showSnackBar(e.toString());

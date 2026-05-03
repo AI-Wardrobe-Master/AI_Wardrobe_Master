@@ -228,10 +228,24 @@ class WardrobeService {
   static Future<Wardrobe> importSharedWardrobe({
     required String wardrobeWid,
   }) async {
-    final resp = await _dio.post(
-      '/imports/wardrobe',
-      data: {'wardrobeWid': wardrobeWid},
-    );
+    final Response<dynamic> resp;
+    try {
+      resp = await _dio.post(
+        '/imports/wardrobe',
+        data: {'wardrobeWid': wardrobeWid},
+      );
+    } on DioException catch (error) {
+      final statusCode = error.response?.statusCode;
+      final detail = _errorDetail(error);
+      if (statusCode == 409) {
+        throw WardrobeServiceException(
+          detail.isNotEmpty ? detail : '不能import自己发布的衣柜',
+        );
+      }
+      throw WardrobeServiceException(
+        detail.isNotEmpty ? detail : 'Unable to import this wardrobe',
+      );
+    }
     final raw = Map<String, dynamic>.from(resp.data as Map);
     final importedWid = raw['wardrobeWid']?.toString();
     if (importedWid == null || importedWid.isEmpty) {
@@ -242,6 +256,17 @@ class WardrobeService {
       throw Exception('Imported wardrobe could not be loaded');
     }
     return wardrobe;
+  }
+
+  static String _errorDetail(DioException error) {
+    final data = error.response?.data;
+    if (data is Map && data['detail'] != null) {
+      return data['detail'].toString();
+    }
+    if (data is String) {
+      return data;
+    }
+    return error.message ?? '';
   }
 
   static Future<Wardrobe> updateWardrobe(
@@ -434,4 +459,13 @@ class WardrobeService {
       );
     }).toList();
   }
+}
+
+class WardrobeServiceException implements Exception {
+  const WardrobeServiceException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
 }

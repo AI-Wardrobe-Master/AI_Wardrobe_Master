@@ -6,10 +6,11 @@ import 'package:flutter/material.dart';
 import '../../models/wardrobe.dart';
 import '../../services/api_config.dart';
 import '../../services/wardrobe_service.dart';
+import '../../state/current_wardrobe_controller.dart';
 import '../../state/wardrobe_refresh_notifier.dart';
 import '../../theme/app_theme.dart';
+import '../root_shell.dart';
 import 'shared_clothing_detail_screen.dart';
-import 'wardrobe_screen.dart';
 
 class SharedWardrobeDetailScreen extends StatefulWidget {
   const SharedWardrobeDetailScreen({super.key, required this.wardrobeWid});
@@ -300,10 +301,10 @@ class _SharedWardrobeDetailScreenState
           content: Text('Imported "${imported.name}" to your wardrobe.'),
         ),
       );
-      await Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => WardrobeScreen(initialWardrobeId: imported.id),
-        ),
+      CurrentWardrobeController.setCurrentWardrobeId(imported.id);
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute<void>(builder: (_) => const RootShell()),
+        (route) => false,
       );
     } catch (e) {
       if (!mounted) return;

@@ -2323,6 +2323,7 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
       'saveImageToGallery',
       <String, dynamic>{'fileName': fileName, 'bytes': previewBytes},
     );
+    WardrobeRefreshNotifier.requestRefresh();
     return preview.wardrobeWid;
   }
 

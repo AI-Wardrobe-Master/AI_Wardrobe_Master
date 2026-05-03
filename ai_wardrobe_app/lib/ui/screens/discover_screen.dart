@@ -10,6 +10,7 @@ import '../../services/card_pack_api_service.dart';
 import '../../services/creator_api_service.dart';
 import '../../services/local_card_pack_service.dart';
 import '../../services/wardrobe_service.dart';
+import '../../state/wardrobe_refresh_notifier.dart';
 import '../../theme/app_theme.dart';
 import '../widgets/app_remote_image.dart';
 import '../widgets/creator/creator_list_item.dart';
@@ -48,6 +49,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _tabController = TabController(length: 2, vsync: this);
+    WardrobeRefreshNotifier.tick.addListener(_handleRefresh);
     _tabController.addListener(() {
       if (_tabController.indexIsChanging) {
         _loadData();
@@ -80,10 +82,17 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    WardrobeRefreshNotifier.tick.removeListener(_handleRefresh);
     _searchDebounce?.cancel();
     _tabController.dispose();
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _handleRefresh() {
+    if (mounted) {
+      _loadData();
+    }
   }
 
   @override
@@ -477,6 +486,31 @@ class _DiscoverScreenState extends State<DiscoverScreen>
             margin: const EdgeInsets.only(bottom: 12),
             color: isDark ? AppColors.darkSurface : Colors.white,
             child: ListTile(
+              leading: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: SizedBox(
+                  width: 56,
+                  height: 64,
+                  child:
+                      wardrobe.coverImageUrl == null ||
+                          wardrobe.coverImageUrl!.isEmpty
+                      ? Container(
+                          color: textS.withValues(alpha: 0.1),
+                          child: Icon(Icons.inventory_2_outlined, color: textS),
+                        )
+                      : AppRemoteImage(
+                          url: wardrobe.coverImageUrl!,
+                          fit: BoxFit.contain,
+                          placeholder: Container(
+                            color: textS.withValues(alpha: 0.1),
+                          ),
+                          errorWidget: Container(
+                            color: textS.withValues(alpha: 0.1),
+                            child: Icon(Icons.image_outlined, color: textS),
+                          ),
+                        ),
+                ),
+              ),
               onTap: () {
                 Navigator.push(
                   context,

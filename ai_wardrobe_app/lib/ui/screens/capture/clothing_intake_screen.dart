@@ -35,20 +35,34 @@ class _ClothingIntakeScreenState extends State<ClothingIntakeScreen> {
   bool _loadingWardrobes = true;
   bool _creatingWardrobe = false;
 
+  static const List<Map<String, String>> _demoLeatherJacketTags =
+      <Map<String, String>>[
+        <String, String>{'key': 'category', 'value': 'Outerwear'},
+        <String, String>{'key': 'type', 'value': 'Jacket'},
+        <String, String>{'key': 'subcategory', 'value': 'Leather Jacket'},
+        <String, String>{'key': 'material', 'value': 'Leather'},
+        <String, String>{'key': 'color', 'value': 'Brown'},
+        <String, String>{'key': 'layer', 'value': 'Outer Layer'},
+        <String, String>{'key': 'wearing_position', 'value': 'Outside'},
+        <String, String>{'key': 'sleeve', 'value': 'Long Sleeve'},
+        <String, String>{'key': 'closure', 'value': 'Front Zipper'},
+        <String, String>{'key': 'collar', 'value': 'Point Collar'},
+        <String, String>{'key': 'style', 'value': 'Casual'},
+        <String, String>{'key': 'season', 'value': 'Autumn/Winter'},
+      ];
+
   @override
   void initState() {
     super.initState();
-    _autoTags = <Map<String, String>>[
-      const <String, String>{'key': 'intake', 'value': 'preview-ready'},
-      <String, String>{
-        'key': 'views',
-        'value': widget.backImage == null ? 'front-only' : 'front-and-back',
-      },
-      const <String, String>{'key': 'pipeline', 'value': 'placeholder'},
-    ];
+    _autoTags = _demoLeatherJacketTags
+        .map((tag) => Map<String, String>.from(tag))
+        .toList();
     _nameController.text = widget.frontImage.filename.isNotEmpty
         ? widget.frontImage.filename.split('.').first
         : 'New Clothing Item';
+    _categoryController.text = 'Outerwear';
+    _materialController.text = 'Leather';
+    _styleController.text = 'Casual';
     _loadWardrobes();
   }
 

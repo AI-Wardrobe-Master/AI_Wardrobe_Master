@@ -305,7 +305,7 @@ def import_public_wardrobe(
     if source is None:
         raise HTTPException(404, "Shared wardrobe not found")
     if source.user_id == user_id:
-        raise HTTPException(409, "You cannot import your own shared wardrobe")
+        raise HTTPException(409, "不能import自己发布的衣柜")
 
     rows = crud_wardrobe.list_public_wardrobe_items(db, source.id)
     if not rows:

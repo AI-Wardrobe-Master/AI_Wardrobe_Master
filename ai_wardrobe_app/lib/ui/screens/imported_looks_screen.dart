@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../l10n/app_strings_provider.dart';
 import '../../models/wardrobe.dart';
 import '../../services/wardrobe_service.dart';
+import '../../state/wardrobe_refresh_notifier.dart';
 import '../../theme/app_theme.dart';
 import '../widgets/app_remote_image.dart';
 import 'wardrobe_screen.dart';
@@ -22,7 +23,20 @@ class _ImportedLooksScreenState extends State<ImportedLooksScreen> {
   @override
   void initState() {
     super.initState();
+    WardrobeRefreshNotifier.tick.addListener(_handleRefresh);
     _loadImports();
+  }
+
+  @override
+  void dispose() {
+    WardrobeRefreshNotifier.tick.removeListener(_handleRefresh);
+    super.dispose();
+  }
+
+  void _handleRefresh() {
+    if (mounted) {
+      _loadImports();
+    }
   }
 
   Future<void> _loadImports() async {
