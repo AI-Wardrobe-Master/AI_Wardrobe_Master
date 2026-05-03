@@ -272,7 +272,10 @@ def list_wardrobe_items(
     rows = (
         db.query(WardrobeItem, ClothingItem)
         .join(ClothingItem, WardrobeItem.clothing_item_id == ClothingItem.id)
-        .filter(WardrobeItem.wardrobe_id == wardrobe_id)
+        .filter(
+            WardrobeItem.wardrobe_id == wardrobe_id,
+            ClothingItem.user_id == user_id,
+        )
         .order_by(WardrobeItem.display_order.nullslast(), WardrobeItem.added_at)
         .all()
     )
@@ -285,8 +288,12 @@ def list_public_wardrobe_items(
 ) -> List[Tuple[WardrobeItem, ClothingItem]]:
     return (
         db.query(WardrobeItem, ClothingItem)
+        .join(Wardrobe, Wardrobe.id == WardrobeItem.wardrobe_id)
         .join(ClothingItem, WardrobeItem.clothing_item_id == ClothingItem.id)
-        .filter(WardrobeItem.wardrobe_id == wardrobe_id)
+        .filter(
+            WardrobeItem.wardrobe_id == wardrobe_id,
+            ClothingItem.user_id == Wardrobe.user_id,
+        )
         .order_by(WardrobeItem.display_order.nullslast(), WardrobeItem.added_at)
         .all()
     )

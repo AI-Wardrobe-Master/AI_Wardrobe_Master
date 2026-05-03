@@ -83,6 +83,7 @@ def _can_view_shared_clothing_item(
         .join(Wardrobe, Wardrobe.id == WardrobeItem.wardrobe_id)
         .filter(
             WardrobeItem.clothing_item_id == item_id,
+            Wardrobe.user_id == item.user_id,
             Wardrobe.is_public.is_(True),
             Wardrobe.kind == "SUB",
         )
@@ -222,12 +223,19 @@ async def get_outfit_preview_file(
 async def get_outfit_preview(
     outfit_id: UUID,
     db: Session = Depends(get_db),
-    user_id: UUID = Depends(get_current_user_id),
+    viewer_user_id: UUID | None = Depends(get_optional_current_user_id),
 ):
-    outfit = db.query(Outfit).filter(
-        Outfit.id == outfit_id,
-        Outfit.user_id == user_id,
-    ).first()
+    outfit = db.query(Outfit).filter(Outfit.id == outfit_id).first()
     if not outfit:
         raise HTTPException(404)
+    if viewer_user_id is None or outfit.user_id != viewer_user_id:
+        public_cover_url = f"/files/outfits/{outfit_id}/preview"
+        shared_wardrobe = db.query(Wardrobe.id).filter(
+            (Wardrobe.outfit_id == outfit_id)
+            | (Wardrobe.cover_image_url == public_cover_url),
+            Wardrobe.is_public.is_(True),
+            Wardrobe.kind == "SUB",
+        ).first()
+        if shared_wardrobe is None:
+            raise HTTPException(404)
     return await _stream_blob(db, outfit.preview_image_blob_hash)

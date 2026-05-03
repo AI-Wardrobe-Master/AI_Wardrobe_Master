@@ -11,7 +11,7 @@ class AuthApiService {
   }) async {
     final resp = await _dio.post(
       '/auth/login',
-      data: {'email': email.trim().toLowerCase(), 'password': password},
+      data: {'email': email.trim().toLowerCase(), 'password': password.trim()},
     );
     await _persistToken(resp);
   }
@@ -26,7 +26,7 @@ class AuthApiService {
       data: {
         'username': username.trim(),
         'email': email.trim().toLowerCase(),
-        'password': password,
+        'password': password.trim(),
       },
     );
     await _persistToken(resp);

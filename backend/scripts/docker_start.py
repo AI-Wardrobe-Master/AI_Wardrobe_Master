@@ -12,6 +12,7 @@ from sqlalchemy.exc import OperationalError
 
 from app.core.config import settings
 from app.core.security import get_password_hash
+from app.crud import user as crud_user
 from app.db.session import SessionLocal, engine
 from app.models.creator import CreatorProfile
 from app.models.user import User
@@ -24,6 +25,11 @@ DEMO_PASSWORD = "demo123456"
 DEMO_CREATOR_DISPLAY_NAME = "Demo Creator"
 DEMO_CREATOR_BRAND_NAME = "Demo Brand"
 DEMO_CREATOR_BIO = "Seed creator profile for local Docker integration."
+LOCAL_TEST_USERS = (
+    ("11111", "11111@gmail.com", "11111111"),
+    ("mobile_tester", "mobile.tester@example.com", "test123456"),
+    ("import_tester", "import.tester@example.com", "test123456"),
+)
 DB_WAIT_TIMEOUT_SECONDS = 60
 DB_RETRY_INTERVAL_SECONDS = 2
 DEMO_DATA_DIR = Path(__file__).resolve().parents[1] / "demo_data"
@@ -134,6 +140,39 @@ def ensure_demo_user() -> None:
     )
 
 
+def ensure_local_test_users() -> None:
+    """Keep a few predictable local accounts usable for phone QA demos."""
+    print("Ensuring local test users exist...", flush=True)
+    with SessionLocal() as session:
+        for username, email, password in LOCAL_TEST_USERS:
+            user = session.query(User).filter(User.email == email).first()
+            if user is None:
+                user = session.query(User).filter(User.username == username).first()
+            if user is None:
+                session.add(
+                    User(
+                        uid=crud_user._generate_uid(session),
+                        username=username,
+                        email=email,
+                        hashed_password=get_password_hash(password),
+                        user_type="CONSUMER",
+                        is_active=True,
+                    )
+                )
+            else:
+                user.username = username
+                user.email = email
+                user.hashed_password = get_password_hash(password)
+                user.user_type = "CONSUMER"
+                user.is_active = True
+        session.commit()
+    print(
+        "Local test users ready: 11111@gmail.com / 11111111, "
+        "mobile.tester@example.com / test123456",
+        flush=True,
+    )
+
+
 def ensure_demo_creator_profile() -> None:
     print("Ensuring demo creator profile exists...", flush=True)
     with SessionLocal() as session:
@@ -183,6 +222,7 @@ def main() -> None:
     run_migrations()
     maybe_restore_demo_snapshot()
     ensure_demo_user()
+    ensure_local_test_users()
     ensure_demo_creator_profile()
     ensure_storage_path()
     start_server()

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:dio/dio.dart';
 
 import '../../l10n/app_strings_provider.dart';
 import '../../services/auth_api_service.dart';
@@ -60,8 +61,9 @@ class _LoginScreenState extends State<LoginScreen> {
       );
     } catch (error) {
       if (!mounted) return;
+      final message = _friendlyAuthError(error);
       setState(() {
-        _error = error.toString().replaceFirst('Exception: ', '');
+        _error = message;
       });
       ScaffoldMessenger.of(
         context,
@@ -71,6 +73,29 @@ class _LoginScreenState extends State<LoginScreen> {
         setState(() => _isSigningIn = false);
       }
     }
+  }
+
+  String _friendlyAuthError(Object error) {
+    if (error is DioException) {
+      final statusCode = error.response?.statusCode;
+      final responseData = error.response?.data;
+      final detail = responseData is Map<String, dynamic>
+          ? responseData['detail']?.toString()
+          : null;
+      if (statusCode == 401) {
+        return detail == 'Inactive user'
+            ? 'This account is inactive.'
+            : 'Email or password is incorrect.';
+      }
+      if (statusCode == 409) {
+        return detail ?? 'This email or username is already registered.';
+      }
+      if (statusCode == null) {
+        return 'Cannot reach the server. Check the backend and network connection.';
+      }
+      return detail ?? 'Sign in failed. Server returned $statusCode.';
+    }
+    return error.toString().replaceFirst('Exception: ', '');
   }
 
   @override

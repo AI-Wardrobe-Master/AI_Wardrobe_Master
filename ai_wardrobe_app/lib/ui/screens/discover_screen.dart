@@ -482,143 +482,182 @@ class _DiscoverScreenState extends State<DiscoverScreen>
             );
           }
           final wardrobe = filteredWardrobes[index - filteredPacks.length];
-          return Card(
-            margin: const EdgeInsets.only(bottom: 12),
-            color: isDark ? AppColors.darkSurface : Colors.white,
-            child: ListTile(
-              leading: ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: SizedBox(
-                  width: 56,
-                  height: 64,
-                  child:
-                      wardrobe.coverImageUrl == null ||
-                          wardrobe.coverImageUrl!.isEmpty
-                      ? Container(
-                          color: textS.withValues(alpha: 0.1),
-                          child: Icon(Icons.inventory_2_outlined, color: textS),
-                        )
-                      : AppRemoteImage(
-                          url: wardrobe.coverImageUrl!,
-                          fit: BoxFit.contain,
-                          placeholder: Container(
-                            color: textS.withValues(alpha: 0.1),
-                          ),
-                          errorWidget: Container(
-                            color: textS.withValues(alpha: 0.1),
-                            child: Icon(Icons.image_outlined, color: textS),
-                          ),
-                        ),
-                ),
-              ),
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) =>
-                        SharedWardrobeDetailScreen(wardrobeWid: wardrobe.wid),
-                  ),
-                );
-              },
-              title: Text(
-                wardrobe.name,
-                style: TextStyle(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 15,
-                  color: textP,
-                ),
-              ),
-              subtitle: Padding(
-                padding: const EdgeInsets.only(top: 6),
+          return _buildWardrobeTile(wardrobe, textP, textS, isDark);
+        },
+      ),
+    );
+  }
+
+  Widget _buildWardrobeTile(
+    Wardrobe wardrobe,
+    Color textP,
+    Color textS,
+    bool isDark,
+  ) {
+    final label = wardrobe.source == 'CARD_PACK'
+        ? 'Card Pack'
+        : 'Shared Wardrobe';
+    final publisher = wardrobe.ownerUsername?.trim().isNotEmpty == true
+        ? wardrobe.ownerUsername!
+        : wardrobe.ownerUid;
+    final visibleTags = wardrobe.tags
+        .where((tag) => tag.trim().isNotEmpty)
+        .take(3)
+        .toList();
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      color: isDark ? AppColors.darkSurface : Colors.white,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) =>
+                  SharedWardrobeDetailScreen(wardrobeWid: wardrobe.wid),
+            ),
+          );
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildWardrobeCover(wardrobe, textS),
+              const SizedBox(width: 12),
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'WID: ${wardrobe.wid}',
-                      style: TextStyle(fontSize: 12, color: textS),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            wardrobe.name,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 16,
+                              height: 1.15,
+                              color: textP,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        _buildSmallChip(label, textP, textS),
+                      ],
                     ),
-                    if (wardrobe.ownerUid != null)
+                    const SizedBox(height: 7),
+                    Text(
+                      'WID ${wardrobe.wid}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: textS,
+                      ),
+                    ),
+                    if (publisher != null && publisher.isNotEmpty) ...[
+                      const SizedBox(height: 3),
                       Text(
-                        'Publisher UID: ${wardrobe.ownerUid}',
+                        'By $publisher',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(fontSize: 12, color: textS),
                       ),
-                    if (wardrobe.description?.isNotEmpty == true)
+                    ],
+                    if (wardrobe.description?.isNotEmpty == true) ...[
+                      const SizedBox(height: 5),
                       Text(
                         wardrobe.description!,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(fontSize: 12, color: textS),
-                      ),
-                    if (wardrobe.tags.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
-                        children: wardrobe.tags.take(5).map((tag) {
-                          return Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 3,
-                            ),
-                            decoration: BoxDecoration(
-                              color: textS.withValues(alpha: 0.10),
-                              borderRadius: BorderRadius.circular(999),
-                            ),
-                            child: Text(
-                              tag,
-                              style: TextStyle(fontSize: 10, color: textP),
-                            ),
-                          );
-                        }).toList(),
+                        style: TextStyle(
+                          fontSize: 12,
+                          height: 1.25,
+                          color: textS,
+                        ),
                       ),
                     ],
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Text(
+                          '${wardrobe.itemCount} items',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: textP,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Wrap(
+                            spacing: 5,
+                            runSpacing: 5,
+                            children: visibleTags.map((tag) {
+                              return _buildSmallChip(tag, textP, textS);
+                            }).toList(),
+                          ),
+                        ),
+                      ],
+                    ),
                   ],
                 ),
               ),
-              trailing: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  if (wardrobe.source == 'CARD_PACK')
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: AppColors.accentBlue.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: Text(
-                        'Card Pack',
-                        style: TextStyle(fontSize: 11, color: textP),
-                      ),
-                    )
-                  else
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: textS.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: Text(
-                        'Shared Wardrobe',
-                        style: TextStyle(fontSize: 11, color: textP),
-                      ),
-                    ),
-                  const SizedBox(height: 6),
-                  Text(
-                    '${wardrobe.itemCount} items',
-                    style: TextStyle(fontSize: 11, color: textS),
-                  ),
-                ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWardrobeCover(Wardrobe wardrobe, Color textS) {
+    final coverUrl = wardrobe.coverImageUrl;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(10),
+      child: SizedBox(
+        width: 88,
+        height: 108,
+        child: coverUrl == null || coverUrl.isEmpty
+            ? _buildCoverPlaceholder(textS)
+            : AppRemoteImage(
+                url: coverUrl,
+                fit: BoxFit.cover,
+                placeholder: Container(color: textS.withValues(alpha: 0.08)),
+                errorWidget: _buildCoverPlaceholder(textS),
               ),
-            ),
-          );
-        },
+      ),
+    );
+  }
+
+  Widget _buildCoverPlaceholder(Color textS) {
+    return Container(
+      color: textS.withValues(alpha: 0.10),
+      child: Icon(Icons.image_outlined, color: textS),
+    );
+  }
+
+  Widget _buildSmallChip(String label, Color textP, Color textS) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: textS.withValues(alpha: 0.11),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          color: textP,
+        ),
       ),
     );
   }

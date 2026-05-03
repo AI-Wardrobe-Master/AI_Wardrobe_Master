@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user_id, get_optional_current_user_id
 from app.crud import wardrobe as crud_wardrobe
 from app.db.session import get_db
+from app.models.blob import Blob
+from app.models.outfit_preview import Outfit
 from app.models.user import User
 from app.schemas.wardrobe import (
     WardrobeCreate,
@@ -46,6 +48,36 @@ def _build_clothing_images(item) -> dict[str, str]:
     return payload
 
 
+def _resolve_wardrobe_cover_url(db: Session, w) -> str | None:
+    if w.cover_image_url:
+        outfit_prefix = "/files/outfits/"
+        outfit_suffix = "/preview"
+        if (
+            w.cover_image_url.startswith(outfit_prefix)
+            and w.cover_image_url.endswith(outfit_suffix)
+        ):
+            outfit_id = w.cover_image_url[
+                len(outfit_prefix) : -len(outfit_suffix)
+            ]
+            try:
+                outfit = db.get(Outfit, UUID(outfit_id))
+            except ValueError:
+                outfit = None
+            blob_exists = (
+                outfit is not None
+                and db.get(Blob, outfit.preview_image_blob_hash) is not None
+            )
+            if blob_exists:
+                return w.cover_image_url
+        else:
+            return w.cover_image_url
+    row = crud_wardrobe.list_public_wardrobe_items(db, w.id)
+    if not row:
+        return None
+    _, item = row[0]
+    return _build_clothing_image_url(item)
+
+
 def _wardrobe_to_response(db: Session, w, item_count: int) -> dict:
     owner = db.get(User, w.user_id)
     auto_tags = list(w.auto_tags or [])
@@ -62,7 +94,7 @@ def _wardrobe_to_response(db: Session, w, item_count: int) -> dict:
         "source": w.source,
         "isMain": w.kind == "MAIN",
         "description": w.description,
-        "coverImageUrl": w.cover_image_url,
+        "coverImageUrl": _resolve_wardrobe_cover_url(db, w),
         "autoTags": auto_tags,
         "manualTags": manual_tags,
         "tags": [*auto_tags, *[tag for tag in manual_tags if tag not in auto_tags]],
