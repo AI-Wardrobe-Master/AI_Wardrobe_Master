@@ -33,6 +33,7 @@ class OutfitAgentState(TypedDict, total=False):
     user_id: UUID
     request: OutfitRecommendationRequest
     tools: dict[str, AgentToolResult]
+    interpreted_context: dict[str, Any]
     taxonomy: dict[str, Any]
     weather_context: dict[str, Any]
     wardrobe_items: list[dict[str, Any]]
@@ -112,13 +113,15 @@ class OutfitRecommendationAgent:
         # node contains its own LLM tool loop, while weather/taxonomy/preview
         # remain deterministic graph stages.
         workflow = StateGraph(OutfitAgentState)
+        workflow.add_node("understand_request", self._understand_request)
         workflow.add_node("get_weather", self._get_weather)
         workflow.add_node("get_clothing_taxonomy", self._get_clothing_taxonomy)
         workflow.add_node("outfit_agent_loop", self._outfit_agent_loop)
         workflow.add_node("generate_outfit_preview", self._generate_outfit_preview)
         workflow.add_node("final_response", self._final_response)
 
-        workflow.add_edge(START, "get_weather")
+        workflow.add_edge(START, "understand_request")
+        workflow.add_edge("understand_request", "get_weather")
         workflow.add_edge("get_weather", "get_clothing_taxonomy")
         workflow.add_edge("get_clothing_taxonomy", "outfit_agent_loop")
 
@@ -137,6 +140,115 @@ class OutfitRecommendationAgent:
         workflow.add_edge("final_response", END)
         return workflow.compile()
 
+    def _understand_request(self, state: OutfitAgentState) -> dict[str, Any]:
+        """Extracts structured request context from the user's message.
+
+        Args:
+            state: Current LangGraph state.
+
+        Returns:
+            Partial state update containing interpreted request context and a
+            tool-like trace entry.
+        """
+        request = state["request"]
+        tools = dict(state.get("tools", {}))
+
+        # Explicit API fields are trusted more than text extraction. The LLM
+        # node fills gaps such as "明天" in message when targetDate was omitted.
+        fallback_context = _request_context_from_explicit_fields(request)
+        if not hasattr(self.llm, "complete_json"):
+            result = AgentToolResult(
+                status="skipped",
+                errorCode="REQUEST_UNDERSTANDING_UNAVAILABLE",
+                retryable=False,
+                messageForAgent=(
+                    "The configured test LLM has no complete_json method. Use "
+                    "only explicit request fields for date and location."
+                ),
+                data=fallback_context,
+            )
+            tools["understand_request"] = result
+            return {"tools": tools, "interpreted_context": fallback_context}
+
+        try:
+            raw_context = self.llm.complete_json(
+                self._request_understanding_messages(request)
+            )
+            interpreted_context = _normalize_interpreted_context(
+                raw_context,
+                fallback_context,
+            )
+            result = AgentToolResult(
+                status="success",
+                data=interpreted_context,
+                messageForAgent=(
+                    "Structured user request context extracted. Prefer "
+                    "explicit API fields when they conflict with extracted "
+                    "message fields."
+                ),
+            )
+        except (AgentConfigurationError, AgentLLMError, ValueError) as exc:
+            interpreted_context = fallback_context
+            result = AgentToolResult(
+                status="failed",
+                errorCode="REQUEST_UNDERSTANDING_FAILED",
+                retryable=True,
+                messageForAgent=(
+                    f"Request understanding failed: {exc}. Continue with "
+                    "explicit request fields only."
+                ),
+                messageForUser="暂时无法解析自然语言里的日期或地点，将使用已提供的请求字段。",
+                data=fallback_context,
+            )
+
+        tools["understand_request"] = result
+        return {"tools": tools, "interpreted_context": interpreted_context}
+
+    def _request_understanding_messages(
+        self,
+        request: OutfitRecommendationRequest,
+    ) -> list[dict[str, Any]]:
+        """Builds messages for structured request understanding.
+
+        Args:
+            request: Public outfit recommendation request.
+
+        Returns:
+            OpenAI-compatible message list for extracting request context.
+        """
+        payload = {
+            "currentDate": date.today().isoformat(),
+            "request": request.model_dump(mode="json", by_alias=True),
+            "responseSchema": {
+                "targetDate": "YYYY-MM-DD|null",
+                "city": "string|null",
+                "weatherRequired": "boolean",
+                "occasion": "string|null",
+                "styleIntent": "string|null",
+                "userConstraints": ["string"],
+            },
+        }
+
+        # This node is intentionally extraction-only. The recommendation model
+        # still makes outfit decisions later after weather and wardrobe tools run.
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "You extract structured context for an outfit Agent. "
+                    "Resolve relative dates in the user's message using "
+                    "currentDate. For example, 明天 or tomorrow means currentDate + 1 day "
+                    "Return only a raw JSON object matching responseSchema. "
+                    "Do not recommend clothes and do not invent a city when the "
+                    "request does not mention one."
+                ),
+            },
+            {
+                "role": "user",
+                "content": _json_dumps(payload),
+            },
+        ]
+
     def _get_weather(self, state: OutfitAgentState) -> dict[str, Any]:
         """Fetches real weather for the request location and updates state.
 
@@ -151,14 +263,22 @@ class OutfitRecommendationAgent:
             Partial state update containing weather context and tool result.
         """
         request = state["request"]
-        target_date = request.target_date or date.today()
+        interpreted_context = state.get("interpreted_context", {})
+        interpreted_date = _parse_interpreted_date(
+            interpreted_context.get("targetDate")
+        )
+        target_date = request.target_date or interpreted_date or date.today()
 
         # A partial coordinate pair is treated as "no location" so callers
         # must supply both latitude and longitude together.
         has_coords = (
             request.latitude is not None and request.longitude is not None
         )
-        has_city = bool(request.city)
+        interpreted_city = interpreted_context.get("city")
+        city = request.city or (
+            interpreted_city if isinstance(interpreted_city, str) else None
+        )
+        has_city = bool(city)
         tools = dict(state.get("tools", {}))
 
         # ── no location at all ────────────────────────────────────────
@@ -189,14 +309,14 @@ class OutfitRecommendationAgent:
         try:
             forecast = self.weather_client.fetch_forecast(
                 target_date,
-                city=request.city if has_city else None,
+                city=city if has_city else None,
                 latitude=request.latitude if has_coords else None,
                 longitude=request.longitude if has_coords else None,
             )
         except WeatherClientError as exc:
-            location_label = request.city or "当前位置"
+            location_label = city or "当前位置"
             data = {
-                "city": request.city,
+                "city": city,
                 "targetDate": target_date.isoformat(),
                 "latitude": request.latitude if has_coords else None,
                 "longitude": request.longitude if has_coords else None,
@@ -221,9 +341,9 @@ class OutfitRecommendationAgent:
 
         # ── forecast unavailable for this location / date ─────────────
         if forecast is None:
-            location_label = request.city or "当前位置"
+            location_label = city or "当前位置"
             data = {
-                "city": request.city,
+                "city": city,
                 "targetDate": target_date.isoformat(),
                 "latitude": request.latitude if has_coords else None,
                 "longitude": request.longitude if has_coords else None,
@@ -280,6 +400,7 @@ class OutfitRecommendationAgent:
             ),
         )
         tools["get_weather"] = result
+        print(f"Weather context: {weather_context}")
         return {"tools": tools, "weather_context": weather_context}
 
     def _get_clothing_taxonomy(self, state: OutfitAgentState) -> dict[str, Any]:
@@ -426,6 +547,7 @@ class OutfitRecommendationAgent:
         taxonomy = state.get("taxonomy", {})
         prompt_payload = {
             "userRequest": state["request"].model_dump(mode="json", by_alias=True),
+            "interpretedContext": state.get("interpreted_context", {}),
             "weatherContext": state.get("weather_context", {}),
             "taxonomy": {
                 "category": taxonomy.get("category", []),
@@ -698,6 +820,126 @@ def _first_tag_value(tags: list[dict[str, Any]], key: str) -> str | None:
         if tag.get("key") == key:
             return tag.get("value")
     return None
+
+
+def _request_context_from_explicit_fields(
+    request: OutfitRecommendationRequest,
+) -> dict[str, Any]:
+    """Builds fallback interpreted context from explicit request fields.
+
+    Args:
+        request: Public outfit recommendation request.
+
+    Returns:
+        Interpreted context containing only trusted request fields.
+    """
+    # This fallback keeps the graph runnable when the extraction model is absent
+    # in tests or temporarily fails in production.
+    return {
+        "targetDate": request.target_date.isoformat() if request.target_date else None,
+        "city": request.city,
+        "weatherRequired": bool(
+            request.city or request.latitude is not None or request.longitude is not None
+        ),
+        "occasion": None,
+        "styleIntent": None,
+        "userConstraints": [],
+    }
+
+
+def _normalize_interpreted_context(
+    raw_context: dict[str, Any],
+    fallback_context: dict[str, Any],
+) -> dict[str, Any]:
+    """Normalizes LLM-extracted request context.
+
+    Args:
+        raw_context: JSON object returned by the request-understanding model.
+        fallback_context: Explicit-field fallback context.
+
+    Returns:
+        Sanitized interpreted context with stable keys.
+    """
+    if not isinstance(raw_context, dict):
+        raise ValueError("request understanding response must be a JSON object")
+
+    # Explicit request values win over extracted values. This prevents the model
+    # from overriding API-provided date/location fields with a weaker guess.
+    target_date = fallback_context.get("targetDate") or raw_context.get("targetDate")
+    city = fallback_context.get("city") or _optional_string(raw_context.get("city"))
+    constraints = raw_context.get("userConstraints")
+    if not isinstance(constraints, list):
+        constraints = fallback_context.get("userConstraints", [])
+
+    return {
+        "targetDate": _valid_date_string(target_date),
+        "city": city,
+        "weatherRequired": _boolean_or_default(
+            raw_context.get("weatherRequired"),
+            bool(fallback_context.get("weatherRequired")),
+        ),
+        "occasion": _optional_string(raw_context.get("occasion")),
+        "styleIntent": _optional_string(raw_context.get("styleIntent")),
+        "userConstraints": [str(item) for item in constraints if item is not None],
+    }
+
+
+def _parse_interpreted_date(raw_date: Any) -> date | None:
+    """Parses an interpreted ISO date.
+
+    Args:
+        raw_date: Date value from interpreted context.
+
+    Returns:
+        Parsed date, or None when absent/invalid.
+    """
+    if not isinstance(raw_date, str) or not raw_date.strip():
+        return None
+    try:
+        return date.fromisoformat(raw_date.strip())
+    except ValueError:
+        return None
+
+
+def _valid_date_string(raw_date: Any) -> str | None:
+    """Validates that a value is an ISO date string.
+
+    Args:
+        raw_date: Candidate date value.
+
+    Returns:
+        ISO date string or None.
+    """
+    parsed = _parse_interpreted_date(raw_date)
+    return parsed.isoformat() if parsed else None
+
+
+def _optional_string(value: Any) -> str | None:
+    """Normalizes optional string values from model output.
+
+    Args:
+        value: Candidate string value.
+
+    Returns:
+        Stripped string, or None when empty/not a string.
+    """
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _boolean_or_default(value: Any, default: bool) -> bool:
+    """Normalizes optional boolean values from model output.
+
+    Args:
+        value: Candidate boolean value.
+        default: Fallback value when candidate is not a boolean.
+
+    Returns:
+        Boolean value.
+    """
+    return value if isinstance(value, bool) else default
 
 
 def _assistant_message_for_history(message: dict[str, Any]) -> dict[str, Any]:
