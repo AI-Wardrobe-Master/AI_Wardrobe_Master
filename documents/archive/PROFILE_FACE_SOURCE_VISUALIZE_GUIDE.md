@@ -6,8 +6,8 @@
 
 根据 `groupmembers'markdown/wzh.md` 中的工作记录，当前项目已经完成了较多前端业务链路整合、图片上传 Web 兼容修复、DreamO 本地低显存部署测试、衣物图片存储与回显修复等工作。本文只补充本次新增的人脸素材前端功能，不重复记录已有文档中已经覆盖的模块：
 
-- DreamO 后端部署、模型配置与服务接口：见 `documents/DREAMO_INTEGRATION.md`
-- Styled Generation 后端接口契约与轮询流程：见 `documents/FLUTTER_STYLED_GENERATION_GUIDE.md`
+- DreamO 后端部署、模型配置与服务接口：见 `documents/AI_PIPELINES.md`
+- Styled Generation 后端接口契约与轮询流程：见 `documents/AI_PIPELINES.md`
 - Flutter 整体架构：见 `documents/FLUTTER_ARCHITECTURE.md`
 
 ## 2. 功能概述
@@ -257,7 +257,7 @@ Image.memory(bytes)
 POST /api/v1/styled-generations
 ```
 
-需要提交的关键字段参考 `documents/FLUTTER_STYLED_GENERATION_GUIDE.md`：
+需要提交的关键字段参考 `documents/AI_PIPELINES.md`：
 
 - `selfie_image`：使用 `_faceImageBytes`
 - `gender`：可由人脸素材类型推断

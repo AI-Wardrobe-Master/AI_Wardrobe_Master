@@ -33,8 +33,8 @@ flutter devices              # list device IDs
 flutter run -d <device-id>
 ```
 
-> For detailed environment setup, running on iOS/Android, and common commands, see  
-> `documents/FLUTTER_GUIDE_ZH.md` / `documents/FLUTTER_GUIDE_EN.md`.
+> For detailed environment setup, Docker backend startup, Flutter runs, Android devices, and packaging notes, see
+> `documents/DEVELOPMENT_GUIDE.md`.
 
 ## Directory details
 
@@ -47,21 +47,22 @@ flutter run -d <device-id>
 
 - **`documents/`** – technical documentation entry point  
   - `README.md`: documentation index and overview  
-  - `TECH_STACK.md`: overall tech stack and architecture overview  
-  - `USER_STORIES.md`: user stories and requirements  
+  - `AGENT_CONTEXT.md`: compact project context for coding agents and new contributors
   - `DATA_MODEL.md`: data model and entity relationships  
   - `API_CONTRACT.md`: API design and contract  
   - `BACKEND_ARCHITECTURE.md`: backend architecture (FastAPI + PostgreSQL)  
-  - `FLUTTER_ARCHITECTURE.md`: Flutter architecture and layering guidelines  
-  - `FLUTTER_GUIDE_ZH.md` / `FLUTTER_GUIDE_EN.md`: Flutter usage guides (ZH / EN)
+  - `FLUTTER_ARCHITECTURE.md`: Flutter architecture and layering guidelines
+  - `AI_PIPELINES.md`: consolidated AI/model provider and pipeline guide
+  - `DEVELOPMENT_GUIDE.md`: local development, device, and packaging guide
+  - `archive/`: older planning and feature-specific notes preserved for traceability
 
 - **`groupmembers'markdown/`**  
   - Per-member notes on work items, responsibilities, and progress, e.g. `cht.md` (front-end skeleton, docs, etc.).
 
 ## Suggested reading order
 
-1. `documents/TECH_STACK.md`: high-level tech stack and system overview  
-2. `documents/USER_STORIES.md`: what problems we are solving  
-3. `documents/DATA_MODEL.md` + `documents/API_CONTRACT.md`: entities and APIs  
-4. `documents/FLUTTER_ARCHITECTURE.md`: recommended Flutter architecture  
-5. `documents/FLUTTER_GUIDE_ZH.md` or `FLUTTER_GUIDE_EN.md`: get the app running locally
+1. `documents/AGENT_CONTEXT.md`: compact project overview and source-of-truth rules
+2. `documents/DATA_MODEL.md` + `documents/API_CONTRACT.md`: entities and APIs
+3. `documents/BACKEND_ARCHITECTURE.md` or `documents/FLUTTER_ARCHITECTURE.md`: implementation structure by area
+4. `documents/AI_PIPELINES.md`: AI provider and pipeline boundaries
+5. `documents/DEVELOPMENT_GUIDE.md`: get the app running locally

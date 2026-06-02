@@ -1,110 +1,103 @@
-# AI Wardrobe Master - Documentation Overview
+# AI Wardrobe Master - Documentation Index
 
-## 文档结构
+This folder follows a small enterprise documentation structure: a single entry point, a small set of current source-of-truth documents, and archived references for older or narrower material. For coding agents, start with `AGENT_CONTEXT.md`.
+
+## Current Core Documents
+
+Use these for normal project work:
+
+- `AGENT_CONTEXT.md`: first-read context for coding agents and new contributors.
+- `API_CONTRACT.md`: API behavior, auth, request/response contracts, file access rules.
+- `DATA_MODEL.md`: entity meanings, ownership, sharing rules, `uid`/`wid`, main-vs-sub wardrobe semantics.
+- `BACKEND_ARCHITECTURE.md`: FastAPI structure, routers, services, async boundaries, backend responsibilities.
+- `FLUTTER_ARCHITECTURE.md`: Flutter shell, screens, service layer, cache and shared/private UI boundaries.
+- `AI_PIPELINES.md`: consolidated AI providers and pipelines, replacing separate DreamO/styled-generation/Agent pipeline notes for routine work.
+- `DEVELOPMENT_GUIDE.md`: consolidated setup, Docker, Flutter, Android device, and Windows packaging guidance.
+- `USER_STORIES.md`: product stories and acceptance criteria. Use for product decisions, not as the first implementation contract.
+
+## Default Context Bundles
+
+Minimum Agent context:
 
 ```text
-documents/
-├── README.md
-├── TECH_STACK.md
-├── USER_STORIES.md
-├── DATA_MODEL.md
-├── API_CONTRACT.md
-├── BACKEND_ARCHITECTURE.md
-├── FLUTTER_ARCHITECTURE.md
-├── FLUTTER_GUIDE_ZH.md
-├── FLUTTER_GUIDE_EN.md
-└── archive/
+documents/AGENT_CONTEXT.md
+documents/API_CONTRACT.md
+documents/DATA_MODEL.md
 ```
 
-## 当前维护原则
+Backend task:
 
-- 以仓库当前实现为准，不再把早期草案当作主规范
-- 顶层文档持续维护，`archive/` 只做历史追溯
-- 本轮文档同步基于主分支最新实现 `e4e6a9f`
+```text
+documents/AGENT_CONTEXT.md
+documents/API_CONTRACT.md
+documents/DATA_MODEL.md
+documents/BACKEND_ARCHITECTURE.md
+```
 
-## 2026-04 最新实现同步
+Flutter task:
 
-本轮文档已经同步以下实际功能状态：
+```text
+documents/AGENT_CONTEXT.md
+documents/API_CONTRACT.md
+documents/FLUTTER_ARCHITECTURE.md
+documents/DEVELOPMENT_GUIDE.md
+```
 
-- 认证与用户态：`/auth/register`、`/auth/login`、`/auth/logout`、`/me`
-- 个人页修正：登录后不再显示 `not signed in`
-- 子衣柜公开分享：公开对象统一为 `SUB` wardrobe，并以 `wid` 对外标识
-- Discover 合并：公开 `packs` 与共享 `wardrobes` 统一在 `Wardrobes` tab 展示
-- 共享检索：支持按 `wid`、`ownerUid`、`ownerUsername`、名称、描述、标签搜索
-- 共享详情：共享衣柜内的衣物卡可点开，只读详情页可跨账号查看图片
-- 图片权限：公开共享衣物图片可被其他账号访问，私有衣物仍受保护
-- 删除语义：主衣柜长按为真实删除并清缓存，子衣柜长按为解除关联
-- 可视化入口：`Visualize` 升级为 `Canvas Studio` + `Face + Scene` 双模式
-- 真机联调：Android 实机已通过本地后端 + `adb reverse` 验证共享链路
+AI pipeline or model-provider task:
 
-## 文档用途
+```text
+documents/AGENT_CONTEXT.md
+documents/API_CONTRACT.md
+documents/AI_PIPELINES.md
+```
 
-### `USER_STORIES.md`
+Product or UX task:
 
-描述当前产品需求、关键用户故事和本轮新增验收点，重点覆盖：
+```text
+documents/AGENT_CONTEXT.md
+documents/USER_STORIES.md
+documents/FLUTTER_ARCHITECTURE.md
+```
 
-- 公开子衣柜分享
-- Discover 搜索
-- 共享衣物只读详情
-- `/me` 驱动的用户态展示
-- `Face + Scene` demo 可视化流程
+## Archive And Reference
 
-### `DATA_MODEL.md`
+`archive/` contains older, narrower, or planning documents that were consolidated into current core docs. They are preserved for traceability, not default context.
 
-描述当前后端与前端共同依赖的数据结构，重点包括：
+Archived examples:
 
-- `User.uid`
-- `Wardrobe.wid`
-- `Wardrobe.kind / type / source / isPublic`
-- 卡包发布与公开子衣柜的映射关系
+- `archive/AGENT_OUTFIT_RECOMMENDATION_PLAN.md`
+- `archive/DREAMO_INTEGRATION.md`
+- `archive/FLUTTER_STYLED_GENERATION_GUIDE.md`
+- `archive/PROFILE_FACE_SOURCE_VISUALIZE_GUIDE.md`
+- `archive/MODULE1.md`
+- `archive/MODULE2_COMPLIANCE_SUMMARY.md`
+- `archive/FLUTTER_GUIDE_ZH.md`
+- `archive/FLUTTER_GUIDE_EN.md`
+- `archive/WINDOWS_LOCAL_APP_PACKAGE_GUIDE.md`
+- `archive/TECH_STACK.md`
 
-### `API_CONTRACT.md`
+`reference/` contains large or visual references:
 
-描述实际接口行为，重点包括：
+- `reference/database_er_model.html`
 
-- 最新本地开发地址 `http://localhost:8000/api/v1`
-- `/me` 返回结构
-- 公开衣柜浏览与 `by-wid` 查询接口
-- 共享衣物图片访问权限规则
+Only open archived/reference files when the current task explicitly needs that historical or specialized detail. Current code and current core docs take precedence.
 
-### `BACKEND_ARCHITECTURE.md`
+## Governance Rules
 
-描述当前 FastAPI 实现边界，重点包括：
+Keep the top-level `documents/` folder small. New documents should be added only when they create a stable source of truth that cannot fit into an existing core document.
 
-- 认证与主衣柜自动创建
-- 公开共享衣柜查询
-- 卡包发布与共享子衣柜同步
-- `/files` 对公开共享图片的访问控制
+When code changes alter request shapes, entity semantics, provider boundaries, setup commands, or user-visible workflows, update the relevant current core document in the same change.
 
-### `FLUTTER_ARCHITECTURE.md`
+When a document describes planned behavior, label it as planned. Do not present planned behavior as implemented unless the route/service/model exists in source code.
 
-描述当前 Flutter 真实页面结构，重点包括：
+When in doubt, verify against:
 
-- `Wardrobe / Discover / Add / Visualize / Profile`
-- `VisualizationHubScreen`
-- `SharedWardrobeDetailScreen`
-- 本地缓存与远端同步策略
-
-### `FLUTTER_GUIDE_ZH.md`
-
-描述实际开发和真机联调方式，已补充：
-
-- Windows + Android 真机运行步骤
-- 本地后端联调时的 `adb reverse tcp:8000 tcp:8000`
-- Docker 后端先启动的注意事项
-
-## 建议阅读顺序
-
-1. 先看 `README.md`
-2. 再看 `USER_STORIES.md`
-3. 再看 `DATA_MODEL.md`
-4. 接着看 `API_CONTRACT.md`
-5. 最后按职责分工阅读 `BACKEND_ARCHITECTURE.md` 或 `FLUTTER_ARCHITECTURE.md`
-
-## 归档说明
-
-`archive/` 下的文档保留历史设计过程，但如果与顶层文档冲突，应以顶层文档为准。
-
-## 备注
-
-这次文档更新不是把仓库原有文档另起炉灶，而是将原有结构、原始模块划分和 2026-04 实际完成的共享链路改动合并进同一套规范中。
+```text
+backend/app/api/v1/
+backend/app/services/
+backend/app/models/
+backend/app/schemas/
+ai_wardrobe_app/lib/services/
+ai_wardrobe_app/lib/ui/screens/
+docker-compose.yml
+```
