@@ -45,6 +45,16 @@ class Settings(BaseSettings):
     # DashScope outfit preview
     DASHSCOPE_API_KEY: Optional[str] = None
 
+    # OpenAI-compatible LLM provider for the outfit recommendation agent.
+    # SiliconFlow example: https://api.siliconflow.cn/v1
+    LLM_BASE_URL: Optional[str] = None
+    LLM_API_KEY: Optional[str] = None
+    LLM_MODEL: Optional[str] = None
+    LLM_PROVIDER_NAME: str = "openai-compatible"
+    LLM_TIMEOUT_SECONDS: float = 60.0
+    LLM_TEMPERATURE: float = 0.2
+    LLM_USE_RESPONSE_FORMAT: bool = False
+
     # S3 / MinIO
     S3_ENDPOINT: Optional[str] = None
     S3_ACCESS_KEY: Optional[str] = None

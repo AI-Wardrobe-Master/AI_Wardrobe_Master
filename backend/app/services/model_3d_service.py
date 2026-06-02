@@ -3,7 +3,6 @@ import logging
 from typing import Optional
 
 from PIL import Image
-import torch
 
 from app.core.config import settings
 
@@ -11,6 +10,17 @@ logger = logging.getLogger(__name__)
 
 _shape_pipeline = None
 _texture_pipeline = None
+
+
+def _get_torch():
+    try:
+        import torch
+    except ImportError as exc:
+        raise RuntimeError(
+            "torch is required for Hunyuan3D generation. Install the backend "
+            "GPU dependencies or set HUNYUAN3D_ENABLED=false."
+        ) from exc
+    return torch
 
 
 def _load_pipelines():
@@ -57,6 +67,7 @@ async def generate_3d_model(
     _load_pipelines()
 
     front = Image.open(io.BytesIO(front_image_bytes)).convert("RGBA")
+    torch = _get_torch()
 
     with torch.inference_mode():
         mesh = _shape_pipeline(
