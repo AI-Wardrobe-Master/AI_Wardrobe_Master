@@ -4,6 +4,8 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user_id
 from app.db.session import get_db
 from app.schemas.agent import (
+    AgentChatRequest,
+    AgentChatResponse,
     OutfitRecommendationRequest,
     OutfitRecommendationResponse,
 )
@@ -48,3 +50,35 @@ def recommend_outfit(
     # The service returns the response payload only; the route wraps it in the
     # public API envelope to keep schema ownership at the API boundary.
     return OutfitRecommendationResponse(data=data)
+
+
+@router.post(
+    "/chat",
+    response_model=AgentChatResponse,
+)
+def chat_outfit_agent(
+    body: AgentChatRequest,
+    db: Session = Depends(get_db),
+    user_id=Depends(get_current_user_id),
+):
+    """Runs one conversational outfit Agent turn for the authenticated user.
+
+    Args:
+        body: User message, optional conversation id, and optional filters.
+        db: Request-scoped database session.
+        user_id: Authenticated user identifier resolved from the bearer token.
+
+    Returns:
+        Structured chat response with the current recommendation payload.
+
+    Raises:
+        HTTPException: Returns 503 when the LLM provider is not configured.
+    """
+    try:
+        data = OutfitRecommendationAgent(
+            conversation_store=JsonlConversationStore(),
+        ).run_chat(db, user_id=user_id, request=body)
+    except AgentConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return AgentChatResponse(data=data)

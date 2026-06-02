@@ -16,12 +16,19 @@ from app.core.config import settings
 class ConversationStore(Protocol):
     """Storage interface for loading and appending Agent conversation turns."""
 
-    def load_context(self, *, user_id: UUID, limit: int) -> dict[str, Any]:
+    def load_context(
+        self,
+        *,
+        user_id: UUID,
+        limit: int,
+        conversation_id: str | None = None,
+    ) -> dict[str, Any]:
         """Loads recent conversation context for one user.
 
         Args:
             user_id: Authenticated user identifier.
             limit: Maximum number of recent turns to return.
+            conversation_id: Optional product conversation identifier.
 
         Returns:
             Compact conversation context for the Agent prompt.
@@ -34,6 +41,7 @@ class ConversationStore(Protocol):
         user_id: UUID,
         user_message: str,
         assistant_result: dict[str, Any],
+        conversation_id: str | None = None,
     ) -> dict[str, Any]:
         """Appends one conversation turn.
 
@@ -41,6 +49,7 @@ class ConversationStore(Protocol):
             user_id: Authenticated user identifier.
             user_message: Current user message.
             assistant_result: Compact assistant result to persist.
+            conversation_id: Optional product conversation identifier.
 
         Returns:
             Persisted turn payload.
@@ -61,19 +70,26 @@ class JsonlConversationStore:
         self.base_dir = Path(base_dir or settings.AGENT_CONVERSATION_STORAGE_PATH)
         self._lock = threading.RLock()
 
-    def load_context(self, *, user_id: UUID, limit: int) -> dict[str, Any]:
+    def load_context(
+        self,
+        *,
+        user_id: UUID,
+        limit: int,
+        conversation_id: str | None = None,
+    ) -> dict[str, Any]:
         """Loads recent turns and the last recommendation for one user.
 
         Args:
             user_id: Authenticated user identifier.
             limit: Maximum number of recent turns to include.
+            conversation_id: Optional product conversation identifier.
 
         Returns:
             Prompt-safe conversation context.
         """
-        path = self._path_for_user(user_id)
+        path = self._path_for_conversation(user_id, conversation_id)
         if not path.exists():
-            return _empty_context(user_id)
+            return _empty_context(user_id, conversation_id)
 
         # Keep file parsing inside a lock so a local append cannot interleave
         # with a read in the same FastAPI process.
@@ -84,7 +100,7 @@ class JsonlConversationStore:
         last_recommendation = _last_recommendation(prompt_turns)
 
         return {
-            "conversationId": _conversation_id(user_id),
+            "conversationId": _conversation_id(user_id, conversation_id),
             "recentTurns": prompt_turns,
             "lastRecommendation": last_recommendation,
         }
@@ -95,6 +111,7 @@ class JsonlConversationStore:
         user_id: UUID,
         user_message: str,
         assistant_result: dict[str, Any],
+        conversation_id: str | None = None,
     ) -> dict[str, Any]:
         """Appends one turn to the user's JSONL file.
 
@@ -102,19 +119,20 @@ class JsonlConversationStore:
             user_id: Authenticated user identifier.
             user_message: Current user message.
             assistant_result: Compact assistant result to persist.
+            conversation_id: Optional product conversation identifier.
 
         Returns:
             Persisted turn payload.
         """
         turn = {
-            "conversationId": _conversation_id(user_id),
+            "conversationId": _conversation_id(user_id, conversation_id),
             "turnId": str(uuid4()),
             "createdAt": datetime.now(timezone.utc).isoformat(),
             "userId": str(user_id),
             "userMessage": user_message,
             "assistantResult": assistant_result,
         }
-        path = self._path_for_user(user_id)
+        path = self._path_for_conversation(user_id, conversation_id)
 
         # JSONL append keeps each turn inspectable while avoiding a read-modify-
         # write cycle for the whole conversation history.
@@ -136,6 +154,31 @@ class JsonlConversationStore:
         """
         safe_user_id = re.sub(r"[^a-zA-Z0-9_.-]", "_", str(user_id))
         return self.base_dir / f"{safe_user_id}.jsonl"
+
+    def _path_for_conversation(
+        self,
+        user_id: UUID,
+        conversation_id: str | None,
+    ) -> Path:
+        """Builds the JSONL path for a user's conversation.
+
+        Args:
+            user_id: Authenticated user identifier.
+            conversation_id: Optional product conversation identifier.
+
+        Returns:
+            Path to the default user conversation or a named chat conversation.
+        """
+        if conversation_id is None or conversation_id == _conversation_id(user_id):
+            return self._path_for_user(user_id)
+
+        safe_user_id = re.sub(r"[^a-zA-Z0-9_.-]", "_", str(user_id))
+        safe_conversation_id = re.sub(
+            r"[^a-zA-Z0-9_.-]",
+            "_",
+            conversation_id,
+        )
+        return self.base_dir / safe_user_id / f"{safe_conversation_id}.jsonl"
 
 
 def compact_assistant_result(final_result: dict[str, Any]) -> dict[str, Any]:
@@ -160,32 +203,37 @@ def compact_assistant_result(final_result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _empty_context(user_id: UUID) -> dict[str, Any]:
+def _empty_context(
+    user_id: UUID,
+    conversation_id: str | None = None,
+) -> dict[str, Any]:
     """Builds an empty conversation context.
 
     Args:
         user_id: Authenticated user identifier.
+        conversation_id: Optional product conversation identifier.
 
     Returns:
         Empty prompt-safe context.
     """
     return {
-        "conversationId": _conversation_id(user_id),
+        "conversationId": _conversation_id(user_id, conversation_id),
         "recentTurns": [],
         "lastRecommendation": None,
     }
 
 
-def _conversation_id(user_id: UUID) -> str:
+def _conversation_id(user_id: UUID, conversation_id: str | None = None) -> str:
     """Builds the single conversation id used for one user.
 
     Args:
         user_id: Authenticated user identifier.
+        conversation_id: Optional product conversation identifier.
 
     Returns:
         Stable per-user conversation id.
     """
-    return f"user:{user_id}"
+    return conversation_id or f"user:{user_id}"
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:

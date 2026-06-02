@@ -35,6 +35,17 @@ class OutfitRecommendationRequest(BaseModel):
     generate_preview: bool = Field(default=False, alias="generatePreview")
 
 
+class AgentChatRequest(OutfitRecommendationRequest):
+    """Request body for the conversational outfit Agent endpoint."""
+
+    conversation_id: str | None = Field(
+        default=None,
+        alias="conversationId",
+        min_length=1,
+        max_length=128,
+    )
+
+
 class AgentToolResult(BaseModel):
     """Structured result returned by Agent tools."""
 
@@ -91,3 +102,16 @@ class OutfitRecommendationResponse(BaseModel):
 
     success: bool = True
     data: OutfitRecommendationData
+
+
+class AgentChatData(OutfitRecommendationData):
+    """Structured response data returned by the conversational Agent endpoint."""
+
+    assistant_message: str = Field(alias="assistantMessage")
+
+
+class AgentChatResponse(BaseModel):
+    """Top-level API response for conversational outfit recommendation."""
+
+    success: bool = True
+    data: AgentChatData
