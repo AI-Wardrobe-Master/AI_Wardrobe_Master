@@ -73,6 +73,7 @@ class OutfitRecommendationData(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
 
+    conversation_id: str | None = Field(default=None, alias="conversationId")
     provider_name: str = Field(alias="providerName")
     provider_model: str = Field(alias="providerModel")
     outfit: dict[str, Any]

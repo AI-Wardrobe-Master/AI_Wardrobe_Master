@@ -8,6 +8,7 @@ from app.schemas.agent import (
     OutfitRecommendationResponse,
 )
 from app.services.agent_llm_service import AgentConfigurationError
+from app.services.conversation_store import JsonlConversationStore
 from app.services.outfit_agent_service import OutfitRecommendationAgent
 
 router = APIRouter(prefix="/agent", tags=["agent"])
@@ -38,7 +39,9 @@ def recommend_outfit(
     # Configuration failures are infrastructure problems, not user request
     # errors, so expose them as a clear service-unavailable response.
     try:
-        data = OutfitRecommendationAgent().run(db, user_id=user_id, request=body)
+        data = OutfitRecommendationAgent(
+            conversation_store=JsonlConversationStore(),
+        ).run(db, user_id=user_id, request=body)
     except AgentConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

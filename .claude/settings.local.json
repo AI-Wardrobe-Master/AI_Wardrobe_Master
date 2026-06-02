@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(/home/rbc/miniconda3/envs/ai_wardrobe/bin/python *)"
+    ]
+  }
+}

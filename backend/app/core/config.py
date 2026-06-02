@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     LLM_TEMPERATURE: float = 0.2
     LLM_USE_RESPONSE_FORMAT: bool = False
 
+    # Local conversation history for the outfit Agent MVP.
+    AGENT_CONVERSATION_STORAGE_PATH: str = "./storage/agent_conversations"
+    AGENT_CONVERSATION_HISTORY_LIMIT: int = 5
+
     # S3 / MinIO
     S3_ENDPOINT: Optional[str] = None
     S3_ACCESS_KEY: Optional[str] = None
@@ -102,6 +106,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _reject_default_secret_key_in_prod(self):
+        """Rejects unsafe default secrets in production-like environments."""
         if self.SECRET_KEY == _DEFAULT_SECRET_KEY_PLACEHOLDER:
             env_norm = self.ENV.strip().lower()
             # Match anything starting with 'prod' — 'prod', 'production',
