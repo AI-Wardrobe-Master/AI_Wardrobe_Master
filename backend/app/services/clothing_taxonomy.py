@@ -32,12 +32,18 @@ WEATHER_TYPE_OPTIONS = [
     "clear", "cloudy", "rain", "snow", "windy", "humid", "hot", "cold",
 ]
 
+# Weather profile values are intentionally generated from controlled season and
+# weather type vocabularies. This prevents free-form weather tags from making
+# wardrobe search harder for the Agent.
 WEATHER_PROFILE_OPTIONS = [
     f"{season}_{weather_type}"
     for season in SEASON_OPTIONS
     for weather_type in WEATHER_TYPE_OPTIONS
 ]
 
+# Clothing item `category` and preview API `garmentCategory` are different
+# concepts. This mapping is the explicit bridge from wardrobe data to preview
+# generation slots.
 CATEGORY_TO_PREVIEW_GARMENT_CATEGORY = {
     "T_SHIRT": "TOP",
     "SHIRT": "TOP",
@@ -67,6 +73,14 @@ CATEGORY_TO_PREVIEW_GARMENT_CATEGORY = {
 
 
 def get_clothing_taxonomy() -> dict:
+    """Returns the controlled clothing taxonomy used by UI and Agent tools.
+
+    Returns:
+        A dictionary containing editable clothing attributes, controlled weather
+        tags, and the category-to-preview-slot mapping.
+    """
+    # Keep all taxonomy values behind one function so `/attributes/options` and
+    # Agent tooling cannot drift into different vocabularies.
     return {
         "style": STYLE_OPTIONS,
         "season": SEASON_OPTIONS,

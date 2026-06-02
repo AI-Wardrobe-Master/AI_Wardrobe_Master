@@ -11,10 +11,14 @@ router = APIRouter(prefix="/attributes", tags=["Attributes"])
 
 @router.get("/options")
 def get_attribute_options():
+    """Returns controlled clothing attribute options.
+
+    Returns:
+        API envelope containing style, season, category, weather, and preview
+        mapping taxonomy values.
     """
-    GET /attributes/options
-    返回 2.3 可配置属性及 2.1/2.2 属性的预定义选项，供编辑界面使用。
-    """
+    # Delegate to the shared taxonomy service so the UI and Agent expose the
+    # same controlled vocabularies.
     return {
         "success": True,
         "data": get_clothing_taxonomy(),
