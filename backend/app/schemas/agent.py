@@ -6,6 +6,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class AgentTagFilter(BaseModel):
+    """Public request tag filter for the outfit recommendation endpoint."""
+
     model_config = ConfigDict(extra="forbid")
 
     key: str
@@ -13,6 +15,8 @@ class AgentTagFilter(BaseModel):
 
 
 class OutfitRecommendationRequest(BaseModel):
+    """Request body for one outfit recommendation Agent run."""
+
     model_config = ConfigDict(
         extra="forbid",
         populate_by_name=True,
@@ -20,6 +24,8 @@ class OutfitRecommendationRequest(BaseModel):
     )
 
     message: str = Field(min_length=1)
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
     city: str | None = None
     target_date: date | None = Field(default=None, alias="targetDate")
     wardrobe_id: UUID | None = Field(default=None, alias="wardrobeId")
@@ -30,6 +36,8 @@ class OutfitRecommendationRequest(BaseModel):
 
 
 class AgentToolResult(BaseModel):
+    """Structured result returned by Agent tools."""
+
     status: Literal["success", "skipped", "failed"]
     error_code: str | None = Field(default=None, alias="errorCode")
     retryable: bool = False
@@ -40,7 +48,29 @@ class AgentToolResult(BaseModel):
     model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
 
 
+class AgentToolTagInput(BaseModel):
+    """Tag filter accepted by Agent tool calls."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    key: str
+    value: str
+
+
+class SearchWardrobeItemsToolInput(BaseModel):
+    """Input schema for the `search_wardrobe_items` Agent tool."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    category: str | None = None
+    source: Literal["OWNED", "IMPORTED"] | None = None
+    tags: list[AgentToolTagInput] | None = None
+    limit: int = Field(default=20, ge=1, le=50)
+
+
 class OutfitRecommendationData(BaseModel):
+    """Structured response data returned by the outfit Agent endpoint."""
+
     model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
 
     provider_name: str = Field(alias="providerName")
@@ -56,5 +86,7 @@ class OutfitRecommendationData(BaseModel):
 
 
 class OutfitRecommendationResponse(BaseModel):
+    """Top-level API response for outfit recommendation."""
+
     success: bool = True
     data: OutfitRecommendationData

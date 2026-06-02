@@ -18,18 +18,30 @@ from app.core.config import settings
 
 
 class BlobTooLargeError(Exception):
+    """Raised when streamed blob data exceeds the configured size limit."""
+
     def __init__(self, actual: int, limit: int):
+        """Initializes the blob size error.
+
+        Args:
+            actual: Actual byte count observed.
+            limit: Maximum allowed byte count.
+        """
         self.actual = actual
         self.limit = limit
         super().__init__(f"Blob size {actual} exceeds limit {limit}")
 
 
 class BlobNotFoundError(Exception):
+    """Raised when a blob hash cannot be found in the backing storage."""
+
     pass
 
 
 @dataclass(frozen=True)
 class BlobPutResult:
+    """Result returned after writing blob bytes to temporary storage."""
+
     blob_hash: str
     byte_size: int
     mime_type: str
@@ -40,11 +52,13 @@ class LocalBlobStorage:
     """Content-addressed local filesystem storage."""
 
     def __init__(self):
+        """Initializes the local blob directory."""
         self.base = Path(settings.LOCAL_STORAGE_PATH) / "blobs"
         self.base.mkdir(parents=True, exist_ok=True)
 
     def path_for(self, blob_hash: str) -> str:
-        return str(self.base / blob_hash[:2] / blob_hash[2:4] / blob_hash)
+        """Return the absolute content-addressed path for one blob hash."""
+        return str((self.base / blob_hash[:2] / blob_hash[2:4] / blob_hash).resolve())
 
     async def put_to_temp(
         self,
@@ -95,15 +109,45 @@ class LocalBlobStorage:
         )
 
     def move_temp_to_final(self, temp_path: str, blob_hash: str) -> None:
-        """Atomic rename temp file into content-addressed location."""
+        """Move or copy a temp file into its content-addressed location."""
         final = self.path_for(blob_hash)
         os.makedirs(os.path.dirname(final), exist_ok=True)
-        os.replace(temp_path, final)
+        try:
+            os.replace(temp_path, final)
+        except PermissionError:
+            # Some Windows sandboxed runs allow writing files but reject rename
+            # or delete operations on NamedTemporaryFile outputs. Copying keeps
+            # the blob addressable even when temp cleanup has to be skipped.
+            with open(temp_path, "rb") as source, open(final, "wb") as target:
+                shutil.copyfileobj(source, target)
+            try:
+                os.unlink(temp_path)
+            except PermissionError:
+                pass
 
     def exists(self, blob_hash: str) -> bool:
+        """Checks whether a blob file exists locally.
+
+        Args:
+            blob_hash: SHA-256 blob hash.
+
+        Returns:
+            True when the content-addressed file exists.
+        """
         return os.path.exists(self.path_for(blob_hash))
 
     async def get_bytes(self, blob_hash: str) -> bytes:
+        """Reads a local blob into memory.
+
+        Args:
+            blob_hash: SHA-256 blob hash.
+
+        Returns:
+            Blob bytes.
+
+        Raises:
+            BlobNotFoundError: If the blob file does not exist.
+        """
         path = self.path_for(blob_hash)
         if not os.path.exists(path):
             raise BlobNotFoundError(blob_hash)
@@ -117,6 +161,7 @@ class LocalBlobStorage:
             raise BlobNotFoundError(blob_hash)
 
         def _iter():
+            """Yields blob file chunks."""
             with open(path, "rb") as f:
                 while True:
                     chunk = f.read(65536)
@@ -127,6 +172,11 @@ class LocalBlobStorage:
         return _iter()
 
     async def physical_delete(self, blob_hash: str) -> None:
+        """Physically deletes a local blob file if present.
+
+        Args:
+            blob_hash: SHA-256 blob hash.
+        """
         path = self.path_for(blob_hash)
         if os.path.exists(path):
             os.unlink(path)
@@ -136,6 +186,7 @@ class S3BlobStorage:
     """Content-addressed S3 storage."""
 
     def __init__(self):
+        """Initializes the S3 client and bucket settings."""
         import boto3
         self.client = boto3.client(
             "s3",
@@ -147,9 +198,28 @@ class S3BlobStorage:
         self.bucket = settings.S3_BUCKET
 
     def path_for(self, blob_hash: str) -> str:
+        """Returns the S3 object key for one blob hash.
+
+        Args:
+            blob_hash: SHA-256 blob hash.
+
+        Returns:
+            S3 object key.
+        """
         return f"blobs/{blob_hash[:2]}/{blob_hash[2:4]}/{blob_hash}"
 
     async def put_to_temp(self, data, *, claimed_mime_type, max_size, chunk_size=65536):
+        """Uploads streamed bytes to S3 and returns blob metadata.
+
+        Args:
+            data: Binary stream to read.
+            claimed_mime_type: MIME type reported by the caller.
+            max_size: Maximum allowed byte size.
+            chunk_size: Read chunk size.
+
+        Returns:
+            Blob put result.
+        """
         hasher = hashlib.sha256()
         buf = io.BytesIO()
         size = 0
@@ -179,9 +249,23 @@ class S3BlobStorage:
         )
 
     def move_temp_to_final(self, temp_path: str, blob_hash: str) -> None:
+        """No-ops because S3 upload already writes to the final key.
+
+        Args:
+            temp_path: Unused temp path.
+            blob_hash: SHA-256 blob hash.
+        """
         pass  # S3 put_to_temp already uploads
 
     def exists(self, blob_hash: str) -> bool:
+        """Checks whether a blob object exists in S3.
+
+        Args:
+            blob_hash: SHA-256 blob hash.
+
+        Returns:
+            True when S3 has the blob object.
+        """
         try:
             self.client.head_object(Bucket=self.bucket, Key=self.path_for(blob_hash))
             return True
@@ -189,20 +273,51 @@ class S3BlobStorage:
             return False
 
     async def get_bytes(self, blob_hash: str) -> bytes:
+        """Reads a blob object from S3 into memory.
+
+        Args:
+            blob_hash: SHA-256 blob hash.
+
+        Returns:
+            Blob bytes.
+        """
         resp = self.client.get_object(Bucket=self.bucket, Key=self.path_for(blob_hash))
         return resp["Body"].read()
 
     async def open_stream(self, blob_hash: str):
+        """Opens a streaming iterator for a blob object in S3.
+
+        Args:
+            blob_hash: SHA-256 blob hash.
+
+        Returns:
+            Iterator yielding byte chunks.
+        """
         resp = self.client.get_object(Bucket=self.bucket, Key=self.path_for(blob_hash))
         def _iter():
+            """Yields S3 response chunks."""
             for chunk in resp["Body"].iter_chunks(65536):
                 yield chunk
         return _iter()
 
     async def physical_delete(self, blob_hash: str) -> None:
+        """Deletes a blob object from S3.
+
+        Args:
+            blob_hash: SHA-256 blob hash.
+        """
         self.client.delete_object(Bucket=self.bucket, Key=self.path_for(blob_hash))
 
     def get_presigned_url(self, blob_hash: str, expires_in: int = 3600) -> str:
+        """Builds a temporary URL for reading an S3 blob.
+
+        Args:
+            blob_hash: SHA-256 blob hash.
+            expires_in: Expiration time in seconds.
+
+        Returns:
+            Presigned S3 URL.
+        """
         return self.client.generate_presigned_url(
             "get_object",
             Params={"Bucket": self.bucket, "Key": self.path_for(blob_hash)},

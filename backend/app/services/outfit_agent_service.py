@@ -1,12 +1,12 @@
+import json
+from datetime import date
 from typing import Any, Literal, TypedDict
 from uuid import UUID
 
 from langgraph.graph import END, START, StateGraph
-from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.models.clothing_item import ClothingItem, Image
-from app.models.wardrobe import WardrobeItem
+from app.models.clothing_item import ClothingItem
 from app.schemas.agent import AgentToolResult, OutfitRecommendationRequest
 from app.services.agent_llm_service import (
     AgentConfigurationError,
@@ -17,6 +17,13 @@ from app.services.clothing_taxonomy import (
     CATEGORY_TO_PREVIEW_GARMENT_CATEGORY,
     get_clothing_taxonomy,
 )
+from app.services.outfit_agent_tools import (
+    OutfitAgentToolExecutor,
+    valid_tag_values_by_key,
+)
+from app.services.weather_client import WeatherClient, WeatherClientError
+
+MAX_TOOL_ROUNDS = 8
 
 
 class OutfitAgentState(TypedDict, total=False):
@@ -29,6 +36,7 @@ class OutfitAgentState(TypedDict, total=False):
     taxonomy: dict[str, Any]
     weather_context: dict[str, Any]
     wardrobe_items: list[dict[str, Any]]
+    tool_cache: dict[str, AgentToolResult]
     recommendation: dict[str, Any]
     preview: AgentToolResult
     final: dict[str, Any]
@@ -42,14 +50,21 @@ class OutfitRecommendationAgent:
     LLM is used for the recommendation decision itself.
     """
 
-    def __init__(self, llm: OpenAICompatibleChatClient | None = None) -> None:
+    def __init__(
+        self,
+        llm: OpenAICompatibleChatClient | None = None,
+        weather_client: WeatherClient | None = None,
+    ) -> None:
         """Initializes the Agent and compiles its LangGraph workflow.
 
         Args:
             llm: Optional chat client override used by tests or alternate
                 OpenAI-compatible providers.
+            weather_client: Optional weather client override. When None a real
+                WeatherClient is used, which fetches live Open-Meteo data.
         """
         self.llm = llm or OpenAICompatibleChatClient()
+        self.weather_client = weather_client or WeatherClient()
         self.graph = self._build_graph()
 
     def run(
@@ -93,27 +108,25 @@ class OutfitRecommendationAgent:
         Returns:
             A compiled LangGraph workflow ready to invoke.
         """
-        # Register every business tool as a graph node. This makes the product
-        # flow explicit: weather context, taxonomy, wardrobe retrieval, model
-        # decision, optional preview, then final API response.
+        # Register the outer business workflow as graph nodes. The recommendation
+        # node contains its own LLM tool loop, while weather/taxonomy/preview
+        # remain deterministic graph stages.
         workflow = StateGraph(OutfitAgentState)
         workflow.add_node("get_weather", self._get_weather)
         workflow.add_node("get_clothing_taxonomy", self._get_clothing_taxonomy)
-        workflow.add_node("search_wardrobe_items", self._search_wardrobe_items)
-        workflow.add_node("compose_outfit", self._compose_outfit)
+        workflow.add_node("outfit_agent_loop", self._outfit_agent_loop)
         workflow.add_node("generate_outfit_preview", self._generate_outfit_preview)
         workflow.add_node("final_response", self._final_response)
 
         workflow.add_edge(START, "get_weather")
         workflow.add_edge("get_weather", "get_clothing_taxonomy")
-        workflow.add_edge("get_clothing_taxonomy", "search_wardrobe_items")
-        workflow.add_edge("search_wardrobe_items", "compose_outfit")
+        workflow.add_edge("get_clothing_taxonomy", "outfit_agent_loop")
 
         # Preview is conditional because the first JSON-only endpoint cannot
         # upload a person image. The graph still models the node so later work
         # can connect the real preview API without reshaping the workflow.
         workflow.add_conditional_edges(
-            "compose_outfit",
+            "outfit_agent_loop",
             self._preview_branch,
             {
                 "preview": "generate_outfit_preview",
@@ -125,7 +138,11 @@ class OutfitRecommendationAgent:
         return workflow.compile()
 
     def _get_weather(self, state: OutfitAgentState) -> dict[str, Any]:
-        """Adds weather context to the graph state.
+        """Fetches real weather for the request location and updates state.
+
+        Priority: GPS coordinates → city geocoding → skip. When the location
+        or date is missing, or the provider fails, this node produces a
+        degraded result so the model still knows not to invent weather facts.
 
         Args:
             state: Current LangGraph state.
@@ -134,36 +151,136 @@ class OutfitRecommendationAgent:
             Partial state update containing weather context and tool result.
         """
         request = state["request"]
+        target_date = request.target_date or date.today()
 
-        # Weather is a placeholder in the first Agent version. The important
-        # behavior is explicit degradation: the model is told not to invent
-        # exact weather facts when no provider has been called.
-        data = {
-            "city": request.city,
-            "targetDate": request.target_date.isoformat()
-            if request.target_date else None,
-            "note": (
-                "Weather provider is not connected yet. Infer weather only from "
-                "the user's message, city, and date if present."
-            ),
+        # A partial coordinate pair is treated as "no location" so callers
+        # must supply both latitude and longitude together.
+        has_coords = (
+            request.latitude is not None and request.longitude is not None
+        )
+        has_city = bool(request.city)
+        tools = dict(state.get("tools", {}))
+
+        # ── no location at all ────────────────────────────────────────
+        if not has_coords and not has_city:
+            data: dict[str, Any] = {
+                "city": None,
+                "targetDate": target_date.isoformat(),
+                "note": (
+                    "No city or GPS coordinates were provided. Infer weather "
+                    "only from the user's message and date if present."
+                ),
+            }
+            result = AgentToolResult(
+                status="skipped",
+                errorCode="LOCATION_NOT_PROVIDED",
+                retryable=False,
+                messageForAgent=(
+                    "No city or coordinates provided. Do not invent exact "
+                    "temperature, precipitation, or wind values."
+                ),
+                messageForUser="未提供城市或GPS坐标信息，暂不获取实时天气。",
+                data=data,
+            )
+            tools["get_weather"] = result
+            return {"tools": tools, "weather_context": data}
+
+        # ── fetch real forecast ───────────────────────────────────────
+        try:
+            forecast = self.weather_client.fetch_forecast(
+                target_date,
+                city=request.city if has_city else None,
+                latitude=request.latitude if has_coords else None,
+                longitude=request.longitude if has_coords else None,
+            )
+        except WeatherClientError as exc:
+            location_label = request.city or "当前位置"
+            data = {
+                "city": request.city,
+                "targetDate": target_date.isoformat(),
+                "latitude": request.latitude if has_coords else None,
+                "longitude": request.longitude if has_coords else None,
+                "note": (
+                    "Weather provider request failed. Do not invent exact "
+                    "temperature, precipitation, or wind values."
+                ),
+            }
+            result = AgentToolResult(
+                status="failed",
+                errorCode="WEATHER_PROVIDER_ERROR",
+                retryable=True,
+                messageForAgent=(
+                    f"Weather fetch failed for {location_label}: {exc}. "
+                    "Do not invent weather facts."
+                ),
+                messageForUser="实时天气服务暂时不可用，本次只根据你的文字需求判断穿搭约束。",
+                data=data,
+            )
+            tools["get_weather"] = result
+            return {"tools": tools, "weather_context": data}
+
+        # ── forecast unavailable for this location / date ─────────────
+        if forecast is None:
+            location_label = request.city or "当前位置"
+            data = {
+                "city": request.city,
+                "targetDate": target_date.isoformat(),
+                "latitude": request.latitude if has_coords else None,
+                "longitude": request.longitude if has_coords else None,
+                "note": (
+                    "Weather data is not available for this location or date. "
+                    "Infer weather only from the user's message."
+                ),
+            }
+            result = AgentToolResult(
+                status="skipped",
+                errorCode="WEATHER_NOT_AVAILABLE",
+                retryable=False,
+                messageForAgent=(
+                    f"No forecast available for {location_label!r} on "
+                    f"{target_date.isoformat()}. Do not invent weather facts."
+                ),
+                messageForUser=(
+                    f"暂无{location_label} {target_date.isoformat()} 的天气数据。"
+                ),
+                data=data,
+            )
+            tools["get_weather"] = result
+            return {"tools": tools, "weather_context": data}
+
+        # ── success ───────────────────────────────────────────────────
+        location_label = forecast.city or "当前位置"
+        weather_context: dict[str, Any] = {
+            "city": forecast.city,
+            "targetDate": forecast.forecast_date.isoformat(),
+            "temperatureMax": forecast.temperature_max,
+            "temperatureMin": forecast.temperature_min,
+            "weatherType": forecast.weather_type,
+            "precipitation": forecast.precipitation,
+            "windSpeed": forecast.wind_speed,
+            "source": "open-meteo",
+            "sourceType": forecast.source,
         }
         result = AgentToolResult(
-            status="skipped",
-            errorCode="WEATHER_PROVIDER_NOT_CONFIGURED",
-            retryable=False,
+            status="success",
+            data=weather_context,
             messageForAgent=(
-                "No external weather facts are available. Do not invent exact "
-                "temperature, precipitation, or wind values."
+                f"Real weather for {location_label} on "
+                f"{forecast.forecast_date.isoformat()}: "
+                f"{forecast.weather_type}, "
+                f"{forecast.temperature_min}°C–{forecast.temperature_max}°C, "
+                f"precipitation {forecast.precipitation} mm. "
+                "Use these facts to choose weather_type and weather_profile "
+                "tags when searching wardrobe items."
             ),
-            messageForUser="暂未接入实时天气服务，本次只根据你的文字需求判断穿搭约束。",
-            data=data,
+            messageForUser=(
+                f"{location_label} {forecast.forecast_date.isoformat()} 天气："
+                f"{forecast.weather_type}，"
+                f"{forecast.temperature_min}°C–{forecast.temperature_max}°C"
+            ),
         )
-
-        # Tool results are accumulated for debugging, final response metadata,
-        # and future failure-recovery logic.
-        tools = dict(state.get("tools", {}))
         tools["get_weather"] = result
-        return {"tools": tools, "weather_context": data}
+        return {"tools": tools, "weather_context": weather_context}
 
     def _get_clothing_taxonomy(self, state: OutfitAgentState) -> dict[str, Any]:
         """Loads controlled taxonomy values for the recommendation prompt.
@@ -192,116 +309,76 @@ class OutfitRecommendationAgent:
         tools["get_clothing_taxonomy"] = result
         return {"tools": tools, "taxonomy": taxonomy}
 
-    def _search_wardrobe_items(self, state: OutfitAgentState) -> dict[str, Any]:
-        """Retrieves wardrobe candidates available to the Agent.
+    def _outfit_agent_loop(self, state: OutfitAgentState) -> dict[str, Any]:
+        """Runs the LLM-controlled outfit recommendation tool loop.
 
         Args:
-            state: Current LangGraph state.
+            state: Current LangGraph state with request, weather, and taxonomy.
 
         Returns:
-            Partial state update containing candidate wardrobe items.
+            Partial state update containing recommendation, trace, and retrieved
+            wardrobe candidates.
         """
-        request = state["request"]
-        db = state["db"]
-
-        # Start with the security boundary: only the authenticated user's
-        # non-deleted clothing items may be considered.
-        q = db.query(ClothingItem).filter(
-            ClothingItem.user_id == state["user_id"],
-            ClothingItem.deleted_at.is_(None),
+        executor = OutfitAgentToolExecutor(
+            db=state["db"],
+            user_id=state["user_id"],
+            request=state["request"],
+            taxonomy=state.get("taxonomy", {}),
+            clothing_payload_builder=self._clothing_item_payload,
         )
+        messages = self._agent_loop_messages(state)
+        tool_cache: dict[str, AgentToolResult] = dict(state.get("tool_cache", {}))
+        tools_trace = dict(state.get("tools", {}))
+        wardrobe_by_id: dict[str, dict[str, Any]] = {}
+        final_content = ""
+        call_index = 0
 
-        # Optional source filtering supports owned/imported separation without
-        # exposing the unrelated wardrobe `type` field to the Agent.
-        if request.source is not None:
-            q = q.filter(ClothingItem.source == request.source)
-
-        # Wardrobe filtering uses the junction table, because wardrobes are
-        # containers and do not duplicate clothing item data.
-        if request.wardrobe_id is not None:
-            q = q.join(
-                WardrobeItem,
-                WardrobeItem.clothing_item_id == ClothingItem.id,
-            ).filter(WardrobeItem.wardrobe_id == request.wardrobe_id)
-
-        # Agent tool input intentionally exposes only structured final_tags, not
-        # free-text query. This keeps retrieval grounded in confirmed metadata.
-        if request.tags:
-            for tag in request.tags:
-                q = q.filter(
-                    ClothingItem.final_tags.contains(
-                        [{"key": tag.key, "value": tag.value}]
-                    )
-                )
-
-        # Convert ORM rows into compact JSON-like payloads before they enter
-        # the model prompt. The LLM never sees SQLAlchemy objects.
-        items = q.order_by(ClothingItem.created_at.desc()).limit(request.limit).all()
-        payload = [self._clothing_item_payload(db, item) for item in items]
-        status: Literal["success", "failed"] = "success"
-        result = AgentToolResult(
-            status=status,
-            data={"items": payload, "total": len(payload)},
-            messageForAgent=(
-                "These are the only wardrobe items available to recommend from. "
-                "If a needed slot is missing, say so instead of inventing an item."
-            ),
-        )
-
-        # Store retrieval output in the graph trace and direct state so the
-        # compose node can use the candidates without another database query.
-        tools = dict(state.get("tools", {}))
-        tools["search_wardrobe_items"] = result
-        return {"tools": tools, "wardrobe_items": payload}
-
-    def _compose_outfit(self, state: OutfitAgentState) -> dict[str, Any]:
-        """Asks the LLM to compose an outfit from retrieved candidates.
-
-        Args:
-            state: Current LangGraph state with weather, taxonomy, and wardrobe
-                candidates.
-
-        Returns:
-            Partial state update containing the normalized recommendation.
-        """
-        request = state["request"]
-
-        # The prompt payload is deliberately structured. This gives the model
-        # enough context for judgment while making it easy to validate the
-        # returned clothing ids against the retrieval result.
-        prompt_payload = {
-            "userRequest": request.model_dump(mode="json", by_alias=True),
-            "weatherContext": state.get("weather_context", {}),
-            "taxonomy": state.get("taxonomy", {}),
-            "wardrobeItems": state.get("wardrobe_items", []),
-        }
-
-        # The system prompt defines a strict JSON contract and explicitly bans
-        # recommending items that were not returned by the wardrobe tool.
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "You are an outfit recommendation agent for an AI wardrobe app. "
-                    "Return only a JSON object. Do not recommend wardrobe items that "
-                    "are not present in wardrobeItems. If a category is missing, add "
-                    "it to missingItems. The JSON schema is: "
-                    "{outfit:{name:string,items:[{clothingItemId:string,slot:string,"
-                    "reason:string}]},recommendationReason:string,weatherReason:string,"
-                    "preferenceReason:string|null,missingItems:string[],userMessage:string}."
-                ),
-            },
-            {
-                "role": "user",
-                "content": _json_dumps(prompt_payload),
-            },
-        ]
-
-        # LLM failures are degraded into a structured recommendation failure
-        # instead of crashing the whole graph after the route has already
-        # entered the business workflow.
         try:
-            recommendation = self.llm.complete_json(messages)
+            for _ in range(MAX_TOOL_ROUNDS):
+                assistant_message = self.llm.complete_message(
+                    messages,
+                    tools=executor.tool_schemas(),
+                    tool_choice="auto",
+                )
+                tool_calls = assistant_message.get("tool_calls") or []
+
+                # No tool calls means the model has decided to finish with a
+                # final recommendation message.
+                if not tool_calls:
+                    final_content = _message_content_as_text(
+                        assistant_message.get("content")
+                    )
+                    break
+
+                messages.append(_assistant_message_for_history(assistant_message))
+                for tool_call in tool_calls:
+                    call_index += 1
+                    result = executor.execute(
+                        tool_name=_tool_call_name(tool_call),
+                        raw_arguments=_tool_call_arguments(tool_call),
+                        cache=tool_cache,
+                    )
+                    tools_trace[f"{_tool_call_name(tool_call)}#{call_index}"] = result
+                    tools_trace[_tool_call_name(tool_call)] = result
+                    _collect_wardrobe_items(wardrobe_by_id, result)
+                    messages.append(_tool_result_message(tool_call, result))
+
+            # If the model keeps calling tools until the budget is exhausted,
+            # disable tools for one final response based on accumulated facts.
+            if not final_content:
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "工具调用预算已经用完。不要再调用工具，只能基于已经返回的"
+                            "衣柜工具结果输出最终 JSON。"
+                        ),
+                    }
+                )
+                final_message = self.llm.complete_message(messages)
+                final_content = _message_content_as_text(final_message.get("content"))
+
+            recommendation = _json_loads_object(final_content)
         except (AgentConfigurationError, AgentLLMError) as exc:
             recommendation = {
                 "outfit": {"name": "推荐生成失败", "items": []},
@@ -312,14 +389,101 @@ class OutfitRecommendationAgent:
                 "userMessage": f"暂时无法生成穿搭推荐：{exc}",
                 "error": str(exc),
             }
+        except ValueError as exc:
+            recommendation = {
+                "outfit": {"name": "推荐解析失败", "items": []},
+                "recommendationReason": "模型没有返回符合要求的 JSON。",
+                "weatherReason": None,
+                "preferenceReason": None,
+                "missingItems": [],
+                "userMessage": f"暂时无法解析穿搭推荐：{exc}",
+                "error": str(exc),
+            }
 
         # Normalize every model result before later nodes use it. This prevents
         # hallucinated clothing ids from reaching preview generation.
+        wardrobe_items = list(wardrobe_by_id.values())
         recommendation = self._normalize_recommendation(
             recommendation,
-            state.get("wardrobe_items", []),
+            wardrobe_items,
         )
-        return {"recommendation": recommendation}
+        return {
+            "recommendation": recommendation,
+            "wardrobe_items": wardrobe_items,
+            "tool_cache": tool_cache,
+            "tools": tools_trace,
+        }
+
+    def _agent_loop_messages(self, state: OutfitAgentState) -> list[dict[str, Any]]:
+        """Builds the initial messages for the LLM tool loop.
+
+        Args:
+            state: Current LangGraph state.
+
+        Returns:
+            OpenAI-compatible message list for the recommendation loop.
+        """
+        taxonomy = state.get("taxonomy", {})
+        prompt_payload = {
+            "userRequest": state["request"].model_dump(mode="json", by_alias=True),
+            "weatherContext": state.get("weather_context", {}),
+            "taxonomy": {
+                "category": taxonomy.get("category", []),
+                "previewCategoryMapping": taxonomy.get("previewCategoryMapping", {}),
+                "validTagValuesByKey": valid_tag_values_by_key(taxonomy),
+            },
+            "responseSchema": {
+                "outfit": {
+                    "name": "string",
+                    "items": [
+                        {
+                            "clothingItemId": "string",
+                            "slot": "top|bottom|shoes|outerwear|accessory",
+                        }
+                    ],
+                },
+                "recommendationReason": "string",
+                "weatherReason": "string|null",
+                "preferenceReason": "string|null",
+                "missingItems": ["string"],
+                "userMessage": "string",
+            },
+        }
+
+        # The first system message is the behavioral contract. It tells the
+        # model when to use tools and how to stop.
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "You are an outfit recommendation agent for an AI wardrobe "
+                    "app. Use search_wardrobe_items when you need real wardrobe "
+                    "items. Do not invent clothing ids. Recommend only clothing "
+                    "ids returned by tools in this run. You may call the tool "
+                    "multiple times for top, bottom, shoes, or outerwear. A complete "
+                    "outfit normally needs top, bottom, and shoes; outerwear is "
+                    "optional unless weather or user intent requires it. Do not "
+                    "mark a slot as missing until you have searched that slot, "
+                    "or searched broadly and confirmed no returned item can fill it. "
+                    "If a needed slot is missing from the current tool results, call "
+                    "search_wardrobe_items again with a broader or slot-specific "
+                    "category before finalizing. Stop calling tools only after you "
+                    "have enough returned items for the outfit or have evidence that "
+                    "a slot is unavailable. Return a raw JSON object matching "
+                    "responseSchema; do not wrap it in markdown fences. Do not put "
+                    "per-item reasons inside outfit.items. Explain the whole outfit "
+                    "once in recommendationReason, and explain weather only in "
+                    "weatherReason. "
+                    "Tags must use validTagValuesByKey. For rainy weather use "
+                    "weather_type=rain or weather_profile values; never use a "
+                    "tag key named weather."
+                ),
+            },
+            {
+                "role": "user",
+                "content": _json_dumps(prompt_payload),
+            },
+        ]
 
     def _preview_branch(self, state: OutfitAgentState) -> Literal["preview", "final"]:
         """Chooses whether to enter the preview node.
@@ -416,38 +580,9 @@ class OutfitRecommendationAgent:
         Returns:
             JSON-like clothing item summary safe to expose to the LLM.
         """
-        # Pick one display image for the Agent/client response. The query favors
-        # processed/front images where available, while still falling back to
-        # original/back images.
-        image = (
-            db.query(Image)
-            .filter(
-                Image.clothing_item_id == item.id,
-                or_(
-                    Image.image_type == "PROCESSED_FRONT",
-                    Image.image_type == "ORIGINAL_FRONT",
-                    Image.image_type == "PROCESSED_BACK",
-                    Image.image_type == "ORIGINAL_BACK",
-                ),
-            )
-            .order_by(Image.image_type.desc())
-            .first()
-        )
-
-        # Translate the database image type into the existing file route kind.
-        image_url = None
-        if image is not None:
-            kind = {
-                "PROCESSED_FRONT": "processed-front",
-                "ORIGINAL_FRONT": "original-front",
-                "PROCESSED_BACK": "processed-back",
-                "ORIGINAL_BACK": "original-back",
-            }[image.image_type]
-            image_url = f"/files/clothing-items/{item.id}/{kind}"
-
-        # The payload distinguishes source category from preview garment slot so
-        # the model can reason over clothing type while preview tooling receives
-        # only supported TOP/BOTTOM/SHOES slots.
+        # Keep the model-facing item summary small. Preview generation resolves
+        # garment images from `id`, so image URLs and storage details are not
+        # part of the search tool contract.
         return {
             "id": str(item.id),
             "name": item.name,
@@ -458,10 +593,6 @@ class OutfitRecommendationAgent:
             "color": _first_tag_value(item.final_tags or [], "color"),
             "material": item.material,
             "style": item.style,
-            "source": item.source,
-            "imageUrl": image_url,
-            "finalTags": item.final_tags or [],
-            "customTags": item.custom_tags or [],
         }
 
     def _normalize_recommendation(
@@ -488,13 +619,22 @@ class OutfitRecommendationAgent:
         if not isinstance(outfit, dict):
             outfit = {"name": "穿搭推荐", "items": []}
 
-        # Keep only dictionary items that reference known clothing ids. This is
-        # the main guardrail between LLM output and backend tool execution.
+        # Keep only dictionary items that reference known clothing ids, and trim
+        # each selected item back to the public response schema. Item-level
+        # reasons are intentionally excluded; the model explains the outfit once
+        # in `recommendationReason`.
         items = outfit.get("items") if isinstance(outfit.get("items"), list) else []
-        outfit["items"] = [
-            item for item in items
-            if isinstance(item, dict) and item.get("clothingItemId") in known_ids
-        ]
+        normalized_items = []
+        for item in items:
+            if not isinstance(item, dict) or item.get("clothingItemId") not in known_ids:
+                continue
+            normalized_items.append(
+                {
+                    "clothingItemId": item.get("clothingItemId"),
+                    "slot": item.get("slot"),
+                }
+            )
+        outfit["items"] = normalized_items
 
         # Fill optional fields with stable defaults so FastAPI response
         # serialization does not depend on perfect model output.
@@ -558,6 +698,138 @@ def _first_tag_value(tags: list[dict[str, Any]], key: str) -> str | None:
         if tag.get("key") == key:
             return tag.get("value")
     return None
+
+
+def _assistant_message_for_history(message: dict[str, Any]) -> dict[str, Any]:
+    """Normalizes an assistant message before appending tool results.
+
+    Args:
+        message: Assistant message returned by the provider.
+
+    Returns:
+        Message object suitable for the next OpenAI-compatible request.
+    """
+    normalized = {
+        "role": "assistant",
+        "content": message.get("content"),
+    }
+
+    # Tool result messages must follow the exact assistant `tool_calls` that
+    # caused them, including provider-generated ids.
+    if message.get("tool_calls"):
+        normalized["tool_calls"] = message["tool_calls"]
+    return normalized
+
+
+def _tool_result_message(
+    tool_call: dict[str, Any],
+    result: AgentToolResult,
+) -> dict[str, Any]:
+    """Builds an OpenAI-compatible tool result message.
+
+    Args:
+        tool_call: Provider tool call object.
+        result: Backend tool execution result.
+
+    Returns:
+        `role=tool` message to append to the model conversation.
+    """
+    return {
+        "role": "tool",
+        "tool_call_id": tool_call.get("id"),
+        "name": _tool_call_name(tool_call),
+        "content": result.model_dump_json(by_alias=True),
+    }
+
+
+def _tool_call_name(tool_call: dict[str, Any]) -> str:
+    """Extracts the function name from a provider tool call.
+
+    Args:
+        tool_call: Provider tool call object.
+
+    Returns:
+        Function name, or an empty string when missing.
+    """
+    return str(tool_call.get("function", {}).get("name") or "")
+
+
+def _tool_call_arguments(tool_call: dict[str, Any]) -> str | dict[str, Any] | None:
+    """Extracts raw function arguments from a provider tool call.
+
+    Args:
+        tool_call: Provider tool call object.
+
+    Returns:
+        Raw arguments string or object.
+    """
+    return tool_call.get("function", {}).get("arguments")
+
+
+def _collect_wardrobe_items(
+    wardrobe_by_id: dict[str, dict[str, Any]],
+    result: AgentToolResult,
+) -> None:
+    """Adds successful tool-returned wardrobe items into an id index.
+
+    Args:
+        wardrobe_by_id: Mutable index of retrieved wardrobe items.
+        result: Tool result that may contain wardrobe items.
+    """
+    if result.status != "success" or not result.data:
+        return
+
+    # Later validation uses this allow-list to remove hallucinated ids from the
+    # model's final recommendation.
+    for item in result.data.get("items", []):
+        if isinstance(item, dict) and item.get("id"):
+            wardrobe_by_id[item["id"]] = item
+
+
+def _message_content_as_text(content: Any) -> str:
+    """Converts provider message content into text.
+
+    Args:
+        content: Provider-specific message content.
+
+    Returns:
+        String content.
+    """
+    if isinstance(content, list):
+        return "".join(
+            part.get("text", "") if isinstance(part, dict) else str(part)
+            for part in content
+        )
+    return "" if content is None else str(content)
+
+
+def _json_loads_object(raw: str) -> dict[str, Any]:
+    """Parses a JSON object from model response text.
+
+    Args:
+        raw: Raw assistant response text.
+
+    Returns:
+        Parsed JSON object.
+
+    Raises:
+        ValueError: If no JSON object can be parsed.
+    """
+    text = raw.strip()
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        # Providers sometimes wrap JSON in markdown or a short explanation.
+        # Extract the outermost object so the Agent can still continue.
+        start = text.find("{")
+        end = text.rfind("}")
+        if start < 0 or end <= start:
+            raise ValueError("LLM response did not contain a JSON object")
+        parsed = json.loads(text[start:end + 1])
+
+    if not isinstance(parsed, dict):
+        raise ValueError("LLM response JSON must be an object")
+    return parsed
 
 
 def _json_dumps(payload: dict[str, Any]) -> str:
