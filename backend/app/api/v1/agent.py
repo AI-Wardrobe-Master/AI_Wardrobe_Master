@@ -1,9 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user_id
+from app.core.config import settings
 from app.db.session import get_db
 from app.schemas.agent import (
+    AgentChatHistoryResponse,
     AgentChatRequest,
     AgentChatResponse,
     OutfitRecommendationRequest,
@@ -50,6 +52,31 @@ def recommend_outfit(
     # The service returns the response payload only; the route wraps it in the
     # public API envelope to keep schema ownership at the API boundary.
     return OutfitRecommendationResponse(data=data)
+
+
+@router.get(
+    "/chat/history",
+    response_model=AgentChatHistoryResponse,
+)
+def get_chat_history(
+    user_id=Depends(get_current_user_id),
+    limit: int = Query(
+        default=settings.AGENT_CONVERSATION_HISTORY_LIMIT,
+        ge=1,
+        le=50,
+    ),
+):
+    """Loads recent Agent chat turns for the authenticated user."""
+    store = JsonlConversationStore()
+    try:
+        data = store.load_context(user_id=user_id, limit=limit)
+    except OSError:
+        data = {
+            "conversationId": f"user:{user_id}",
+            "recentTurns": [],
+            "lastRecommendation": None,
+        }
+    return AgentChatHistoryResponse(data=data)
 
 
 @router.post(

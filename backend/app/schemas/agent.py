@@ -115,3 +115,39 @@ class AgentChatResponse(BaseModel):
 
     success: bool = True
     data: AgentChatData
+
+
+class AgentChatHistoryTurn(BaseModel):
+    """One compact conversation turn returned to the chat UI."""
+
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
+    user_message: str | None = Field(default=None, alias="userMessage")
+    assistant_message: str | None = Field(default=None, alias="assistantMessage")
+    assistant_result: dict[str, Any] | None = Field(
+        default=None,
+        alias="assistantResult",
+    )
+
+
+class AgentChatHistoryData(BaseModel):
+    """Recent conversation history for the authenticated user's Agent chat."""
+
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
+    conversation_id: str | None = Field(default=None, alias="conversationId")
+    recent_turns: list[AgentChatHistoryTurn] = Field(
+        default_factory=list,
+        alias="recentTurns",
+    )
+    last_recommendation: dict[str, Any] | None = Field(
+        default=None,
+        alias="lastRecommendation",
+    )
+
+
+class AgentChatHistoryResponse(BaseModel):
+    """Top-level API response for recent Agent chat history."""
+
+    success: bool = True
+    data: AgentChatHistoryData

@@ -195,6 +195,7 @@ def compact_assistant_result(final_result: dict[str, Any]) -> dict[str, Any]:
     return {
         "providerName": final_result.get("providerName"),
         "providerModel": final_result.get("providerModel"),
+        "assistantMessage": _assistant_message_from_result(final_result),
         "outfit": final_result.get("outfit", {"name": "", "items": []}),
         "recommendationReason": final_result.get("recommendationReason", ""),
         "weatherReason": final_result.get("weatherReason"),
@@ -283,10 +284,35 @@ def _prompt_turns(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     prompt_turns = []
     for turn in turns:
+        assistant_result = turn.get("assistantResult")
         prompt_turns.append(
             {
                 "userMessage": turn.get("userMessage"),
-                "assistantResult": turn.get("assistantResult"),
+                "assistantMessage": _assistant_message_from_result(
+                    assistant_result,
+                ),
+                "assistantResult": assistant_result,
             }
         )
     return prompt_turns
+
+
+def _assistant_message_from_result(result: dict[str, Any] | None) -> str | None:
+    """Extracts a displayable assistant message from a compact result."""
+    if not isinstance(result, dict):
+        return None
+
+    direct = result.get("assistantMessage")
+    if isinstance(direct, str) and direct.strip():
+        return direct.strip()
+
+    raw = result.get("rawModelOutput")
+    if isinstance(raw, dict):
+        raw_message = raw.get("assistantMessage")
+        if isinstance(raw_message, str) and raw_message.strip():
+            return raw_message.strip()
+
+    reason = result.get("recommendationReason")
+    if isinstance(reason, str) and reason.strip():
+        return reason.strip()
+    return None

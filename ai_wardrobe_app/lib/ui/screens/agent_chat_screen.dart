@@ -23,6 +23,7 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
 
   String? _conversationId;
   AgentChatData? _latestRecommendation;
+  bool _historyLoading = true;
   bool _sending = false;
   String? _error;
 
@@ -36,11 +37,73 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
       _isDark ? AppColors.darkAccentBlue : AppColors.accentBlue;
 
   @override
+  void initState() {
+    super.initState();
+    _loadHistory();
+  }
+
+  @override
   void dispose() {
     _messageController.dispose();
     _cityController.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadHistory() async {
+    try {
+      final history = await AgentChatApiService.loadHistory();
+      if (!mounted) {
+        return;
+      }
+
+      final loadedMessages = <_ChatMessage>[];
+      final historicalRecommendations = <AgentChatData>[];
+      for (final turn in history.recentTurns) {
+        final userMessage = turn.userMessage;
+        if (userMessage != null && userMessage.isNotEmpty) {
+          loadedMessages.add(_ChatMessage.user(userMessage));
+        }
+        final assistantMessage = turn.assistantMessage;
+        if (assistantMessage != null && assistantMessage.isNotEmpty) {
+          loadedMessages.add(
+            _ChatMessage.assistant(
+              assistantMessage,
+              recommendation: turn.recommendation,
+            ),
+          );
+        }
+        final recommendation = turn.recommendation;
+        if (recommendation != null) {
+          historicalRecommendations.add(recommendation);
+        }
+      }
+
+      final latest = history.lastRecommendation ??
+          (historicalRecommendations.isNotEmpty
+              ? historicalRecommendations.last
+              : null);
+      setState(() {
+        _conversationId = history.conversationId;
+        _messages
+          ..clear()
+          ..addAll(loadedMessages);
+        _latestRecommendation = latest;
+        _historyLoading = false;
+      });
+      if (latest != null) {
+        await _loadRecommendedItemDetails(latest.outfit.items);
+      }
+      _scrollToBottom();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _historyLoading = false;
+        _error = _formatError(error);
+      });
+    }
   }
 
   Future<void> _sendCurrentMessage() async {
@@ -73,7 +136,12 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
       setState(() {
         _conversationId = data.conversationId;
         _latestRecommendation = data;
-        _messages.add(_ChatMessage.assistant(data.assistantMessage));
+        _messages.add(
+          _ChatMessage.assistant(
+            data.assistantMessage,
+            recommendation: data,
+          ),
+        );
         _sending = false;
       });
       await _loadRecommendedItemDetails(data.outfit.items);
@@ -92,6 +160,11 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
         _scrollToBottom();
       }
     }
+  }
+
+  void _selectRecommendation(AgentChatData data) {
+    setState(() => _latestRecommendation = data);
+    _loadRecommendedItemDetails(data.outfit.items);
   }
 
   Future<void> _loadRecommendedItemDetails(
@@ -306,7 +379,8 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
       controller: _scrollController,
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
       children: [
-        if (_messages.isEmpty) _buildEmptyState(),
+        if (_historyLoading && _messages.isEmpty) _buildHistoryLoading(),
+        if (!_historyLoading && _messages.isEmpty) _buildEmptyState(),
         for (final message in _messages) _buildMessageBubble(message),
         if (_sending) _buildSendingBubble(),
         if (includeRecommendation && _latestRecommendation != null) ...[
@@ -314,6 +388,15 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
           _buildRecommendationPanel(compact: true),
         ],
       ],
+    );
+  }
+
+  Widget _buildHistoryLoading() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 80),
+      child: Center(
+        child: CircularProgressIndicator(strokeWidth: 2, color: _accent),
+      ),
     );
   }
 
@@ -350,30 +433,38 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
 
   Widget _buildMessageBubble(_ChatMessage message) {
     final isUser = message.role == _ChatRole.user;
-    return Align(
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        constraints: const BoxConstraints(maxWidth: 680),
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: isUser ? AppColors.accentYellow : _surface,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: isUser
-                ? AppColors.accentYellow
-                : Theme.of(context).dividerColor,
-          ),
-        ),
-        child: Text(
-          message.text,
-          style: TextStyle(
-            fontSize: 14,
-            height: 1.35,
-            color: isUser ? AppColors.textPrimary : _textPrimary,
-          ),
+    final canSelect = !isUser && message.recommendation != null;
+    final bubble = Container(
+      constraints: const BoxConstraints(maxWidth: 680),
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: isUser ? AppColors.accentYellow : _surface,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: isUser
+              ? AppColors.accentYellow
+              : Theme.of(context).dividerColor,
         ),
       ),
+      child: Text(
+        message.text,
+        style: TextStyle(
+          fontSize: 14,
+          height: 1.35,
+          color: isUser ? AppColors.textPrimary : _textPrimary,
+        ),
+      ),
+    );
+    return Align(
+      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+      child: canSelect
+          ? InkWell(
+              borderRadius: BorderRadius.circular(8),
+              onTap: () => _selectRecommendation(message.recommendation!),
+              child: bubble,
+            )
+          : bubble,
     );
   }
 
@@ -648,12 +739,21 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
 enum _ChatRole { user, assistant }
 
 class _ChatMessage {
-  const _ChatMessage({required this.role, required this.text});
+  const _ChatMessage({
+    required this.role,
+    required this.text,
+    this.recommendation,
+  });
 
   const _ChatMessage.user(String text) : this(role: _ChatRole.user, text: text);
-  const _ChatMessage.assistant(String text)
-    : this(role: _ChatRole.assistant, text: text);
+  const _ChatMessage.assistant(String text, {AgentChatData? recommendation})
+    : this(
+        role: _ChatRole.assistant,
+        text: text,
+        recommendation: recommendation,
+      );
 
   final _ChatRole role;
   final String text;
+  final AgentChatData? recommendation;
 }
