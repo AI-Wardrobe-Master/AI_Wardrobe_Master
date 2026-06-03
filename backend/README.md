@@ -23,7 +23,22 @@ python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
-# 2. 配置环境变量（复制 .env.example 为 .env）
+# 2. 配置环境变量
+
+# Windows PowerShell 推荐在仓库根目录执行：
+# .\scripts\setup_backend_env.ps1
+#
+# 该脚本会设置当前 PowerShell 会话的后端环境变量，并同步写入：
+# - 仓库根目录 .env：供 docker compose up --build 使用
+# - backend/.env：供本地直接运行 uvicorn / celery 使用
+#
+# 非交互执行示例：
+# .\scripts\setup_backend_env.ps1 `
+#   -DashScopeApiKey <your-dashscope-key> `
+#   -AgentApiKey <your-siliconflow-key> `
+#   -LlmModel <your-siliconflow-model-name>
+
+# 也可以手动复制 .env.example 为 .env 后填写。
 
 # Roboflow workflow 至少需要：
 # ROBOFLOW_API_URL=https://serverless.roboflow.com

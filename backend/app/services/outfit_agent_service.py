@@ -707,7 +707,7 @@ class OutfitRecommendationAgent:
                 "weatherReason": "string|null",
                 "preferenceReason": "string|null",
                 "missingItems": ["string"],
-                "userMessage": "string",
+                "assistantMessage": "string",
             },
         }
 
@@ -734,7 +734,8 @@ class OutfitRecommendationAgent:
                     "responseSchema; do not wrap it in markdown fences. Do not put "
                     "per-item reasons inside outfit.items. Explain the whole outfit "
                     "once in recommendationReason, and explain weather only in "
-                    "weatherReason. "
+                    "weatherReason. assistantMessage must be a short user-facing "
+                    "assistant reply, not a copy of the user's request. "
                     "Tags must use validTagValuesByKey. For rainy weather use "
                     "weather_type=rain or weather_profile values; never use a "
                     "tag key named weather."
