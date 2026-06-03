@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../l10n/app_strings_provider.dart';
 import '../models/captured_image.dart';
 import '../theme/app_theme.dart';
+import 'screens/agent_chat_screen.dart';
 import 'screens/capture/camera_capture_screen.dart';
 import 'screens/capture/clothing_intake_screen.dart';
 import 'screens/creator/card_pack_creator_screen.dart';
@@ -207,6 +208,7 @@ class _MobileRootShellState extends State<_MobileRootShell> {
         children: [
           const WardrobeScreen(),
           DiscoverScreen(refreshSignal: _discoverRefreshSignal),
+          const AgentChatScreen(),
           const VisualizationHubScreen(),
           const ProfileScreen(),
         ],
@@ -230,6 +232,11 @@ class _MobileRootShellState extends State<_MobileRootShell> {
             icon: _AddNavIcon(highlight: false),
             activeIcon: _AddNavIcon(highlight: true),
             label: s.navAdd,
+          ),
+          BottomNavigationBarItem(
+            icon: const Icon(Icons.auto_awesome_outlined),
+            activeIcon: const Icon(Icons.auto_awesome_rounded),
+            label: s.navAgent,
           ),
           BottomNavigationBarItem(
             icon: const Icon(Icons.style_outlined),
@@ -457,6 +464,11 @@ class _WebRootShellState extends State<_WebRootShell> {
                         label: Text(s.navDiscover),
                       ),
                       NavigationRailDestination(
+                        icon: const Icon(Icons.auto_awesome_outlined),
+                        selectedIcon: const Icon(Icons.auto_awesome_rounded),
+                        label: Text(s.navAgent),
+                      ),
+                      NavigationRailDestination(
                         icon: const Icon(Icons.style_outlined),
                         selectedIcon: const Icon(Icons.style_rounded),
                         label: Text(s.navVisualize),
@@ -505,6 +517,7 @@ class _WebRootShellState extends State<_WebRootShell> {
               children: [
                 const WardrobeScreen(),
                 DiscoverScreen(refreshSignal: _discoverRefreshSignal),
+                const AgentChatScreen(),
                 const VisualizationHubScreen(),
                 const ProfileScreen(),
               ],

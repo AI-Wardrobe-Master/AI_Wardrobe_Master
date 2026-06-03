@@ -1,68 +1,242 @@
 # AI Wardrobe Master
 
-## Repository structure
+AI Wardrobe Master is a Flutter + FastAPI wardrobe application. The current local stack includes:
 
+- A Flutter client in `ai_wardrobe_app/`
+- A FastAPI backend in `backend/`
+- PostgreSQL and Redis through Docker Compose
+- Local blob storage under `backend/storage/`
+- An outfit recommendation Agent exposed at `POST /api/v1/agent/chat`
+
+This README focuses on starting the full local app for development and testing.
+
+## Repository Layout
+
+```text
+AI_Wardrobe_Master/
+├── ai_wardrobe_app/          # Flutter frontend
+├── backend/                  # FastAPI backend
+├── documents/                # Architecture, API, data model, and feature docs
+├── test/clothing/            # Prepared Agent test clothing metadata and PNG images
+├── docker-compose.yml        # Local PostgreSQL, Redis, backend, workers, DreamO service
+├── QUICKSTART.md             # Additional local setup notes
+└── README.md                 # This file
 ```
-ai_wardrobe/
-├── ai_wardrobe_app/              # Flutter demo app (wardrobe UI)
-│   ├── lib/                      # UI, theming, navigation
-│   ├── android/, ios/, web/ ...  # platform-specific projects
-│   └── README.md
-├── documents/                    # project documentation (architecture, API, data model, etc.)
-├── groupmembers'markdown/        # member notes (progress, responsibilities, contributions)
-└── README.md                     # this file
+
+## Prerequisites
+
+Install or prepare the following:
+
+- Docker Desktop, for PostgreSQL and Redis
+- Python virtual environment for `backend/`
+- Flutter SDK
+- Chrome, for the easiest frontend development target
+
+On this Windows workspace, Flutter is installed at:
+
+```powershell
+D:\Program\flutter\bin\flutter.bat
 ```
 
-## Getting started
+If `flutter` is not available in your current PowerShell session after updating PATH, either restart PowerShell or use the full path above.
 
-```bash
-# 1. download Hunyuan3D-2 and its pretrained models
-git clone https://github.com/Tencent-Hunyuan/Hunyuan3D-2.git
+## Start The Database
 
-# 2. Go to app directory
-cd ai_wardrobe_app
+From the repository root:
 
-# 3. Install dependencies
+```powershell
+cd D:\AI_Wardrobe_Master
+docker compose up -d db redis
+```
+
+If `docker` is not on PATH, use Docker Desktop's full path:
+
+```powershell
+cd D:\AI_Wardrobe_Master
+& "C:\Program Files\Docker\Docker\resources\bin\docker.exe" compose up -d db redis
+```
+
+The backend expects PostgreSQL on `localhost:5432` with the development credentials configured in `backend/.env`.
+
+## Start The Backend
+
+Open a new PowerShell terminal:
+
+```powershell
+cd D:\AI_Wardrobe_Master\backend
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000
+```
+
+The API documentation should be available at:
+
+```text
+http://localhost:8000/docs
+```
+
+If the virtual environment is missing, create and install it first:
+
+```powershell
+cd D:\AI_Wardrobe_Master\backend
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m alembic upgrade head
+```
+
+## Seed Agent Test Clothing
+
+For Agent testing, seed the prepared clothing images from `test/clothing/images_no_bg` into a local account.
+
+The account used during local testing is:
+
+```text
+email: 11111@gmail.com
+password: 11111111
+```
+
+Run the seed script:
+
+```powershell
+cd D:\AI_Wardrobe_Master\backend
+.\.venv\Scripts\python.exe scripts\seed_agent_clothing.py --email 11111@gmail.com
+```
+
+Expected result:
+
+```text
+Seed complete: created=30 updated=0 image_created=30 image_updated=0 image_unchanged=0 wardrobe_linked=30
+```
+
+You can verify that the Agent search tool can see the seeded wardrobe items:
+
+```powershell
+cd D:\AI_Wardrobe_Master\backend
+.\.venv\Scripts\python.exe scripts\test_search_wardrobe_tool.py --email 11111@gmail.com
+```
+
+Expected high-level result:
+
+```text
+agentSeedItemCount=30
+processedFrontImageCount=30
+search_tool_verification=success
+```
+
+## Start The Flutter Frontend
+
+Open another PowerShell terminal:
+
+```powershell
+cd D:\AI_Wardrobe_Master\ai_wardrobe_app
+D:\Program\flutter\bin\flutter.bat pub get
+D:\Program\flutter\bin\flutter.bat run -d chrome
+```
+
+If your PowerShell session already recognizes Flutter, the shorter commands also work:
+
+```powershell
+cd D:\AI_Wardrobe_Master\ai_wardrobe_app
 flutter pub get
-
-# 4. Run in browser (good for layout preview)
 flutter run -d chrome
-
-# 5. Run on a physical device (iOS / Android)
-flutter devices              # list device IDs
-flutter run -d <device-id>
 ```
 
-> For detailed environment setup, Docker backend startup, Flutter runs, Android devices, and packaging notes, see
-> `documents/DEVELOPMENT_GUIDE.md`.
+The Flutter web app will open in Chrome on a local development port, for example:
 
-## Directory details
+```text
+http://localhost:62735
+```
 
-- **`ai_wardrobe_app/`**  
-  - Flutter front-end demo including:  
-    - Bottom navigation on mobile / left-side navigation shell on web (Wardrobe / Discover / Add / Visualize / Profile)  
-    - Empty-state screens for Wardrobe / Discover / Profile  
-    - Outfit visualization canvas (grey mannequin silhouette with tappable body regions)  
-    - Light / dark theme toggle (Profile → Settings → Dark mode)
+The frontend API base URL defaults to:
 
-- **`documents/`** – technical documentation entry point  
-  - `README.md`: documentation index and overview  
-  - `AGENT_CONTEXT.md`: compact project context for coding agents and new contributors
-  - `DATA_MODEL.md`: data model and entity relationships  
-  - `API_CONTRACT.md`: API design and contract  
-  - `BACKEND_ARCHITECTURE.md`: backend architecture (FastAPI + PostgreSQL)  
-  - `FLUTTER_ARCHITECTURE.md`: Flutter architecture and layering guidelines
-  - `AI_PIPELINES.md`: consolidated AI/model provider and pipeline guide
-  - `DEVELOPMENT_GUIDE.md`: local development, device, and packaging guide
-  - `archive/`: older planning and feature-specific notes preserved for traceability
+```text
+http://localhost:8000/api/v1
+```
 
-- **`groupmembers'markdown/`**  
-  - Per-member notes on work items, responsibilities, and progress, e.g. `cht.md` (front-end skeleton, docs, etc.).
+For Android emulator testing, the frontend uses `10.0.2.2` by default instead of `localhost`.
 
-## Suggested reading order
+## Login Accounts
 
-1. `documents/AGENT_CONTEXT.md`: compact project overview and source-of-truth rules
-2. `documents/DATA_MODEL.md` + `documents/API_CONTRACT.md`: entities and APIs
-3. `documents/BACKEND_ARCHITECTURE.md` or `documents/FLUTTER_ARCHITECTURE.md`: implementation structure by area
-4. `documents/AI_PIPELINES.md`: AI provider and pipeline boundaries
-5. `documents/DEVELOPMENT_GUIDE.md`: get the app running locally
+Development seed accounts:
+
+```text
+demo@example.com / demo123456
+11111@gmail.com / 11111111
+mobile.tester@example.com / test123456
+import.tester@example.com / test123456
+```
+
+The `11111@gmail.com` account is recommended for Agent Chat testing after running `seed_agent_clothing.py`.
+
+## Agent Chat Test Flow
+
+After logging in as `11111@gmail.com`:
+
+1. Open the `Agent` tab.
+2. Ask a wardrobe question, for example:
+
+   ```text
+   给我推荐一下明天应该穿什么衣服
+   ```
+
+3. Send a follow-up, for example:
+
+   ```text
+   我想稍微正式一点
+   ```
+
+The current frontend sends one request per turn to:
+
+```text
+POST http://localhost:8000/api/v1/agent/chat
+```
+
+The backend returns the final Agent result in one response. Real-time streaming of tool calls is not implemented yet. The response includes a final `tools` trace, but the current frontend mainly renders the assistant message, outfit reason, and selected clothing items.
+
+## Useful Checks
+
+Run Flutter static analysis:
+
+```powershell
+cd D:\AI_Wardrobe_Master\ai_wardrobe_app
+D:\Program\flutter\bin\flutter.bat analyze
+```
+
+Some existing files currently produce `info`-level lint messages, such as deprecated `withOpacity` usage and null-aware collection suggestions. These are not compile errors.
+
+Run focused backend Agent tests:
+
+```powershell
+cd D:\AI_Wardrobe_Master\backend
+.\.venv\Scripts\python.exe -m pytest tests/test_outfit_agent_conversation.py tests/test_outfit_agent_foundation.py tests/test_outfit_agent_weather.py
+```
+
+## Docker Compose Full Stack
+
+For a broader backend stack, you can run:
+
+```powershell
+cd D:\AI_Wardrobe_Master
+docker compose up --build
+```
+
+This starts PostgreSQL, Redis, the FastAPI backend, Celery workers, and the DreamO service. DreamO may require GPU support depending on the local setup.
+
+Common Docker commands:
+
+```powershell
+docker compose logs -f backend
+docker compose down
+docker compose down -v
+```
+
+`docker compose down -v` removes the database volume, so use it only when you want a clean local reset.
+
+## Documentation
+
+Recommended reading:
+
+1. `documents/AGENT_CONTEXT.md`
+2. `documents/API_CONTRACT.md`
+3. `documents/DATA_MODEL.md`
+4. `documents/BACKEND_ARCHITECTURE.md`
+5. `documents/FLUTTER_ARCHITECTURE.md`
+6. `documents/AGENT_OUTFIT_RECOMMENDATION_PLAN.md`

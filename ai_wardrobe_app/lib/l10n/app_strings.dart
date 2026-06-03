@@ -38,6 +38,7 @@ class AppStrings {
   String get navWardrobe => _t('navWardrobe');
   String get navDiscover => _t('navDiscover');
   String get navAdd => _t('navAdd');
+  String get navAgent => _t('navAgent');
   String get navVisualize => _t('navVisualize');
   String get navProfile => _t('navProfile');
 
@@ -108,6 +109,12 @@ class AppStrings {
   String get clear => _t('clear');
   String get saveLook => _t('saveLook');
   String get generatePreview => _t('generatePreview');
+  String get agentTitle => _t('agentTitle');
+  String get agentCityHint => _t('agentCityHint');
+  String get agentInputHint => _t('agentInputHint');
+  String get agentSuggestionCommute => _t('agentSuggestionCommute');
+  String get agentSuggestionRain => _t('agentSuggestionRain');
+  String get agentSuggestionCasual => _t('agentSuggestionCasual');
   String selectItem(String slot) => _t('selectItem').replaceAll('{slot}', slot);
   String get selectItemHint => _t('selectItemHint');
   String get createCardPack => _t('createCardPack');
@@ -136,6 +143,7 @@ class AppStrings {
     'navWardrobe': 'Wardrobe',
     'navDiscover': 'Discover',
     'navAdd': 'Add',
+    'navAgent': 'Agent',
     'navVisualize': 'Visualize',
     'navProfile': 'Profile',
     'wardrobeTitle': 'Your wardrobe',
@@ -199,6 +207,12 @@ class AppStrings {
     'clear': 'Clear',
     'saveLook': 'Save look',
     'generatePreview': 'Generate Preview',
+    'agentTitle': 'AI Stylist',
+    'agentCityHint': 'City',
+    'agentInputHint': 'Ask for an outfit',
+    'agentSuggestionCommute': 'What should I wear for commute today?',
+    'agentSuggestionRain': 'Build a rainy-day outfit',
+    'agentSuggestionCasual': 'Make it more casual',
     'selectItem': 'Select {slot} item',
     'selectItemHint':
         'Here we will show hats, tops, pants, shoes, etc. connected to your wardrobe.',
@@ -227,6 +241,7 @@ class AppStrings {
     'navWardrobe': '衣柜',
     'navDiscover': '发现',
     'navAdd': '添加',
+    'navAgent': '助手',
     'navVisualize': '搭配',
     'navProfile': '我的',
     'wardrobeTitle': '我的衣柜',
@@ -288,6 +303,12 @@ class AppStrings {
     'clear': '清空',
     'saveLook': '保存搭配',
     'generatePreview': '生成预览',
+    'agentTitle': 'AI 搭配助手',
+    'agentCityHint': '城市',
+    'agentInputHint': '说说你今天想怎么穿',
+    'agentSuggestionCommute': '今天通勤穿什么？',
+    'agentSuggestionRain': '下雨天帮我搭一套',
+    'agentSuggestionCasual': '帮我换得更休闲一点',
     'selectItem': '选择{slot}',
     'selectItemHint': '此处将展示与衣柜关联的帽子、上装、裤装、鞋等。',
     'createCardPack': '创建搭配包',
