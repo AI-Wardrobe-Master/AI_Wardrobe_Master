@@ -10,7 +10,7 @@ from app.crud import wardrobe as crud_wardrobe
 from app.models.clothing_item import ClothingItem
 from app.models.creator import CardPack, CardPackItem
 from app.models.user import User
-from app.models.wardrobe import Wardrobe
+from app.models.wardrobe import Wardrobe, WardrobeItem
 
 
 def get_owned_card_pack(
@@ -288,7 +288,46 @@ def _ensure_pack_share_wardrobe(db: Session, *, pack: CardPack) -> Wardrobe:
         )
         wardrobe.auto_tags = _build_pack_share_tags(pack, creator)
         wardrobe.is_public = True
+    _sync_pack_share_wardrobe_items(db, pack=pack, wardrobe=wardrobe)
     return wardrobe
+
+
+def _sync_pack_share_wardrobe_items(
+    db: Session,
+    *,
+    pack: CardPack,
+    wardrobe: Wardrobe,
+) -> None:
+    """Keeps the public card-pack wardrobe item links aligned with pack items."""
+    pack_item_ids = [pack_item.clothing_item_id for pack_item in pack.items]
+    pack_item_id_set = set(pack_item_ids)
+    existing_items = (
+        db.query(WardrobeItem)
+        .filter(WardrobeItem.wardrobe_id == wardrobe.id)
+        .all()
+    )
+    existing_by_item_id = {
+        wardrobe_item.clothing_item_id: wardrobe_item
+        for wardrobe_item in existing_items
+    }
+
+    for wardrobe_item in existing_items:
+        if wardrobe_item.clothing_item_id not in pack_item_id_set:
+            db.delete(wardrobe_item)
+
+    for display_order, clothing_item_id in enumerate(pack_item_ids):
+        wardrobe_item = existing_by_item_id.get(clothing_item_id)
+        if wardrobe_item is None:
+            db.add(
+                WardrobeItem(
+                    id=uuid4(),
+                    wardrobe_id=wardrobe.id,
+                    clothing_item_id=clothing_item_id,
+                    display_order=display_order,
+                )
+            )
+        else:
+            wardrobe_item.display_order = display_order
 
 
 def create_card_pack(

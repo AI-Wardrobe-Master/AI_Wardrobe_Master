@@ -269,7 +269,7 @@ class _CardPackDetailScreenState extends State<CardPackDetailScreen> {
           itemBuilder: (context, index) {
             final item = _packItems[index];
             final name = (item['name'] as String?)?.trim();
-            final coverUrl = item['coverUrl'] as String?;
+            final coverUrl = _itemImageUrl(item);
             final tags = _tagValues(item['finalTags']);
             return InkWell(
               borderRadius: BorderRadius.circular(16),
@@ -380,6 +380,41 @@ class _CardPackDetailScreenState extends State<CardPackDetailScreen> {
     );
   }
 
+  String? _itemImageUrl(Map<String, dynamic> item) {
+    final coverUrl = item['coverUrl']?.toString();
+    if (coverUrl != null && coverUrl.isNotEmpty) {
+      return coverUrl;
+    }
+
+    final processedFrontUrl = item['processedFrontUrl']?.toString();
+    if (processedFrontUrl != null && processedFrontUrl.isNotEmpty) {
+      return processedFrontUrl;
+    }
+
+    final originalFrontUrl = item['originalFrontUrl']?.toString();
+    if (originalFrontUrl != null && originalFrontUrl.isNotEmpty) {
+      return originalFrontUrl;
+    }
+
+    final images = item['images'];
+    if (images is Map) {
+      final processed = images['processedFrontUrl']?.toString();
+      if (processed != null && processed.isNotEmpty) {
+        return processed;
+      }
+      final original = images['originalFrontUrl']?.toString();
+      if (original != null && original.isNotEmpty) {
+        return original;
+      }
+    }
+
+    final imageUrl = item['imageUrl']?.toString();
+    if (imageUrl != null && imageUrl.isNotEmpty) {
+      return imageUrl;
+    }
+    return null;
+  }
+
   Widget _imageFallback(Color textS) {
     return Container(
       width: double.infinity,
@@ -414,7 +449,7 @@ class _CardPackDetailScreenState extends State<CardPackDetailScreen> {
       description: item['description'] as String?,
       source: 'OWNED',
       finalTags: item['finalTags'] as List<dynamic>? ?? const [],
-      imageUrl: item['coverUrl'] as String?,
+      imageUrl: _itemImageUrl(item),
       images: {
         if (item['processedFrontUrl'] != null)
           'processedFrontUrl': item['processedFrontUrl'],

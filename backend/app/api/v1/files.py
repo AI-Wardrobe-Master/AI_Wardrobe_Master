@@ -16,7 +16,7 @@ from app.api.deps import get_current_user_id, get_optional_current_user_id
 from app.db.session import get_db
 from app.models.blob import Blob
 from app.models.clothing_item import ClothingItem, Image, Model3D
-from app.models.creator import CardPack
+from app.models.creator import CardPack, CardPackItem
 from app.models.outfit_preview import (
     Outfit,
     OutfitPreviewTask,
@@ -89,7 +89,19 @@ def _can_view_shared_clothing_item(
         )
         .first()
     )
-    return shared_link is not None
+    if shared_link is not None:
+        return True
+
+    published_pack_link = (
+        db.query(CardPackItem.id)
+        .join(CardPack, CardPack.id == CardPackItem.card_pack_id)
+        .filter(
+            CardPackItem.clothing_item_id == item_id,
+            CardPack.status == "PUBLISHED",
+        )
+        .first()
+    )
+    return published_pack_link is not None
 
 
 # ---- Clothing item files ----

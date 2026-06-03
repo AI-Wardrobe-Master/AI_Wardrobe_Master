@@ -1,15 +1,20 @@
+import base64
+import binascii
+import io
+import re
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_creator_user_id, get_optional_current_user_id
+from app.api.deps import get_current_user_id, get_optional_current_user_id
 from app.core.config import settings
 from app.crud import card_pack as crud_card_pack
 from app.crud import creator as crud_creator
 from app.db.session import get_db
+from app.models.blob import Blob
 from app.models.card_pack_import import CardPackImport
-from app.models.creator import CardPackItem
+from app.models.creator import CardPackItem, CreatorProfile
 from app.models.user import User
 from app.schemas.card_pack import (
     CardPackCreate,
@@ -24,9 +29,11 @@ from app.schemas.card_pack import (
     CardPackUpdate,
 )
 from app.services.blob_service import get_blob_service
+from app.services.blob_storage import BlobTooLargeError
 from app.services.view_count_service import increment_card_pack_view
 
 router = APIRouter(prefix="/card-packs", tags=["card-packs"])
+_BLOB_HASH_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 
 
 @router.get("", response_model=CardPackListResponse)
@@ -59,18 +66,20 @@ def list_card_packs(
 
 
 @router.post("", response_model=CardPackDetailResponse, status_code=201)
-def create_card_pack(
+async def create_card_pack(
     body: CardPackCreate,
     db: Session = Depends(get_db),
-    creator_id: UUID = Depends(get_current_creator_user_id),
+    creator_id: UUID = Depends(get_current_user_id),
 ):
+    _ensure_card_pack_creator_profile(db, user_id=creator_id)
+    cover_blob_hash = await _resolve_cover_image_blob_hash(db, body.cover_image)
     pack = crud_card_pack.create_card_pack(
         db,
         creator_id=creator_id,
         name=body.name,
         description=body.description,
         pack_type=body.pack_type,
-        cover_image_blob_hash=body.cover_image,
+        cover_image_blob_hash=cover_blob_hash,
         item_ids=body.item_ids,
     )
     return CardPackDetailResponse(data=_to_card_pack_detail(db, pack))
@@ -136,12 +145,13 @@ def get_card_pack_by_share_id(
 
 
 @router.patch("/{pack_id}", response_model=CardPackDetailResponse)
-def update_card_pack(
+async def update_card_pack(
     pack_id: UUID,
     body: CardPackUpdate,
     db: Session = Depends(get_db),
-    creator_id: UUID = Depends(get_current_creator_user_id),
+    creator_id: UUID = Depends(get_current_user_id),
 ):
+    _ensure_card_pack_creator_profile(db, user_id=creator_id)
     pack = crud_card_pack.get_owned_card_pack(
         db,
         pack_id=pack_id,
@@ -150,13 +160,14 @@ def update_card_pack(
     )
     if pack is None:
         raise HTTPException(404, "Card pack not found")
+    cover_blob_hash = await _resolve_cover_image_blob_hash(db, body.cover_image)
     updated = crud_card_pack.update_card_pack(
         db,
         pack,
         name=body.name,
         description=body.description,
         item_ids=body.item_ids,
-        cover_image_blob_hash=body.cover_image,
+        cover_image_blob_hash=cover_blob_hash,
     )
     return CardPackDetailResponse(data=_to_card_pack_detail(db, updated))
 
@@ -165,8 +176,9 @@ def update_card_pack(
 def publish_card_pack(
     pack_id: UUID,
     db: Session = Depends(get_db),
-    creator_id: UUID = Depends(get_current_creator_user_id),
+    creator_id: UUID = Depends(get_current_user_id),
 ):
+    _ensure_card_pack_creator_profile(db, user_id=creator_id)
     pack = crud_card_pack.get_owned_card_pack(
         db,
         pack_id=pack_id,
@@ -189,8 +201,9 @@ def publish_card_pack(
 def archive_card_pack(
     pack_id: UUID,
     db: Session = Depends(get_db),
-    creator_id: UUID = Depends(get_current_creator_user_id),
+    creator_id: UUID = Depends(get_current_user_id),
 ):
+    _ensure_card_pack_creator_profile(db, user_id=creator_id)
     pack = crud_card_pack.get_owned_card_pack(
         db,
         pack_id=pack_id,
@@ -207,8 +220,9 @@ def archive_card_pack(
 def delete_card_pack(
     pack_id: UUID,
     db: Session = Depends(get_db),
-    creator_id: UUID = Depends(get_current_creator_user_id),
+    creator_id: UUID = Depends(get_current_user_id),
 ):
+    _ensure_card_pack_creator_profile(db, user_id=creator_id)
     pack = crud_card_pack.get_owned_card_pack(
         db,
         pack_id=pack_id,
@@ -258,6 +272,78 @@ def _to_card_pack_list_item(db: Session, pack) -> CardPackListItem:
         createdAt=pack.created_at,
         updatedAt=pack.updated_at,
     )
+
+
+async def _resolve_cover_image_blob_hash(
+    db: Session,
+    cover_image: str | None,
+) -> str | None:
+    if cover_image is None:
+        return None
+
+    raw = cover_image.strip()
+    if not raw:
+        return None
+
+    blob_service = get_blob_service()
+    if _BLOB_HASH_RE.fullmatch(raw):
+        existing = db.query(Blob).filter(Blob.blob_hash == raw.lower()).first()
+        if existing is not None:
+            blob_service.addref(db, raw.lower())
+            return raw.lower()
+
+    mime_type = "image/jpeg"
+    encoded = raw
+    if raw.startswith("data:"):
+        header, sep, payload = raw.partition(",")
+        if not sep:
+            raise HTTPException(422, "Invalid coverImage data URL")
+        mime_type = header[5:].split(";", 1)[0] or mime_type
+        encoded = payload
+
+    try:
+        image_bytes = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(422, "coverImage must be base64 image data") from exc
+
+    if not image_bytes:
+        raise HTTPException(422, "coverImage must not be empty")
+    if not mime_type.startswith("image/"):
+        raise HTTPException(422, "coverImage must be an image")
+
+    try:
+        blob = await blob_service.ingest_upload(
+            db,
+            io.BytesIO(image_bytes),
+            claimed_mime_type=mime_type,
+            max_size=settings.MAX_UPLOAD_SIZE_BYTES,
+        )
+    except BlobTooLargeError as exc:
+        raise HTTPException(413, "coverImage is too large") from exc
+    return blob.blob_hash
+
+
+def _ensure_card_pack_creator_profile(db: Session, *, user_id: UUID) -> None:
+    profile = crud_creator.get_by_user_id(db, user_id)
+    if profile is not None:
+        if profile.status != "ACTIVE":
+            raise HTTPException(403, "Creator permission required")
+        return
+
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(404, "User not found")
+
+    db.add(
+        CreatorProfile(
+            user_id=user_id,
+            status="ACTIVE",
+            display_name=user.username or user.email,
+            social_links={},
+            is_verified=False,
+        )
+    )
+    db.flush()
 
 
 def _to_card_pack_detail(db: Session, pack) -> CardPackDetail:

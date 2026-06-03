@@ -57,6 +57,7 @@ class _CreatorProfileScreenState extends State<CreatorProfileScreen> {
   Future<void> _loadPacks() async {
     setState(() => _loadingPacks = true);
     final merged = <String, CardPack>{};
+    var loadedRemote = false;
     try {
       final apiPacks = await CardPackApiService.listCardPacks(
         creatorId: widget.creatorId,
@@ -65,9 +66,24 @@ class _CreatorProfileScreenState extends State<CreatorProfileScreen> {
       for (final pack in apiPacks) {
         merged[pack.id] = pack;
       }
+      loadedRemote = true;
     } catch (_) {
       // Local packs are merged below so creator pages still have content
       // when the public API is temporarily unavailable.
+    }
+    if (loadedRemote) {
+      final packs = merged.values.toList()
+        ..sort((left, right) {
+          final leftDate = left.publishedAt ?? left.createdAt;
+          final rightDate = right.publishedAt ?? right.createdAt;
+          return rightDate.compareTo(leftDate);
+        });
+      if (!mounted) return;
+      setState(() {
+        _packs = packs;
+        _loadingPacks = false;
+      });
+      return;
     }
     final localPacks = await LocalCardPackService.listCardPacks(
       status: 'PUBLISHED',

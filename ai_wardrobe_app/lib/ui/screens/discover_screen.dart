@@ -143,6 +143,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
 
   Future<List<CardPack>> _loadPublishedCardPacks({String? search}) async {
     final merged = <String, CardPack>{};
+    var loadedRemote = false;
     try {
       final remotePacks = await CardPackApiService.listCardPacks(
         search: search,
@@ -152,8 +153,18 @@ class _DiscoverScreenState extends State<DiscoverScreen>
       for (final pack in remotePacks) {
         merged[pack.id] = pack;
       }
+      loadedRemote = true;
     } catch (_) {
       // Local published packs are still useful while the public feed is down.
+    }
+
+    if (loadedRemote) {
+      return merged.values.toList()
+        ..sort((left, right) {
+          final leftDate = left.publishedAt ?? left.createdAt;
+          final rightDate = right.publishedAt ?? right.createdAt;
+          return rightDate.compareTo(leftDate);
+        });
     }
 
     final localPacks = await LocalCardPackService.listCardPacks(

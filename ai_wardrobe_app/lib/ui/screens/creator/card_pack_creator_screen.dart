@@ -139,7 +139,7 @@ class _CardPackCreatorScreenState extends State<CardPackCreatorScreen> {
           .toList();
 
       final coverImageBase64 = _encodeCoverImage();
-      try {
+      if (publish) {
         final pack = await CardPackApiService.createCardPack(
           name: _nameController.text.trim(),
           description: _descriptionController.text.trim().isEmpty
@@ -149,10 +149,8 @@ class _CardPackCreatorScreenState extends State<CardPackCreatorScreen> {
           itemIds: _selectedItemIds.toList(),
           coverImageBase64: coverImageBase64,
         );
-        if (publish) {
-          await CardPackApiService.publishCardPack(pack.id);
-        }
-      } catch (_) {
+        await CardPackApiService.publishCardPack(pack.id);
+      } else {
         await LocalCardPackService.saveCardPack(
           name: _nameController.text.trim(),
           description: _descriptionController.text.trim().isEmpty
