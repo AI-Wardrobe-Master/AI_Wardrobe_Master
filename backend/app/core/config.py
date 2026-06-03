@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     LLM_API_KEY: Optional[str] = None
     LLM_MODEL: Optional[str] = None
     LLM_PROVIDER_NAME: str = "openai-compatible"
-    LLM_TIMEOUT_SECONDS: float = 60.0
+    LLM_TIMEOUT_SECONDS: float = 120.0
     LLM_TEMPERATURE: float = 0.2
     LLM_USE_RESPONSE_FORMAT: bool = False
 

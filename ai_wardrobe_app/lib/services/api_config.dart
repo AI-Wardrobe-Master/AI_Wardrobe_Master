@@ -137,8 +137,8 @@ Dio buildApiDio() {
     BaseOptions(
       baseUrl: apiBaseUrl,
       connectTimeout: const Duration(seconds: 4),
-      receiveTimeout: const Duration(seconds: 60),
-      sendTimeout: const Duration(seconds: 60),
+      receiveTimeout: const Duration(seconds: 120),
+      sendTimeout: const Duration(seconds: 120),
     ),
   );
   dio.interceptors.add(
