@@ -1,7 +1,7 @@
 import json
 from datetime import date
 from typing import Any, Literal, TypedDict
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from langgraph.graph import END, START, StateGraph
 from sqlalchemy.orm import Session
@@ -143,18 +143,18 @@ class OutfitRecommendationAgent:
         Args:
             db: Database session used by tool nodes.
             user_id: Authenticated user identifier.
-            request: Chat request with optional conversation id.
+            request: Chat request. Client conversation ids are ignored so the
+                user keeps one stable Agent chat history.
 
         Returns:
             Final structured chat payload including the assistant message.
         """
-        conversation_id = request.conversation_id or str(uuid4())
         recommendation_request = _recommendation_request_from_chat(request)
         final = self.run(
             db,
             user_id=user_id,
             request=recommendation_request,
-            conversation_id=conversation_id,
+            conversation_id=None,
         )
         assistant_message = _assistant_message_from_final(final)
         final["assistantMessage"] = assistant_message
@@ -1310,7 +1310,7 @@ def _message_content_as_text(content: Any) -> str:
 
 
 def _json_loads_object(raw: str) -> dict[str, Any]:
-    """Parses a JSON object from model response text.
+    """Parses the first JSON object from model response text.
 
     Args:
         raw: Raw assistant response text.
@@ -1322,20 +1322,20 @@ def _json_loads_object(raw: str) -> dict[str, Any]:
         ValueError: If no JSON object can be parsed.
     """
     text = raw.strip()
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        # Providers sometimes wrap JSON in markdown or a short explanation.
-        # Extract the outermost object so the Agent can still continue.
-        start = text.find("{")
-        end = text.rfind("}")
-        if start < 0 or end <= start:
-            raise ValueError("LLM response did not contain a JSON object")
-        parsed = json.loads(text[start:end + 1])
+    decoder = json.JSONDecoder()
+    start = text.find("{")
+    while start >= 0:
+        try:
+            parsed, _ = decoder.raw_decode(text[start:])
+        except json.JSONDecodeError:
+            start = text.find("{", start + 1)
+            continue
 
-    if not isinstance(parsed, dict):
-        raise ValueError("LLM response JSON must be an object")
-    return parsed
+        if not isinstance(parsed, dict):
+            raise ValueError("LLM response JSON must be an object")
+        return parsed
+
+    raise ValueError("LLM response did not contain a JSON object")
 
 
 def _json_dumps(payload: dict[str, Any]) -> str:
