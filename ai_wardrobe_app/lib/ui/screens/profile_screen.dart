@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../../l10n/app_strings_provider.dart';
 import '../../l10n/locale_controller.dart';
+import '../../services/api_config.dart';
 import '../../services/auth_api_service.dart';
 import '../../services/card_pack_api_service.dart';
 import '../../services/clothing_api_service.dart';
@@ -12,12 +13,12 @@ import '../../services/face_profile_service.dart';
 import '../../services/local_card_pack_service.dart';
 import '../../services/local_clothing_service.dart';
 import '../../services/me_api_service.dart';
-import '../../services/wardrobe_service.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/theme_controller.dart';
 import 'face_crop_screen.dart';
 import 'imported_looks_screen.dart';
 import 'login_screen.dart';
+import 'my_card_packs_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -86,29 +87,33 @@ class _ProfileScreenState extends State<ProfileScreen>
     } catch (_) {}
     final clothesCount = clothingIds.length;
 
-    int packsCount = 0;
-    try {
-      final wardrobes = await WardrobeService.fetchWardrobes();
-      packsCount += wardrobes.where((wardrobe) => !wardrobe.isMain).length;
-    } catch (_) {}
-
     final packIds = <String>{};
+    var loadedRemotePacks = false;
     try {
-      final apiPacks = await CardPackApiService.listCardPacks();
-      for (final pack in apiPacks) {
-        packIds.add(pack.id);
-      }
-      packsCount = packsCount > packIds.length ? packsCount : packIds.length;
-    } catch (_) {}
-    try {
-      final localPacks = await LocalCardPackService.listCardPacks();
-      for (final pack in localPacks) {
-        if (!packIds.contains(pack.id)) {
+      await ApiSession.loadToken();
+      final userId = ApiSession.currentUserId;
+      if (userId != null && userId.isNotEmpty) {
+        final apiPacks = await CardPackApiService.listCardPacks(
+          creatorId: userId,
+          limit: 100,
+        );
+        for (final pack in apiPacks) {
           packIds.add(pack.id);
         }
+        loadedRemotePacks = true;
       }
-      packsCount = packsCount > packIds.length ? packsCount : packIds.length;
     } catch (_) {}
+    if (!loadedRemotePacks) {
+      try {
+        final localPacks = await LocalCardPackService.listCardPacks();
+        for (final pack in localPacks) {
+          if (!packIds.contains(pack.id)) {
+            packIds.add(pack.id);
+          }
+        }
+      } catch (_) {}
+    }
+    final packsCount = packIds.length;
 
     if (!mounted) return;
     setState(() {
@@ -338,6 +343,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                         _ProfileStat(
                           label: s.statPacks,
                           value: _loading ? '...' : '$_packsCount',
+                          onTap: _openCardPackManager,
                         ),
                       ],
                     ),
@@ -408,6 +414,43 @@ class _ProfileScreenState extends State<ProfileScreen>
                               ),
                             ),
                             const SizedBox(height: 14),
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: isDark
+                                    ? AppColors.darkBackground
+                                    : AppColors.background,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: GestureDetector(
+                                onTap: _openCardPackManager,
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.collections_bookmark_outlined,
+                                      color: accent,
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Text(
+                                        'My card packs',
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
+                                          color: textP,
+                                        ),
+                                      ),
+                                    ),
+                                    Icon(
+                                      Icons.arrow_forward_ios_rounded,
+                                      size: 14,
+                                      color: textS,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 14),
                             SizedBox(
                               width: double.infinity,
                               child: OutlinedButton.icon(
@@ -430,6 +473,16 @@ class _ProfileScreenState extends State<ProfileScreen>
         ),
       ),
     );
+  }
+
+  Future<void> _openCardPackManager() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const MyCardPacksScreen()),
+    );
+    if (mounted) {
+      _loadStats();
+    }
   }
 }
 
@@ -766,10 +819,11 @@ class _VirtualFacePainter extends CustomPainter {
 }
 
 class _ProfileStat extends StatelessWidget {
-  const _ProfileStat({required this.label, required this.value});
+  const _ProfileStat({required this.label, required this.value, this.onTap});
 
   final String label;
   final String value;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -780,26 +834,30 @@ class _ProfileStat extends StatelessWidget {
         : AppColors.textSecondary;
 
     return Expanded(
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        decoration: BoxDecoration(
-          color: Theme.of(context).cardColor,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Theme.of(context).dividerColor),
-        ),
-        child: Column(
-          children: [
-            Text(
-              value,
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w800,
-                color: textP,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: Theme.of(context).cardColor,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Theme.of(context).dividerColor),
+          ),
+          child: Column(
+            children: [
+              Text(
+                value,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w800,
+                  color: textP,
+                ),
               ),
-            ),
-            const SizedBox(height: 2),
-            Text(label, style: TextStyle(fontSize: 11, color: textS)),
-          ],
+              const SizedBox(height: 2),
+              Text(label, style: TextStyle(fontSize: 11, color: textS)),
+            ],
+          ),
         ),
       ),
     );

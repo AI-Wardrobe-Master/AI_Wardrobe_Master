@@ -121,7 +121,12 @@ class _DiscoverScreenState extends State<DiscoverScreen>
       final query = _searchQuery.isNotEmpty ? _searchQuery : null;
       List<Wardrobe> wardrobes = const <Wardrobe>[];
       try {
-        wardrobes = await WardrobeService.listPublicWardrobes(search: query);
+        final publicWardrobes = await WardrobeService.listPublicWardrobes(
+          search: query,
+        );
+        wardrobes = publicWardrobes
+            .where((wardrobe) => wardrobe.source != 'CARD_PACK')
+            .toList();
       } catch (_) {
         wardrobes = const <Wardrobe>[];
       }
@@ -695,13 +700,19 @@ class _DiscoverScreenState extends State<DiscoverScreen>
       margin: const EdgeInsets.only(bottom: 12),
       color: isDark ? AppColors.darkSurface : Colors.white,
       child: ListTile(
-        onTap: () {
-          Navigator.push(
+        onTap: () async {
+          final changed = await Navigator.push<bool>(
             context,
             MaterialPageRoute(
-              builder: (_) => CardPackDetailScreen(packId: pack.id),
+              builder: (_) => CardPackDetailScreen(
+                packId: pack.id,
+                managementMode: false,
+              ),
             ),
           );
+          if (changed == true && mounted) {
+            _loadData();
+          }
         },
         leading: ClipRRect(
           borderRadius: BorderRadius.circular(8),

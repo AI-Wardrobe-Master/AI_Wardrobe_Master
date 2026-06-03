@@ -14,8 +14,13 @@ import 'shared_clothing_detail_screen.dart';
 
 class CardPackDetailScreen extends StatefulWidget {
   final String packId;
+  final bool managementMode;
 
-  const CardPackDetailScreen({super.key, required this.packId});
+  const CardPackDetailScreen({
+    super.key,
+    required this.packId,
+    this.managementMode = false,
+  });
 
   @override
   State<CardPackDetailScreen> createState() => _CardPackDetailScreenState();
@@ -26,9 +31,19 @@ class _CardPackDetailScreenState extends State<CardPackDetailScreen> {
   bool _loading = true;
   String? _error;
   bool _importing = false;
+  bool _deleting = false;
 
   List<Map<String, dynamic>> get _packItems =>
       _pack?.items ?? const <Map<String, dynamic>>[];
+  bool get _canManagePack {
+    final pack = _pack;
+    if (pack == null) {
+      return false;
+    }
+    return widget.managementMode &&
+        (LocalCardPackService.isLocalPack(pack.id) ||
+            ApiSession.currentUserId == pack.creatorId);
+  }
 
   @override
   void initState() {
@@ -98,6 +113,60 @@ class _CardPackDetailScreenState extends State<CardPackDetailScreen> {
     }
   }
 
+  Future<void> _deletePack() async {
+    final pack = _pack;
+    if (pack == null || _deleting) {
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete card pack?'),
+        content: const Text('This removes the published pack from Discover.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
+
+    setState(() => _deleting = true);
+    try {
+      if (LocalCardPackService.isLocalPack(pack.id)) {
+        await LocalCardPackService.deleteCardPack(pack.id);
+      } else {
+        await CardPackApiService.deleteCardPack(pack.id);
+      }
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Card pack deleted.')),
+      );
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Delete failed: $e')));
+    } finally {
+      if (mounted) {
+        setState(() => _deleting = false);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -107,7 +176,23 @@ class _CardPackDetailScreenState extends State<CardPackDetailScreen> {
         : AppColors.textSecondary;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Card Pack')),
+      appBar: AppBar(
+        title: const Text('Card Pack'),
+        actions: [
+          if (_canManagePack)
+            IconButton(
+              tooltip: 'Delete',
+              onPressed: _deleting ? null : _deletePack,
+              icon: _deleting
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.delete_outline),
+            ),
+        ],
+      ),
       body: _loading
           ? Center(child: CircularProgressIndicator(color: textP))
           : _error != null
@@ -199,28 +284,30 @@ class _CardPackDetailScreenState extends State<CardPackDetailScreen> {
                   ],
                   const SizedBox(height: 24),
                   _buildItemsSection(textP, textS, isDark),
-                  const SizedBox(height: 24),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton(
-                      onPressed: _importing ? null : _importPack,
-                      style: FilledButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                      ),
-                      child: _importing
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation(
-                                  Colors.white,
+                  if (!widget.managementMode) ...[
+                    const SizedBox(height: 24),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton(
+                        onPressed: _importing ? null : _importPack,
+                        style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                        ),
+                        child: _importing
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation(
+                                    Colors.white,
+                                  ),
                                 ),
-                              ),
-                            )
-                          : const Text('Import to My Wardrobe'),
+                              )
+                            : const Text('Import to My Wardrobe'),
+                      ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),

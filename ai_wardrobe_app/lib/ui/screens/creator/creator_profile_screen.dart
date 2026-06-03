@@ -256,14 +256,22 @@ class _CreatorProfileScreenState extends State<CreatorProfileScreen> {
                           children: _packs.map((pack) {
                             return CardPackListItem(
                               pack: pack,
-                              onTap: () {
-                                Navigator.push(
+                              onTap: () async {
+                                final changed = await Navigator.push<bool>(
                                   context,
                                   MaterialPageRoute(
                                     builder: (_) =>
-                                        CardPackDetailScreen(packId: pack.id),
+                                        CardPackDetailScreen(
+                                          packId: pack.id,
+                                          managementMode:
+                                              widget.creatorId ==
+                                              ApiSession.currentUserId,
+                                        ),
                                   ),
                                 );
+                                if (changed == true && mounted) {
+                                  _loadPacks();
+                                }
                               },
                             );
                           }).toList(),

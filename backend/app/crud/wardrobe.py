@@ -111,7 +111,10 @@ def list_public_wardrobes(
     query = (
         db.query(Wardrobe)
         .join(User, User.id == Wardrobe.user_id)
-        .filter(Wardrobe.is_public.is_(True))
+        .filter(
+            Wardrobe.is_public.is_(True),
+            Wardrobe.source != "CARD_PACK",
+        )
     )
     normalized_search = (search or "").strip()
     if normalized_search:

@@ -231,12 +231,13 @@ def delete_card_pack(
     )
     if pack is None:
         raise HTTPException(404, "Card pack not found")
-    import_count = (
+    import_rows = (
         db.query(CardPackImport)
         .filter_by(card_pack_id=pack_id)
         .with_for_update()
-        .count()
+        .all()
     )
+    import_count = len(import_rows)
     if import_count > 0:
         raise HTTPException(409, f"{import_count} user(s) have imported this pack")
     cover_blob_hash = pack.cover_image_blob_hash
