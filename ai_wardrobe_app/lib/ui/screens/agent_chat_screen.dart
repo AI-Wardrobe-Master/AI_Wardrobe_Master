@@ -581,11 +581,8 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
             color: _textPrimary,
           ),
         ),
-        const SizedBox(height: 10),
-        if (data.recommendationReason.isNotEmpty)
-          _buildReasonBlock(data.recommendationReason),
         if (data.weatherReason != null) ...[
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
           _buildReasonBlock(data.weatherReason!),
         ],
         if (data.preferenceReason != null) ...[
