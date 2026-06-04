@@ -75,6 +75,20 @@ The API documentation should be available at:
 http://localhost:8000/docs
 ```
 
+## Start The Preview Worker
+
+Outfit preview generation is processed by Celery, not directly inside the
+FastAPI request. Keep the backend running, then open another PowerShell
+terminal:
+
+```powershell
+cd D:\AI_Wardrobe_Master\backend
+uv run celery -A app.core.celery_app.celery_app worker -Q styled_generation --pool=solo --concurrency=1 --loglevel=info
+```
+
+Without this worker, preview tasks can be created but will remain queued while
+the frontend keeps polling.
+
 If `uv` is not installed, install it first from the official installer or use
 your preferred Python package manager. The backend dependencies are tracked by
 `pyproject.toml` and `uv.lock`; `uv sync` creates and updates the local virtual

@@ -18,10 +18,8 @@
 ## 快速启动
 
 ```bash
-# 1. 创建虚拟环境并安装依赖
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-pip install -r requirements.txt
+# 1. 安装依赖
+uv sync
 
 # 2. 配置环境变量
 
@@ -47,19 +45,20 @@ pip install -r requirements.txt
 # ROBOFLOW_WORKFLOW_ID=custom-workflow
 
 # 3. 初始化数据库（需先启动 PostgreSQL）
-alembic upgrade head
+uv run alembic upgrade head
 
 # 如需直接初始化一套空库，也可执行
 psql -U wardrobe_user -d wardrobe_db -f scripts/init_schema.sql
 
 # 4. 启动服务
-uvicorn app.main:app --reload --port 8000
+uv run uvicorn app.main:app --reload --port 8000
 
 # 5. 启动 Celery worker（处理衣物数字化长任务）
-celery -A app.core.celery_app.celery_app worker -Q clothing_pipeline --loglevel=info
+uv run celery -A app.core.celery_app.celery_app worker -Q clothing_pipeline --pool=solo --concurrency=1 --loglevel=info
 
-# 6. 启动 DreamO 专用 Celery worker（需要单独终端）
-celery -A app.core.celery_app.celery_app worker -Q styled_generation --loglevel=info
+# 6. 启动 styled_generation Celery worker（需要单独终端）
+# 该队列会处理 DreamO styled generation 和 outfit preview DashScope 生成任务。
+uv run celery -A app.core.celery_app.celery_app worker -Q styled_generation --pool=solo --concurrency=1 --loglevel=info
 
 # 7. 启动 DreamO 推理服务（需要 GPU，在 DreamO/ 目录下用独立虚拟环境）
 # cd ../DreamO && python -m venv venv && source venv/bin/activate
