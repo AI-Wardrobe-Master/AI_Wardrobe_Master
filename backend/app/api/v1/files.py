@@ -23,6 +23,7 @@ from app.models.outfit_preview import (
     OutfitPreviewTaskItem,
 )
 from app.models.styled_generation import StyledGeneration
+from app.models.user_tryon_image import UserTryOnImage
 from app.models.wardrobe import Wardrobe, WardrobeItem
 from app.services.blob_storage import get_blob_storage
 
@@ -207,6 +208,21 @@ async def get_card_pack_cover(
 
 
 # ---- Outfit preview files ----
+
+@router.get("/me/tryon-image/{image_id}")
+async def get_my_tryon_image_file(
+    image_id: UUID,
+    db: Session = Depends(get_db),
+    user_id: UUID = Depends(get_current_user_id),
+):
+    image = db.query(UserTryOnImage).filter(
+        UserTryOnImage.id == image_id,
+        UserTryOnImage.user_id == user_id,
+    ).first()
+    if image is None:
+        raise HTTPException(404)
+    return await _stream_blob(db, image.blob_hash)
+
 
 @router.get("/outfit-preview-tasks/{task_id}/{kind}")
 async def get_outfit_preview_file(

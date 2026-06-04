@@ -13,6 +13,7 @@ import '../../services/face_profile_service.dart';
 import '../../services/local_card_pack_service.dart';
 import '../../services/local_clothing_service.dart';
 import '../../services/me_api_service.dart';
+import '../../services/tryon_image_api_service.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/theme_controller.dart';
 import 'face_crop_screen.dart';
@@ -35,6 +36,9 @@ class _ProfileScreenState extends State<ProfileScreen>
   Map<String, dynamic>? _me;
   bool _loggingOut = false;
   FaceProfile _faceProfile = const FaceProfile(kind: FaceProfileKind.none);
+  TryOnImage? _tryOnImage;
+  bool _loadingTryOnImage = true;
+  bool _uploadingTryOnImage = false;
 
   @override
   void initState() {
@@ -42,6 +46,7 @@ class _ProfileScreenState extends State<ProfileScreen>
     WidgetsBinding.instance.addObserver(this);
     _loadStats();
     _loadFaceProfile();
+    _loadTryOnImage();
   }
 
   @override
@@ -128,6 +133,70 @@ class _ProfileScreenState extends State<ProfileScreen>
     final profile = await FaceProfileService.load();
     if (!mounted) return;
     setState(() => _faceProfile = profile);
+  }
+
+  Future<void> _loadTryOnImage() async {
+    try {
+      final image = await TryOnImageApiService.getDefaultImage();
+      if (!mounted) return;
+      setState(() {
+        _tryOnImage = image;
+        _loadingTryOnImage = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loadingTryOnImage = false);
+    }
+  }
+
+  Future<void> _pickTryOnImage() async {
+    if (_uploadingTryOnImage) return;
+    final picked = await ImagePicker().pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 95,
+    );
+    if (picked == null || !mounted) return;
+
+    setState(() => _uploadingTryOnImage = true);
+    try {
+      final image = await TryOnImageApiService.uploadDefaultImage(
+        bytes: await picked.readAsBytes(),
+        filename: picked.name.isEmpty ? 'tryon-person.jpg' : picked.name,
+      );
+      if (!mounted) return;
+      setState(() => _tryOnImage = image);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Default full-body photo saved.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Upload failed: $error')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _uploadingTryOnImage = false);
+      }
+    }
+  }
+
+  Future<void> _clearTryOnImage() async {
+    if (_uploadingTryOnImage) return;
+    setState(() => _uploadingTryOnImage = true);
+    try {
+      await TryOnImageApiService.deleteDefaultImage();
+      if (!mounted) return;
+      setState(() => _tryOnImage = null);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Clear failed: $error')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _uploadingTryOnImage = false);
+      }
+    }
   }
 
   Future<void> _showFacePhotoSourceSheet() async {
@@ -331,6 +400,14 @@ class _ProfileScreenState extends State<ProfileScreen>
                       onClear: _clearFaceProfile,
                     ),
                     const SizedBox(height: 24),
+                    _TryOnImageCard(
+                      image: _tryOnImage,
+                      loading: _loadingTryOnImage,
+                      uploading: _uploadingTryOnImage,
+                      onUpload: _pickTryOnImage,
+                      onClear: _clearTryOnImage,
+                    ),
+                    const SizedBox(height: 24),
                     Row(
                       children: [
                         _ProfileStat(
@@ -483,6 +560,121 @@ class _ProfileScreenState extends State<ProfileScreen>
     if (mounted) {
       _loadStats();
     }
+  }
+}
+
+class _TryOnImageCard extends StatelessWidget {
+  const _TryOnImageCard({
+    required this.image,
+    required this.loading,
+    required this.uploading,
+    required this.onUpload,
+    required this.onClear,
+  });
+
+  final TryOnImage? image;
+  final bool loading;
+  final bool uploading;
+  final VoidCallback onUpload;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final textP = isDark ? AppColors.darkTextPrimary : AppColors.textPrimary;
+    final textS = isDark
+        ? AppColors.darkTextSecondary
+        : AppColors.textSecondary;
+    final fill = isDark ? AppColors.darkBackground : AppColors.background;
+    final current = image;
+
+    return Card(
+      color: Theme.of(context).cardColor,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 88,
+                  height: 118,
+                  clipBehavior: Clip.antiAlias,
+                  decoration: BoxDecoration(
+                    color: fill,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Theme.of(context).dividerColor),
+                  ),
+                  child: current == null
+                      ? Icon(
+                          Icons.accessibility_new_rounded,
+                          color: textS,
+                          size: 38,
+                        )
+                      : Image.network(
+                          resolveFileUrl(current.imageUrl),
+                          headers: ApiSession.authHeaders,
+                          fit: BoxFit.cover,
+                        ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Default full-body photo',
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: textP,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        loading
+                            ? 'Loading saved try-on photo...'
+                            : current == null
+                            ? 'Required before generating outfit previews.'
+                            : 'Used by Canvas outfit preview by default.',
+                        style: TextStyle(fontSize: 12, color: textS),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  onPressed: current == null || uploading ? null : onClear,
+                  icon: const Icon(Icons.delete_outline_rounded),
+                  tooltip: 'Clear full-body photo',
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: uploading ? null : onUpload,
+                icon: uploading
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.photo_library_outlined),
+                label: Text(
+                  uploading
+                      ? 'Uploading...'
+                      : current == null
+                      ? 'Upload full-body photo'
+                      : 'Replace full-body photo',
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 

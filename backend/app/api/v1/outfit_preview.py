@@ -15,6 +15,7 @@ from app.schemas.outfit_preview import (
     OutfitPreviewSaveResponse,
     OutfitPreviewTaskCreateResponse,
     OutfitPreviewTaskCreateResponseData,
+    OutfitPreviewTaskFromDefaultPersonRequest,
     OutfitPreviewTaskDetail,
     OutfitPreviewTaskItemSummary,
     OutfitPreviewTaskListData,
@@ -23,9 +24,11 @@ from app.schemas.outfit_preview import (
 )
 from app.services.outfit_preview_service import (
     create_preview_task,
+    create_preview_task_from_person_blob,
     enqueue_preview_generation,
     save_outfit_from_preview_task,
 )
+from app.models.user_tryon_image import UserTryOnImage
 
 router = APIRouter(prefix="/outfit-preview-tasks", tags=["outfit-preview"])
 ALLOWED_STATUSES = {"PENDING", "PROCESSING", "COMPLETED", "FAILED"}
@@ -57,18 +60,12 @@ async def create_outfit_preview_task_route(
             error_code="DISPATCH_FAILED",
             error_message=str(exc),
         )
-        raise HTTPException(status_code=503, detail=f"Task dispatch failed: {exc}") from exc
+        raise HTTPException(
+            status_code=503,
+            detail=f"Task dispatch failed: {exc}",
+        ) from exc
 
-    return OutfitPreviewTaskCreateResponse(
-        data=OutfitPreviewTaskCreateResponseData(
-            id=task.id,
-            status=task.status,
-            clothingItemIds=[item.clothing_item_id for item in task.items],
-            personViewType=task.person_view_type,
-            garmentCategories=[item.garment_category for item in task.items],
-            createdAt=task.created_at,
-        )
-    )
+    return _to_task_create_response(task)
 
 
 @router.get("", response_model=OutfitPreviewTaskListResponse)
@@ -121,6 +118,55 @@ def list_saved_outfits(
     )
 
 
+@router.post(
+    "/from-default-person",
+    response_model=OutfitPreviewTaskCreateResponse,
+    status_code=202,
+)
+def create_outfit_preview_task_from_default_person_route(
+    body: OutfitPreviewTaskFromDefaultPersonRequest,
+    db: Session = Depends(get_db),
+    user_id: UUID = Depends(get_current_user_id),
+):
+    default_image = (
+        db.query(UserTryOnImage)
+        .filter(
+            UserTryOnImage.user_id == user_id,
+            UserTryOnImage.is_default.is_(True),
+        )
+        .first()
+    )
+    if default_image is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Default try-on full-body image is required",
+        )
+
+    task = create_preview_task_from_person_blob(
+        db,
+        user_id=user_id,
+        person_image_blob_hash=default_image.blob_hash,
+        person_view_type=body.person_view_type,
+        clothing_item_ids=body.clothing_item_ids,
+        garment_categories=body.garment_categories,
+    )
+    try:
+        enqueue_preview_generation(task.id)
+    except Exception as exc:
+        crud_outfit_preview.mark_outfit_preview_failed(
+            db,
+            task=task,
+            error_code="DISPATCH_FAILED",
+            error_message=str(exc),
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=f"Task dispatch failed: {exc}",
+        ) from exc
+
+    return _to_task_create_response(task)
+
+
 @router.get("/{task_id}", response_model=OutfitPreviewTaskDetail)
 def get_outfit_preview_task(
     task_id: UUID,
@@ -152,6 +198,19 @@ def save_outfit_from_preview_task_route(
         raise HTTPException(status_code=404, detail="Preview task not found")
     outfit = save_outfit_from_preview_task(db, task=task)
     return OutfitPreviewSaveResponse(data=_to_outfit_detail(outfit))
+
+
+def _to_task_create_response(task) -> OutfitPreviewTaskCreateResponse:
+    return OutfitPreviewTaskCreateResponse(
+        data=OutfitPreviewTaskCreateResponseData(
+            id=task.id,
+            status=task.status,
+            clothingItemIds=[item.clothing_item_id for item in task.items],
+            personViewType=task.person_view_type,
+            garmentCategories=[item.garment_category for item in task.items],
+            createdAt=task.created_at,
+        )
+    )
 
 
 def _to_task_detail(task) -> OutfitPreviewTaskDetail:

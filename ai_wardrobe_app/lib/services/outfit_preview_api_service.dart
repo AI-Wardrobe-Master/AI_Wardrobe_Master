@@ -27,6 +27,23 @@ class OutfitPreviewApiService {
     return responseData['data'] as Map<String, dynamic>;
   }
 
+  static Future<Map<String, dynamic>> createTaskFromDefaultPerson({
+    required List<String> clothingItemIds,
+    required String personViewType,
+    required List<String> garmentCategories,
+  }) async {
+    final resp = await _dio.post(
+      '/outfit-preview-tasks/from-default-person',
+      data: {
+        'clothingItemIds': clothingItemIds,
+        'personViewType': personViewType,
+        'garmentCategories': garmentCategories,
+      },
+    );
+    final responseData = resp.data as Map<String, dynamic>;
+    return responseData['data'] as Map<String, dynamic>;
+  }
+
   static Future<List<Map<String, dynamic>>> listTasks({
     String? status,
     int page = 1,

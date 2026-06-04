@@ -28,6 +28,17 @@ class OutfitPreviewTaskCreateResponse(BaseModel):
     data: OutfitPreviewTaskCreateResponseData
 
 
+class OutfitPreviewTaskFromDefaultPersonRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
+    clothing_item_ids: list[UUID] = Field(alias="clothingItemIds")
+    person_view_type: PersonViewType = Field(
+        default="FULL_BODY",
+        alias="personViewType",
+    )
+    garment_categories: list[GarmentCategory] = Field(alias="garmentCategories")
+
+
 class OutfitPreviewTaskItemSummary(BaseModel):
     model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
 

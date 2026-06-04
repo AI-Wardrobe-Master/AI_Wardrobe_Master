@@ -12,6 +12,7 @@ from app.api.v1 import (
     me,
     outfit_preview,
     styled_generation,
+    tryon_images,
     wardrobe,
 )
 
@@ -27,4 +28,5 @@ api_router.include_router(creators.router)
 api_router.include_router(outfit_preview.router)
 api_router.include_router(wardrobe.router)
 api_router.include_router(styled_generation.router)
+api_router.include_router(tryon_images.router)
 api_router.include_router(imports.router)

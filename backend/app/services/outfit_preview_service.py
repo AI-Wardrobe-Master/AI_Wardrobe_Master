@@ -387,6 +387,79 @@ async def create_preview_task(
     garment_categories: list[str],
 ) -> OutfitPreviewTask:
     blob_service = get_blob_service()
+    person_blob = None
+
+    person_bytes = await _read_upload_bytes(person_image)
+    try:
+        person_blob = await blob_service.ingest_upload(
+            db, io.BytesIO(person_bytes),
+            claimed_mime_type=person_image.content_type or "image/jpeg",
+            max_size=settings.MAX_UPLOAD_SIZE_BYTES,
+        )
+        task = _create_preview_task_with_person_blob(
+            db,
+            user_id=user_id,
+            person_image_blob_hash=person_blob.blob_hash,
+            person_view_type=person_view_type,
+            clothing_item_ids=clothing_item_ids,
+            garment_categories=garment_categories,
+            add_person_blob_ref=False,
+        )
+        db.commit()
+        db.refresh(task)
+    except Exception:
+        db.rollback()
+        if person_blob is not None:
+            try:
+                blob_service.release(db, person_blob.blob_hash)
+                db.commit()
+            except Exception:
+                logger.warning("Failed to release person image blob", exc_info=True)
+        raise
+
+    return task
+
+
+def create_preview_task_from_person_blob(
+    db: Session,
+    *,
+    user_id: UUID,
+    person_image_blob_hash: str,
+    person_view_type: str,
+    clothing_item_ids: list[UUID],
+    garment_categories: list[str],
+) -> OutfitPreviewTask:
+    """Creates a preview task from a previously uploaded user try-on image."""
+    try:
+        task = _create_preview_task_with_person_blob(
+            db,
+            user_id=user_id,
+            person_image_blob_hash=person_image_blob_hash,
+            person_view_type=person_view_type,
+            clothing_item_ids=clothing_item_ids,
+            garment_categories=garment_categories,
+            add_person_blob_ref=True,
+        )
+        db.commit()
+        db.refresh(task)
+    except Exception:
+        db.rollback()
+        raise
+
+    return task
+
+
+def _create_preview_task_with_person_blob(
+    db: Session,
+    *,
+    user_id: UUID,
+    person_image_blob_hash: str,
+    person_view_type: str,
+    clothing_item_ids: list[UUID],
+    garment_categories: list[str],
+    add_person_blob_ref: bool,
+) -> OutfitPreviewTask:
+    blob_service = get_blob_service()
     resolved_items = resolve_garment_images_for_preview(
         db,
         user_id=user_id,
@@ -398,19 +471,13 @@ async def create_preview_task(
         garment_categories,
     )
 
-    person_bytes = await _read_upload_bytes(person_image)
-    person_blob = None
-
+    if add_person_blob_ref:
+        blob_service.addref(db, person_image_blob_hash)
     try:
-        person_blob = await blob_service.ingest_upload(
-            db, io.BytesIO(person_bytes),
-            claimed_mime_type=person_image.content_type or "image/jpeg",
-            max_size=settings.MAX_UPLOAD_SIZE_BYTES,
-        )
         task = crud_outfit_preview.create_outfit_preview_task(
             db,
             user_id=user_id,
-            person_image_blob_hash=person_blob.blob_hash,
+            person_image_blob_hash=person_image_blob_hash,
             person_view_type=person_view_type.strip().upper(),
             garment_categories=[item.garment_category for item in resolved_items],
             prompt_template_key=prompt_template_key,
@@ -430,16 +497,9 @@ async def create_preview_task(
                 for item in resolved_items
             ],
         )
-        db.commit()
-        db.refresh(task)
     except Exception:
-        db.rollback()
-        if person_blob is not None:
-            try:
-                blob_service.release(db, person_blob.blob_hash)
-                db.commit()
-            except Exception:
-                logger.warning("Failed to release person image blob", exc_info=True)
+        if add_person_blob_ref:
+            blob_service.release(db, person_image_blob_hash)
         raise
 
     return task

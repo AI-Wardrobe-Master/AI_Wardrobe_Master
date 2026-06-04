@@ -6,6 +6,7 @@ from app.models.wardrobe import Wardrobe, WardrobeItem
 from app.models.styled_generation import StyledGeneration, StyledGenerationClothingItem
 from app.models.blob import Blob
 from app.models.card_pack_import import CardPackImport
+from app.models.user_tryon_image import UserTryOnImage
 
 __all__ = [
     "User",
@@ -23,4 +24,5 @@ __all__ = [
     "StyledGenerationClothingItem",
     "Blob",
     "CardPackImport",
+    "UserTryOnImage",
 ]

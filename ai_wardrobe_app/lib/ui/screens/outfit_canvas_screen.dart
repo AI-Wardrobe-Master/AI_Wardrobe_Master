@@ -1,23 +1,20 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../../l10n/app_strings_provider.dart';
 import '../../models/wardrobe.dart';
 import '../../services/api_config.dart';
 import '../../services/outfit_preview_api_service.dart';
+import '../../services/tryon_image_api_service.dart';
 import '../../services/wardrobe_service.dart';
 import '../../state/wardrobe_refresh_notifier.dart';
 import '../../theme/app_theme.dart';
 
-const _referenceImagePath =
-    'assets/visualization/source/full_body_reference.jpg';
 const _downloadChannel = MethodChannel('ai_wardrobe_app/downloads');
 
 class OutfitCanvasScreen extends StatefulWidget {
@@ -41,11 +38,28 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
   };
   bool _loadingCatalog = true;
   String? _catalogError;
+  TryOnImage? _tryOnImage;
+  bool _loadingTryOnImage = true;
 
   @override
   void initState() {
     super.initState();
     _loadCatalog();
+    _loadTryOnImage();
+  }
+
+  Future<void> _loadTryOnImage() async {
+    try {
+      final image = await TryOnImageApiService.getDefaultImage();
+      if (!mounted) return;
+      setState(() {
+        _tryOnImage = image;
+        _loadingTryOnImage = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loadingTryOnImage = false);
+    }
   }
 
   Future<void> _loadCatalog() async {
@@ -465,7 +479,7 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
                             borderRadius: BorderRadius.circular(999),
                           ),
                           child: Text(
-                            'Reference Photo',
+                            'Default Photo',
                             style: TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.w700,
@@ -480,10 +494,7 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
                             horizontal: 26,
                             vertical: 12,
                           ),
-                          child: Image.asset(
-                            _referenceImagePath,
-                            fit: BoxFit.contain,
-                          ),
+                          child: _buildTryOnReferenceImage(),
                         ),
                       ),
                       for (final zone in _BodyZone.values) ...[
@@ -497,6 +508,52 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildTryOnReferenceImage() {
+    final image = _tryOnImage;
+    if (_loadingTryOnImage) {
+      return Center(
+        child: CircularProgressIndicator(
+          strokeWidth: 2,
+          color: _accent,
+        ),
+      );
+    }
+    if (image == null || image.imageUrl.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.accessibility_new_rounded,
+              color: Colors.white.withOpacity(0.78),
+              size: 46,
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'Upload a full-body photo in Profile',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.86),
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    return CachedNetworkImage(
+      imageUrl: resolveFileUrl(image.imageUrl),
+      httpHeaders: ApiSession.authHeaders,
+      fit: BoxFit.contain,
+      errorWidget: (_, __, ___) => Icon(
+        Icons.broken_image_outlined,
+        color: Colors.white.withOpacity(0.78),
+        size: 44,
       ),
     );
   }
@@ -2187,10 +2244,22 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
             'Select at least one upper, lower, or shoe item before generating.',
       );
     }
+    var tryOnImage = _tryOnImage;
+    if (tryOnImage == null) {
+      tryOnImage = await TryOnImageApiService.getDefaultImage();
+      if (mounted && tryOnImage != null) {
+        setState(() => _tryOnImage = tryOnImage);
+      }
+    }
+    if (tryOnImage == null) {
+      throw PlatformException(
+        code: 'missing_tryon_image',
+        message:
+            'Upload a default full-body photo in Profile before generating.',
+      );
+    }
 
-    final personImage = await _writeReferenceImageToTempFile();
-    final created = await OutfitPreviewApiService.createTask(
-      personImage: personImage,
+    final created = await OutfitPreviewApiService.createTaskFromDefaultPerson(
       clothingItemIds: garments.map((item) => item.clothingItemId).toList(),
       personViewType: 'FULL_BODY',
       garmentCategories: garments.map((item) => item.category).toList(),
@@ -2279,13 +2348,6 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
       return [_PreviewApiGarment(shoes.id, 'SHOES')];
     }
     return const [];
-  }
-
-  Future<File> _writeReferenceImageToTempFile() async {
-    final bytes = await rootBundle.load(_referenceImagePath);
-    final directory = await getTemporaryDirectory();
-    final file = File('${directory.path}/ai_wardrobe_reference.jpg');
-    return file.writeAsBytes(bytes.buffer.asUint8List(), flush: true);
   }
 
   Future<Uint8List> _downloadPreviewBytes(String previewImageUrl) async {
