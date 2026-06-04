@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -12,8 +12,10 @@ import '../../services/api_config.dart';
 import '../../services/outfit_preview_api_service.dart';
 import '../../services/tryon_image_api_service.dart';
 import '../../services/wardrobe_service.dart';
+import '../../state/tryon_image_refresh_notifier.dart';
 import '../../state/wardrobe_refresh_notifier.dart';
 import '../../theme/app_theme.dart';
+import '../widgets/app_remote_image.dart';
 
 const _downloadChannel = MethodChannel('ai_wardrobe_app/downloads');
 
@@ -39,21 +41,37 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
   bool _loadingCatalog = true;
   String? _catalogError;
   TryOnImage? _tryOnImage;
+  Uint8List? _tryOnImageBytes;
   bool _loadingTryOnImage = true;
 
   @override
   void initState() {
     super.initState();
+    TryOnImageRefreshNotifier.tick.addListener(_handleTryOnImageRefresh);
     _loadCatalog();
     _loadTryOnImage();
+  }
+
+  @override
+  void dispose() {
+    TryOnImageRefreshNotifier.tick.removeListener(_handleTryOnImageRefresh);
+    super.dispose();
+  }
+
+  void _handleTryOnImageRefresh() {
+    unawaited(_loadTryOnImage());
   }
 
   Future<void> _loadTryOnImage() async {
     try {
       final image = await TryOnImageApiService.getDefaultImage();
+      final bytes = image == null
+          ? null
+          : await TryOnImageApiService.downloadImageBytes(image.imageUrl);
       if (!mounted) return;
       setState(() {
         _tryOnImage = image;
+        _tryOnImageBytes = bytes;
         _loadingTryOnImage = false;
       });
     } catch (_) {
@@ -522,7 +540,7 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
         ),
       );
     }
-    if (image == null || image.imageUrl.isEmpty) {
+    if (image == null || image.imageUrl.isEmpty || _tryOnImageBytes == null) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -546,15 +564,9 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
         ),
       );
     }
-    return CachedNetworkImage(
-      imageUrl: resolveFileUrl(image.imageUrl),
-      httpHeaders: ApiSession.authHeaders,
+    return Image.memory(
+      _tryOnImageBytes!,
       fit: BoxFit.contain,
-      errorWidget: (_, __, ___) => Icon(
-        Icons.broken_image_outlined,
-        color: Colors.white.withOpacity(0.78),
-        size: 44,
-      ),
     );
   }
 
@@ -1368,13 +1380,11 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
       }
     }
 
-    return CachedNetworkImage(
-      imageUrl: resolveFileUrl(imageUrl),
-      httpHeaders: ApiSession.authHeaders,
+    return AppRemoteImage(
+      url: imageUrl,
       fit: BoxFit.cover,
-      errorWidget: (_, __, ___) =>
-          Center(child: Icon(item.icon, color: item.accent, size: 24)),
-      placeholder: (_, __) => Center(
+      errorWidget: Center(child: Icon(item.icon, color: item.accent, size: 24)),
+      placeholder: Center(
         child: SizedBox(
           width: 18,
           height: 18,
@@ -2114,18 +2124,15 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
                                         ? const Color(0xFF11161E)
                                         : const Color(0xFFF6F1E8),
                                   ),
-                                  CachedNetworkImage(
-                                    imageUrl: resolveFileUrl(
-                                      preview.previewImageUrl,
-                                    ),
-                                    httpHeaders: ApiSession.authHeaders,
+                                  AppRemoteImage(
+                                    url: preview.previewImageUrl,
                                     fit: BoxFit.contain,
-                                    placeholder: (_, __) => Center(
+                                    placeholder: Center(
                                       child: CircularProgressIndicator(
                                         color: _accent,
                                       ),
                                     ),
-                                    errorWidget: (_, __, ___) => Center(
+                                    errorWidget: Center(
                                       child: Icon(
                                         Icons.broken_image_outlined,
                                         size: 42,
@@ -2247,8 +2254,14 @@ class _OutfitCanvasScreenState extends State<OutfitCanvasScreen> {
     var tryOnImage = _tryOnImage;
     if (tryOnImage == null) {
       tryOnImage = await TryOnImageApiService.getDefaultImage();
+      final bytes = tryOnImage == null
+          ? null
+          : await TryOnImageApiService.downloadImageBytes(tryOnImage.imageUrl);
       if (mounted && tryOnImage != null) {
-        setState(() => _tryOnImage = tryOnImage);
+        setState(() {
+          _tryOnImage = tryOnImage;
+          _tryOnImageBytes = bytes;
+        });
       }
     }
     if (tryOnImage == null) {

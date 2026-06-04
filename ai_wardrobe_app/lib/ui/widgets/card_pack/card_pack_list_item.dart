@@ -1,11 +1,10 @@
 import 'dart:convert';
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../../../models/card_pack.dart';
-import '../../../services/api_config.dart';
 import '../../../theme/app_theme.dart';
+import '../app_remote_image.dart';
 
 class CardPackListItem extends StatelessWidget {
   final CardPack pack;
@@ -145,19 +144,18 @@ class CardPackListItem extends StatelessWidget {
       }
     }
 
-    return CachedNetworkImage(
-      imageUrl: resolveFileUrl(pack.coverImageUrl!),
-      httpHeaders: ApiSession.authHeaders,
+    return AppRemoteImage(
+      url: pack.coverImageUrl!,
       width: 80,
       height: 80,
       fit: BoxFit.cover,
-      placeholder: (context, url) => Container(
+      placeholder: Container(
         width: 80,
         height: 80,
         color: textS.withValues(alpha: 0.1),
         child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
       ),
-      errorWidget: (context, url, error) => Container(
+      errorWidget: Container(
         width: 80,
         height: 80,
         color: textS.withValues(alpha: 0.1),

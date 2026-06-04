@@ -14,6 +14,7 @@ import '../../services/local_card_pack_service.dart';
 import '../../services/local_clothing_service.dart';
 import '../../services/me_api_service.dart';
 import '../../services/tryon_image_api_service.dart';
+import '../../state/tryon_image_refresh_notifier.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/theme_controller.dart';
 import 'face_crop_screen.dart';
@@ -37,6 +38,7 @@ class _ProfileScreenState extends State<ProfileScreen>
   bool _loggingOut = false;
   FaceProfile _faceProfile = const FaceProfile(kind: FaceProfileKind.none);
   TryOnImage? _tryOnImage;
+  Uint8List? _tryOnImageBytes;
   bool _loadingTryOnImage = true;
   bool _uploadingTryOnImage = false;
 
@@ -138,9 +140,13 @@ class _ProfileScreenState extends State<ProfileScreen>
   Future<void> _loadTryOnImage() async {
     try {
       final image = await TryOnImageApiService.getDefaultImage();
+      final bytes = image == null
+          ? null
+          : await TryOnImageApiService.downloadImageBytes(image.imageUrl);
       if (!mounted) return;
       setState(() {
         _tryOnImage = image;
+        _tryOnImageBytes = bytes;
         _loadingTryOnImage = false;
       });
     } catch (_) {
@@ -159,12 +165,17 @@ class _ProfileScreenState extends State<ProfileScreen>
 
     setState(() => _uploadingTryOnImage = true);
     try {
+      final bytes = await picked.readAsBytes();
       final image = await TryOnImageApiService.uploadDefaultImage(
-        bytes: await picked.readAsBytes(),
+        bytes: bytes,
         filename: picked.name.isEmpty ? 'tryon-person.jpg' : picked.name,
       );
       if (!mounted) return;
-      setState(() => _tryOnImage = image);
+      setState(() {
+        _tryOnImage = image;
+        _tryOnImageBytes = bytes;
+      });
+      TryOnImageRefreshNotifier.requestRefresh();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Default full-body photo saved.')),
       );
@@ -186,7 +197,11 @@ class _ProfileScreenState extends State<ProfileScreen>
     try {
       await TryOnImageApiService.deleteDefaultImage();
       if (!mounted) return;
-      setState(() => _tryOnImage = null);
+      setState(() {
+        _tryOnImage = null;
+        _tryOnImageBytes = null;
+      });
+      TryOnImageRefreshNotifier.requestRefresh();
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -402,6 +417,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                     const SizedBox(height: 24),
                     _TryOnImageCard(
                       image: _tryOnImage,
+                      imageBytes: _tryOnImageBytes,
                       loading: _loadingTryOnImage,
                       uploading: _uploadingTryOnImage,
                       onUpload: _pickTryOnImage,
@@ -566,6 +582,7 @@ class _ProfileScreenState extends State<ProfileScreen>
 class _TryOnImageCard extends StatelessWidget {
   const _TryOnImageCard({
     required this.image,
+    required this.imageBytes,
     required this.loading,
     required this.uploading,
     required this.onUpload,
@@ -573,6 +590,7 @@ class _TryOnImageCard extends StatelessWidget {
   });
 
   final TryOnImage? image;
+  final Uint8List? imageBytes;
   final bool loading;
   final bool uploading;
   final VoidCallback onUpload;
@@ -606,15 +624,14 @@ class _TryOnImageCard extends StatelessWidget {
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(color: Theme.of(context).dividerColor),
                   ),
-                  child: current == null
+                  child: imageBytes == null
                       ? Icon(
                           Icons.accessibility_new_rounded,
                           color: textS,
                           size: 38,
                         )
-                      : Image.network(
-                          resolveFileUrl(current.imageUrl),
-                          headers: ApiSession.authHeaders,
+                      : Image.memory(
+                          imageBytes!,
                           fit: BoxFit.cover,
                         ),
                 ),

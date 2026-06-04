@@ -443,13 +443,12 @@ class _CardPackDetailScreenState extends State<CardPackDetailScreen> {
       }
     }
 
-    return Image.network(
-      resolveFileUrl(coverImageUrl),
-      headers: ApiSession.authHeaders,
+    return AppRemoteImage(
+      url: coverImageUrl,
       width: double.infinity,
       height: double.infinity,
       fit: BoxFit.contain,
-      errorBuilder: (context, error, stackTrace) => _imageFallback(textS),
+      errorWidget: _imageFallback(textS),
     );
   }
 

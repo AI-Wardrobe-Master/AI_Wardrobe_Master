@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:dio/dio.dart';
 
 import 'api_config.dart';
@@ -57,5 +59,17 @@ class TryOnImageApiService {
 
   static Future<void> deleteDefaultImage() async {
     await _dio.delete('/me/tryon-image');
+  }
+
+  static Future<Uint8List> downloadImageBytes(String imageUrl) async {
+    final resp = await _dio.get<List<int>>(
+      resolveFileUrl(imageUrl),
+      options: Options(responseType: ResponseType.bytes),
+    );
+    final data = resp.data;
+    if (data == null || data.isEmpty) {
+      throw StateError('Try-on image response was empty.');
+    }
+    return Uint8List.fromList(data);
   }
 }

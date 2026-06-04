@@ -11,12 +11,16 @@ class AppRemoteImage extends StatelessWidget {
   AppRemoteImage({
     super.key,
     required this.url,
+    this.width,
+    this.height,
     this.fit = BoxFit.cover,
     this.placeholder,
     this.errorWidget,
   });
 
   final String url;
+  final double? width;
+  final double? height;
   final BoxFit fit;
   final Widget? placeholder;
   final Widget? errorWidget;
@@ -35,6 +39,8 @@ class AppRemoteImage extends StatelessWidget {
         if (data != null) {
           return Image.memory(
             data.contentAsBytes(),
+            width: width,
+            height: height,
             fit: fit,
             errorBuilder: (_, __, ___) =>
                 errorWidget ?? const SizedBox.shrink(),
@@ -54,6 +60,8 @@ class AppRemoteImage extends StatelessWidget {
           if (snapshot.hasData) {
             return Image.memory(
               snapshot.data!,
+              width: width,
+              height: height,
               fit: fit,
               errorBuilder: (_, __, ___) =>
                   errorWidget ?? const SizedBox.shrink(),
@@ -70,6 +78,8 @@ class AppRemoteImage extends StatelessWidget {
     return CachedNetworkImage(
       imageUrl: resolvedUrl,
       httpHeaders: ApiSession.authHeaders,
+      width: width,
+      height: height,
       fit: fit,
       placeholder: (_, __) => placeholder ?? const SizedBox.shrink(),
       errorWidget: (_, __, ___) => errorWidget ?? const SizedBox.shrink(),
