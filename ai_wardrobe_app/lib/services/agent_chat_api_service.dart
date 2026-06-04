@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:dio/dio.dart';
 
 import 'api_config.dart';
@@ -20,8 +23,31 @@ class AgentChatApiService {
     String? conversationId,
     String? city,
   }) async {
+    AgentChatData? finalData;
+    await for (final event in sendMessageStream(
+      message: message,
+      conversationId: conversationId,
+      city: city,
+    )) {
+      final errorMessage = event.errorMessage;
+      if (errorMessage != null && errorMessage.isNotEmpty) {
+        throw StateError(errorMessage);
+      }
+      finalData = event.finalData ?? finalData;
+    }
+    if (finalData == null) {
+      throw StateError('Agent stream finished without a final response.');
+    }
+    return finalData!;
+  }
+
+  static Stream<AgentChatStreamEvent> sendMessageStream({
+    required String message,
+    String? conversationId,
+    String? city,
+  }) async* {
     final trimmedCity = city?.trim();
-    final response = await _dio.post(
+    final response = await _dio.post<ResponseBody>(
       '/agent/chat',
       data: {
         'message': message,
@@ -31,10 +57,141 @@ class AgentChatApiService {
         'limit': 50,
         'generatePreview': false,
       },
+      options: Options(
+        responseType: ResponseType.stream,
+        headers: {'Accept': 'text/event-stream'},
+      ),
     );
-    final responseData = Map<String, dynamic>.from(response.data as Map);
-    final data = Map<String, dynamic>.from(responseData['data'] as Map);
+    final body = response.data;
+    if (body == null) {
+      throw StateError('Agent stream response was empty.');
+    }
+
+    var buffer = '';
+    await for (final text in utf8.decoder.bind(body.stream.cast<List<int>>())) {
+      buffer += text;
+      while (true) {
+        final separator = _nextSseSeparator(buffer);
+        if (separator == null) {
+          break;
+        }
+        final rawEvent = buffer.substring(0, separator.index);
+        buffer = buffer.substring(separator.index + separator.length);
+        final event = AgentChatStreamEvent.tryParse(rawEvent);
+        if (event != null) {
+          yield event;
+        }
+      }
+    }
+    final event = AgentChatStreamEvent.tryParse(buffer);
+    if (event != null) {
+      yield event;
+    }
+  }
+}
+
+_SseSeparator? _nextSseSeparator(String buffer) {
+  final lf = buffer.indexOf('\n\n');
+  final crlf = buffer.indexOf('\r\n\r\n');
+  if (lf < 0 && crlf < 0) {
+    return null;
+  }
+  if (lf >= 0 && (crlf < 0 || lf < crlf)) {
+    return const _SseSeparator(index: 0, length: 2).at(lf);
+  }
+  return const _SseSeparator(index: 0, length: 4).at(crlf);
+}
+
+class _SseSeparator {
+  const _SseSeparator({required this.index, required this.length});
+
+  final int index;
+  final int length;
+
+  _SseSeparator at(int nextIndex) {
+    return _SseSeparator(index: nextIndex, length: length);
+  }
+}
+
+class AgentChatStreamEvent {
+  const AgentChatStreamEvent({
+    required this.type,
+    required this.data,
+  });
+
+  final String type;
+  final Map<String, dynamic> data;
+
+  AgentChatStep? get step {
+    if (type != 'step') {
+      return null;
+    }
+    return AgentChatStep.fromJson(data);
+  }
+
+  AgentChatData? get finalData {
+    if (type != 'final') {
+      return null;
+    }
     return AgentChatData.fromJson(data);
+  }
+
+  String? get errorMessage {
+    if (type != 'error') {
+      return null;
+    }
+    return data['message']?.toString();
+  }
+
+  static AgentChatStreamEvent? tryParse(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) {
+      return null;
+    }
+    var type = 'message';
+    final dataLines = <String>[];
+    for (final line in trimmed.split('\n')) {
+      final normalized = line.trimRight();
+      if (normalized.startsWith('event:')) {
+        type = normalized.substring(6).trim();
+      } else if (normalized.startsWith('data:')) {
+        dataLines.add(normalized.substring(5).trimLeft());
+      }
+    }
+    if (dataLines.isEmpty) {
+      return null;
+    }
+    final decoded = jsonDecode(dataLines.join('\n'));
+    if (decoded is! Map) {
+      return null;
+    }
+    return AgentChatStreamEvent(
+      type: type,
+      data: Map<String, dynamic>.from(decoded),
+    );
+  }
+}
+
+class AgentChatStep {
+  const AgentChatStep({
+    required this.id,
+    required this.label,
+    required this.status,
+    this.detail,
+  });
+
+  final String id;
+  final String label;
+  final String status;
+  final String? detail;
+
+  factory AgentChatStep.fromJson(Map<String, dynamic> json) {
+    return AgentChatStep(
+      id: json['id']?.toString() ?? '',
+      label: json['label']?.toString() ?? '',
+      status: json['status']?.toString() ?? 'running',
+      detail: _nullableString(json['detail']),
+    );
   }
 }
 

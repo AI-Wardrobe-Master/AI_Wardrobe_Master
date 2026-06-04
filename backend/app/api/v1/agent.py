@@ -1,13 +1,20 @@
+import json
+import queue
+import threading
+from collections.abc import Iterator
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user_id
 from app.core.config import settings
-from app.db.session import get_db
+from app.db.session import SessionLocal, get_db
 from app.schemas.agent import (
     AgentChatHistoryResponse,
     AgentChatRequest,
-    AgentChatResponse,
     OutfitRecommendationRequest,
     OutfitRecommendationResponse,
 )
@@ -79,33 +86,100 @@ def get_chat_history(
     return AgentChatHistoryResponse(data=data)
 
 
-@router.post(
-    "/chat",
-    response_model=AgentChatResponse,
-)
+@router.post("/chat")
 def chat_outfit_agent(
     body: AgentChatRequest,
-    db: Session = Depends(get_db),
     user_id=Depends(get_current_user_id),
 ):
-    """Runs one conversational outfit Agent turn for the authenticated user.
+    """Streams one conversational outfit Agent turn for the authenticated user.
 
-    Args:
-        body: User message, optional conversation id, and optional filters.
-        db: Request-scoped database session.
-        user_id: Authenticated user identifier resolved from the bearer token.
-
-    Returns:
-        Structured chat response with the current recommendation payload.
-
-    Raises:
-        HTTPException: Returns 503 when the LLM provider is not configured.
+    The endpoint returns Server-Sent Events. It emits user-facing execution
+    steps while the existing LangGraph Agent runs, then sends a final event
+    containing the same chat payload previously returned as JSON.
     """
-    try:
-        data = OutfitRecommendationAgent(
-            conversation_store=JsonlConversationStore(),
-        ).run_chat(db, user_id=user_id, request=body)
-    except AgentConfigurationError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return StreamingResponse(
+        _chat_event_stream(body=body, user_id=user_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
-    return AgentChatResponse(data=data)
+
+def _chat_event_stream(
+    *,
+    body: AgentChatRequest,
+    user_id,
+) -> Iterator[str]:
+    events: queue.Queue[dict[str, Any] | None] = queue.Queue()
+
+    def emit(event: dict[str, Any]) -> None:
+        events.put(event)
+
+    def run_agent() -> None:
+        db = SessionLocal()
+        try:
+            emit(
+                {
+                    "event": "step",
+                    "data": {
+                        "id": "queued",
+                        "label": "启动 Agent",
+                        "status": "success",
+                    },
+                }
+            )
+            data = OutfitRecommendationAgent(
+                conversation_store=JsonlConversationStore(),
+                event_sink=emit,
+            ).run_chat(db, user_id=user_id, request=body)
+            emit({"event": "final", "data": data})
+        except AgentConfigurationError as exc:
+            emit(
+                {
+                    "event": "error",
+                    "data": {
+                        "code": "AGENT_CONFIGURATION_ERROR",
+                        "message": str(exc),
+                    },
+                }
+            )
+        except Exception as exc:
+            emit(
+                {
+                    "event": "error",
+                    "data": {
+                        "code": "AGENT_RUN_FAILED",
+                        "message": str(exc),
+                    },
+                }
+            )
+        finally:
+            db.close()
+            events.put(None)
+
+    thread = threading.Thread(target=run_agent, daemon=True)
+    thread.start()
+
+    yield _sse_event(
+        "step",
+        {
+            "id": "queued",
+            "label": "启动 Agent",
+            "status": "running",
+        },
+    )
+    while True:
+        event = events.get()
+        if event is None:
+            break
+        event_type = event.get("event", "message")
+        yield _sse_event(event_type, event.get("data", {}))
+
+
+def _sse_event(event_type: str, data: Any) -> str:
+    return (
+        f"event: {event_type}\n"
+        f"data: {json.dumps(jsonable_encoder(data), ensure_ascii=False)}\n\n"
+    )

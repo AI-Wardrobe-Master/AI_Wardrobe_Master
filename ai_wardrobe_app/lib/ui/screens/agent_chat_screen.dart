@@ -20,11 +20,13 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
   final ScrollController _scrollController = ScrollController();
   final List<_ChatMessage> _messages = [];
   final Map<String, Map<String, dynamic>> _itemDetails = {};
+  final List<AgentChatStep> _agentSteps = [];
 
   String? _conversationId;
   AgentChatData? _latestRecommendation;
   bool _historyLoading = true;
   bool _sending = false;
+  int? _streamingMessageIndex;
   String? _error;
 
   bool get _isDark => Theme.of(context).brightness == Brightness.dark;
@@ -118,6 +120,11 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
 
     setState(() {
       _messages.add(_ChatMessage.user(message));
+      _messages.add(const _ChatMessage.assistant('', isStreaming: true));
+      _streamingMessageIndex = _messages.length - 1;
+      _agentSteps
+        ..clear()
+        ..addAll(_initialAgentSteps);
       _messageController.clear();
       _sending = true;
       _error = null;
@@ -125,25 +132,42 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
     _scrollToBottom();
 
     try {
-      final data = await AgentChatApiService.sendMessage(
+      AgentChatData? finalData;
+      await for (final event in AgentChatApiService.sendMessageStream(
         message: message,
         conversationId: _conversationId,
         city: _cityController.text,
-      );
+      )) {
+        if (!mounted) {
+          return;
+        }
+        final step = event.step;
+        if (step != null) {
+          setState(() => _upsertAgentStep(step));
+          _scrollToBottom();
+          continue;
+        }
+        final errorMessage = event.errorMessage;
+        if (errorMessage != null && errorMessage.isNotEmpty) {
+          throw StateError(errorMessage);
+        }
+        final data = event.finalData;
+        if (data != null) {
+          finalData = data;
+        }
+      }
       if (!mounted) {
         return;
+      }
+      final data = finalData;
+      if (data == null) {
+        throw StateError('Agent stream finished without a final response.');
       }
       setState(() {
         _conversationId = data.conversationId;
         _latestRecommendation = data;
-        _messages.add(
-          _ChatMessage.assistant(
-            data.assistantMessage,
-            recommendation: data,
-          ),
-        );
-        _sending = false;
       });
+      await _typeAssistantMessage(data);
       await _loadRecommendedItemDetails(data.outfit.items);
     } catch (error) {
       if (!mounted) {
@@ -151,15 +175,76 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
       }
       setState(() {
         _error = _formatError(error);
+        _clearStreamingMessage();
       });
     } finally {
       if (mounted) {
         if (_sending) {
-          setState(() => _sending = false);
+          setState(() {
+            _sending = false;
+            _streamingMessageIndex = null;
+            _agentSteps.clear();
+          });
         }
         _scrollToBottom();
       }
     }
+  }
+
+  void _upsertAgentStep(AgentChatStep step) {
+    final index = _agentSteps.indexWhere((item) => item.id == step.id);
+    if (index >= 0) {
+      _agentSteps[index] = step;
+    } else {
+      _agentSteps.add(step);
+    }
+  }
+
+  void _clearStreamingMessage() {
+    final index = _streamingMessageIndex;
+    if (index != null && index >= 0 && index < _messages.length) {
+      _messages.removeAt(index);
+    }
+    _streamingMessageIndex = null;
+    _sending = false;
+    _agentSteps.clear();
+  }
+
+  Future<void> _typeAssistantMessage(AgentChatData data) async {
+    final index = _streamingMessageIndex;
+    if (index == null || index < 0 || index >= _messages.length) {
+      setState(() {
+        _messages.add(
+          _ChatMessage.assistant(data.assistantMessage, recommendation: data),
+        );
+      });
+      return;
+    }
+
+    for (var i = 1; i <= data.assistantMessage.length; i++) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _messages[index] = _ChatMessage.assistant(
+          data.assistantMessage.substring(0, i),
+          recommendation: i == data.assistantMessage.length ? data : null,
+          isStreaming: i != data.assistantMessage.length,
+        );
+      });
+      if (i % 4 == 0 || i == data.assistantMessage.length) {
+        _scrollToBottom();
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 18));
+    }
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _sending = false;
+      _streamingMessageIndex = null;
+      _agentSteps.clear();
+    });
   }
 
   void _selectRecommendation(AgentChatData data) {
@@ -382,7 +467,7 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
         if (_historyLoading && _messages.isEmpty) _buildHistoryLoading(),
         if (!_historyLoading && _messages.isEmpty) _buildEmptyState(),
         for (final message in _messages) _buildMessageBubble(message),
-        if (_sending) _buildSendingBubble(),
+        if (_sending && _streamingMessageIndex == null) _buildSendingBubble(),
         if (includeRecommendation && _latestRecommendation != null) ...[
           const SizedBox(height: 12),
           _buildRecommendationPanel(compact: true),
@@ -447,14 +532,16 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
               : Theme.of(context).dividerColor,
         ),
       ),
-      child: Text(
-        message.text,
-        style: TextStyle(
-          fontSize: 14,
-          height: 1.35,
-          color: isUser ? AppColors.textPrimary : _textPrimary,
-        ),
-      ),
+      child: message.isStreaming && message.text.isEmpty
+          ? _buildAgentTimeline()
+          : Text(
+              message.text,
+              style: TextStyle(
+                fontSize: 14,
+                height: 1.35,
+                color: isUser ? AppColors.textPrimary : _textPrimary,
+              ),
+            ),
     );
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
@@ -466,6 +553,82 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
             )
           : bubble,
     );
+  }
+
+  Widget _buildAgentTimeline() {
+    final steps = _agentSteps.isEmpty
+        ? _initialAgentSteps
+        : _agentSteps;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minWidth: 260),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final step in steps)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 3),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(top: 1),
+                    child: _buildStepIcon(step.status),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          step.label,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: _textPrimary,
+                          ),
+                        ),
+                        if (step.detail != null) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            step.detail!,
+                            style: TextStyle(
+                              fontSize: 12,
+                              height: 1.25,
+                              color: _textSecondary,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStepIcon(String status) {
+    if (status == 'running') {
+      return SizedBox(
+        width: 14,
+        height: 14,
+        child: CircularProgressIndicator(strokeWidth: 2, color: _accent),
+      );
+    }
+    final icon = switch (status) {
+      'success' => Icons.check_circle_rounded,
+      'skipped' => Icons.remove_circle_outline_rounded,
+      'failed' => Icons.error_outline_rounded,
+      _ => Icons.circle_outlined,
+    };
+    final color = switch (status) {
+      'success' => Colors.green,
+      'failed' => Colors.redAccent,
+      _ => _textSecondary,
+    };
+    return Icon(icon, size: 16, color: color);
   }
 
   Widget _buildSendingBubble() {
@@ -733,6 +896,17 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
   }
 }
 
+const List<AgentChatStep> _initialAgentSteps = [
+  AgentChatStep(id: 'queued', label: '启动 Agent', status: 'running'),
+  AgentChatStep(id: 'understand_request', label: '理解需求', status: 'pending'),
+  AgentChatStep(id: 'get_weather', label: '获取天气', status: 'pending'),
+  AgentChatStep(id: 'get_clothing_taxonomy', label: '读取衣橱标签', status: 'pending'),
+  AgentChatStep(id: 'search_wardrobe_items', label: '搜索衣橱', status: 'pending'),
+  AgentChatStep(id: 'outfit_agent_loop', label: '生成穿搭', status: 'pending'),
+  AgentChatStep(id: 'generate_outfit_preview', label: '生成预览图', status: 'pending'),
+  AgentChatStep(id: 'final_response', label: '完成', status: 'pending'),
+];
+
 enum _ChatRole { user, assistant }
 
 class _ChatMessage {
@@ -740,17 +914,24 @@ class _ChatMessage {
     required this.role,
     required this.text,
     this.recommendation,
+    this.isStreaming = false,
   });
 
   const _ChatMessage.user(String text) : this(role: _ChatRole.user, text: text);
-  const _ChatMessage.assistant(String text, {AgentChatData? recommendation})
+  const _ChatMessage.assistant(
+    String text, {
+    AgentChatData? recommendation,
+    bool isStreaming = false,
+  })
     : this(
         role: _ChatRole.assistant,
         text: text,
         recommendation: recommendation,
+        isStreaming: isStreaming,
       );
 
   final _ChatRole role;
   final String text;
   final AgentChatData? recommendation;
+  final bool isStreaming;
 }

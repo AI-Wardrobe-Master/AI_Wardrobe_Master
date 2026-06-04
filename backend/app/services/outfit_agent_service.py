@@ -1,6 +1,6 @@
 import json
 from datetime import date
-from typing import Any, Literal, TypedDict
+from typing import Any, Callable, Literal, TypedDict
 from uuid import UUID
 
 from langgraph.graph import END, START, StateGraph
@@ -66,6 +66,7 @@ class OutfitRecommendationAgent:
         llm: OpenAICompatibleChatClient | None = None,
         weather_client: WeatherClient | None = None,
         conversation_store: ConversationStore | None = None,
+        event_sink: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         """Initializes the Agent and compiles its LangGraph workflow.
 
@@ -76,11 +77,42 @@ class OutfitRecommendationAgent:
                 WeatherClient is used, which fetches live Open-Meteo data.
             conversation_store: Optional conversation history store. When None,
                 the Agent runs statelessly.
+            event_sink: Optional per-run callback used by the streaming chat
+                endpoint to emit user-facing execution events.
         """
         self.llm = llm or OpenAICompatibleChatClient()
         self.weather_client = weather_client or WeatherClient()
         self.conversation_store = conversation_store
+        self.event_sink = event_sink
         self.graph = self._build_graph()
+
+    def _emit_step(
+        self,
+        step_id: str,
+        *,
+        label: str,
+        status: Literal["running", "success", "skipped", "failed"],
+        detail: str | None = None,
+        data: dict[str, Any] | None = None,
+    ) -> None:
+        if self.event_sink is None:
+            return
+        payload: dict[str, Any] = {
+            "event": "step",
+            "data": {
+                "id": step_id,
+                "label": label,
+                "status": status,
+            },
+        }
+        if detail:
+            payload["data"]["detail"] = detail
+        if data is not None:
+            payload["data"]["data"] = data
+        try:
+            self.event_sink(payload)
+        except Exception:
+            return
 
     def run(
         self,
@@ -273,6 +305,11 @@ class OutfitRecommendationAgent:
             Partial state update containing interpreted request context and a
             tool-like trace entry.
         """
+        self._emit_step(
+            "understand_request",
+            label="理解需求",
+            status="running",
+        )
         request = state["request"]
         tools = dict(state.get("tools", {}))
 
@@ -291,6 +328,12 @@ class OutfitRecommendationAgent:
                 data=fallback_context,
             )
             tools["understand_request"] = result
+            self._emit_step(
+                "understand_request",
+                label="理解需求",
+                status="skipped",
+                detail="使用请求中已有的日期和地点信息。",
+            )
             return {"tools": tools, "interpreted_context": fallback_context}
 
         try:
@@ -328,6 +371,11 @@ class OutfitRecommendationAgent:
             )
 
         tools["understand_request"] = result
+        self._emit_step(
+            "understand_request",
+            label="理解需求",
+            status="success" if result.status == "success" else "failed",
+        )
         return {"tools": tools, "interpreted_context": interpreted_context}
 
     def _request_understanding_messages(
@@ -400,6 +448,7 @@ class OutfitRecommendationAgent:
         Returns:
             Partial state update containing weather context and tool result.
         """
+        self._emit_step("get_weather", label="获取天气", status="running")
         request = state["request"]
         interpreted_context = state.get("interpreted_context", {})
         interpreted_date = _parse_interpreted_date(
@@ -441,6 +490,12 @@ class OutfitRecommendationAgent:
                 data=data,
             )
             tools["get_weather"] = result
+            self._emit_step(
+                "get_weather",
+                label="获取天气",
+                status="skipped",
+                detail="未提供城市或坐标。",
+            )
             return {"tools": tools, "weather_context": data}
 
         # ── fetch real forecast ───────────────────────────────────────
@@ -475,6 +530,12 @@ class OutfitRecommendationAgent:
                 data=data,
             )
             tools["get_weather"] = result
+            self._emit_step(
+                "get_weather",
+                label="获取天气",
+                status="failed",
+                detail="天气服务暂时不可用。",
+            )
             return {"tools": tools, "weather_context": data}
 
         # ── forecast unavailable for this location / date ─────────────
@@ -504,6 +565,12 @@ class OutfitRecommendationAgent:
                 data=data,
             )
             tools["get_weather"] = result
+            self._emit_step(
+                "get_weather",
+                label="获取天气",
+                status="skipped",
+                detail="没有可用天气数据。",
+            )
             return {"tools": tools, "weather_context": data}
 
         # ── success ───────────────────────────────────────────────────
@@ -539,6 +606,12 @@ class OutfitRecommendationAgent:
         )
         tools["get_weather"] = result
         print(f"Weather context: {weather_context}")
+        self._emit_step(
+            "get_weather",
+            label="获取天气",
+            status="success",
+            detail=f"{location_label} {forecast.weather_type}",
+        )
         return {"tools": tools, "weather_context": weather_context}
 
     def _get_clothing_taxonomy(self, state: OutfitAgentState) -> dict[str, Any]:
@@ -550,6 +623,11 @@ class OutfitRecommendationAgent:
         Returns:
             Partial state update containing taxonomy and tool result.
         """
+        self._emit_step(
+            "get_clothing_taxonomy",
+            label="读取衣橱标签",
+            status="running",
+        )
         # The Agent should reason over backend-approved category and weather
         # vocabularies, not free-form values invented per request.
         taxonomy = get_clothing_taxonomy()
@@ -566,6 +644,11 @@ class OutfitRecommendationAgent:
         # nodes do not need to unpack the tool payload every time.
         tools = dict(state.get("tools", {}))
         tools["get_clothing_taxonomy"] = result
+        self._emit_step(
+            "get_clothing_taxonomy",
+            label="读取衣橱标签",
+            status="success",
+        )
         return {"tools": tools, "taxonomy": taxonomy}
 
     def _outfit_agent_loop(self, state: OutfitAgentState) -> dict[str, Any]:
@@ -578,6 +661,11 @@ class OutfitRecommendationAgent:
             Partial state update containing recommendation, trace, and retrieved
             wardrobe candidates.
         """
+        self._emit_step(
+            "outfit_agent_loop",
+            label="生成穿搭",
+            status="running",
+        )
         executor = OutfitAgentToolExecutor(
             db=state["db"],
             user_id=state["user_id"],
@@ -591,6 +679,7 @@ class OutfitRecommendationAgent:
         wardrobe_by_id: dict[str, dict[str, Any]] = {}
         final_content = ""
         call_index = 0
+        wardrobe_search_started = False
 
         try:
             for _ in range(MAX_TOOL_ROUNDS):
@@ -612,13 +701,21 @@ class OutfitRecommendationAgent:
                 messages.append(_assistant_message_for_history(assistant_message))
                 for tool_call in tool_calls:
                     call_index += 1
+                    tool_name = _tool_call_name(tool_call)
+                    if tool_name == "search_wardrobe_items" and not wardrobe_search_started:
+                        wardrobe_search_started = True
+                        self._emit_step(
+                            "search_wardrobe_items",
+                            label="搜索衣橱",
+                            status="running",
+                        )
                     result = executor.execute(
-                        tool_name=_tool_call_name(tool_call),
+                        tool_name=tool_name,
                         raw_arguments=_tool_call_arguments(tool_call),
                         cache=tool_cache,
                     )
-                    tools_trace[f"{_tool_call_name(tool_call)}#{call_index}"] = result
-                    tools_trace[_tool_call_name(tool_call)] = result
+                    tools_trace[f"{tool_name}#{call_index}"] = result
+                    tools_trace[tool_name] = result
                     _collect_wardrobe_items(wardrobe_by_id, result)
                     messages.append(_tool_result_message(tool_call, result))
 
@@ -665,6 +762,19 @@ class OutfitRecommendationAgent:
         recommendation = self._normalize_recommendation(
             recommendation,
             wardrobe_items,
+        )
+        if wardrobe_search_started:
+            self._emit_step(
+                "search_wardrobe_items",
+                label="搜索衣橱",
+                status="success",
+                detail=f"找到 {len(wardrobe_items)} 件候选衣物。",
+                data={"candidateCount": len(wardrobe_items)},
+            )
+        self._emit_step(
+            "outfit_agent_loop",
+            label="生成穿搭",
+            status="failed" if recommendation.get("error") else "success",
         )
         return {
             "recommendation": recommendation,
@@ -770,6 +880,11 @@ class OutfitRecommendationAgent:
         Returns:
             Partial state update containing a skipped preview result.
         """
+        self._emit_step(
+            "generate_outfit_preview",
+            label="生成预览图",
+            status="running",
+        )
         # The existing preview API requires multipart upload with a person image.
         # This Agent endpoint is JSON-only, so it reports a truthful skipped
         # state and still exposes which selected items could map to preview slots.
@@ -794,6 +909,12 @@ class OutfitRecommendationAgent:
         # the final response can present a consistent execution trace.
         tools = dict(state.get("tools", {}))
         tools["generate_outfit_preview"] = result
+        self._emit_step(
+            "generate_outfit_preview",
+            label="生成预览图",
+            status="skipped",
+            detail="当前 Agent 对话接口未接入真人照片上传。",
+        )
         return {"tools": tools, "preview": result}
 
     def _final_response(self, state: OutfitAgentState) -> dict[str, Any]:
@@ -805,6 +926,7 @@ class OutfitRecommendationAgent:
         Returns:
             Partial state update with the final response payload.
         """
+        self._emit_step("final_response", label="完成", status="running")
         recommendation = state.get("recommendation", {})
 
         # If preview was not requested, synthesize a skipped preview result so
@@ -833,6 +955,7 @@ class OutfitRecommendationAgent:
             "tools": state.get("tools", {}),
             "rawModelOutput": recommendation,
         }
+        self._emit_step("final_response", label="完成", status="success")
         return {"final": final}
 
     def _clothing_item_payload(self, db: Session, item: ClothingItem) -> dict[str, Any]:
