@@ -64,7 +64,9 @@ Open a new PowerShell terminal:
 
 ```powershell
 cd D:\AI_Wardrobe_Master\backend
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000
+uv sync
+uv run alembic upgrade head
+uv run uvicorn app.main:app --reload --port 8000
 ```
 
 The API documentation should be available at:
@@ -73,13 +75,13 @@ The API documentation should be available at:
 http://localhost:8000/docs
 ```
 
-If the virtual environment is missing, create and install it first:
+If `uv` is not installed, install it first from the official installer or use
+your preferred Python package manager. The backend dependencies are tracked by
+`pyproject.toml` and `uv.lock`; `uv sync` creates and updates the local virtual
+environment.
 
 ```powershell
-cd D:\AI_Wardrobe_Master\backend
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m alembic upgrade head
+uv --version
 ```
 
 ## Seed Agent Test Clothing
@@ -97,7 +99,7 @@ Run the seed script:
 
 ```powershell
 cd D:\AI_Wardrobe_Master\backend
-.\.venv\Scripts\python.exe scripts\seed_agent_clothing.py --email 11111@gmail.com
+uv run python scripts\seed_agent_clothing.py --email 11111@gmail.com
 ```
 
 Expected result:
@@ -110,7 +112,7 @@ You can verify that the Agent search tool can see the seeded wardrobe items:
 
 ```powershell
 cd D:\AI_Wardrobe_Master\backend
-.\.venv\Scripts\python.exe scripts\test_search_wardrobe_tool.py --email 11111@gmail.com
+uv run python scripts\test_search_wardrobe_tool.py --email 11111@gmail.com
 ```
 
 Expected high-level result:
@@ -206,7 +208,7 @@ Run focused backend Agent tests:
 
 ```powershell
 cd D:\AI_Wardrobe_Master\backend
-.\.venv\Scripts\python.exe -m pytest tests/test_outfit_agent_conversation.py tests/test_outfit_agent_foundation.py tests/test_outfit_agent_weather.py
+uv run pytest tests/test_outfit_agent_conversation.py tests/test_outfit_agent_foundation.py tests/test_outfit_agent_weather.py
 ```
 
 ## Docker Compose Full Stack
