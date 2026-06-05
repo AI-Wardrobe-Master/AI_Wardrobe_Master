@@ -162,3 +162,15 @@ docker compose down -v
 ```
 
 `docker compose down -v` removes the database volume, so use it only when you want a clean local reset.
+
+## Model Support
+
+AI Wardrobe Master separates model providers by workflow. Runtime API keys must be configured in `.env` files and must not be committed to Git.
+
+| Workflow | Provider / Model | Configuration | Official Site |
+| --- | --- | --- | --- |
+| Clothing classification | Roboflow Workflow | `ROBOFLOW_API_URL`, `ROBOFLOW_API_KEY`, `ROBOFLOW_WORKSPACE_NAME`, `ROBOFLOW_WORKFLOW_ID` | https://roboflow.com / https://docs.roboflow.com/workflows |
+| Outfit recommendation Agent | OpenAI-compatible chat provider, default example: SiliconFlow | `LLM_PROVIDER_NAME`, `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` | https://docs.siliconflow.cn |
+| Outfit preview generation | DashScope Wan `wan2.6-image` | `DASHSCOPE_API_KEY` | https://help.aliyun.com/zh/model-studio/wan-image-generation-api-reference |
+| 2D-to-3D clothing asset generation | Tencent Hunyuan3D-2 | `HUNYUAN3D_ENABLED`, `HUNYUAN3D_MODEL_PATH`, `HUNYUAN3D_*` | https://github.com/Tencent-Hunyuan/Hunyuan3D-2 / https://huggingface.co/tencent/Hunyuan3D-2 |
+| Styled fashion portrait generation | DreamO local service | `DREAMO_SERVICE_URL`, `DREAMO_DEFAULT_VERSION`, `DREAMO_*` | https://github.com/bytedance/DreamO |
