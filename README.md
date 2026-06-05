@@ -1,6 +1,6 @@
 # AI Wardrobe Master
 
-AI Wardrobe Master is a Flutter + FastAPI wardrobe assistant that turns a user's closet into an interactive styling workspace. It combines wardrobe management, creator card packs, an Agent-based stylist, user try-on assets, and outfit preview generation into one local product demo.
+AI Wardrobe Master is a Flutter + FastAPI wardrobe assistant that turns a user's closet into an interactive styling workspace. It combines wardrobe management, creator card packs, an Agent-based stylist, user try-on assets, and outfit preview generation into one local product experience.
 
 <p>
   <img src="documents/readme/assets/mainpage.png" alt="AI Wardrobe Master wardrobe screen" width="100%">
@@ -8,25 +8,25 @@ AI Wardrobe Master is a Flutter + FastAPI wardrobe assistant that turns a user's
 
 The main workspace keeps clothing assets visible, searchable, and ready for downstream styling flows. The product is intentionally built around real wardrobe items rather than abstract outfit text, so recommendations can be inspected, reused, and visualized.
 
-## Product Demo
+## Product Features
 
 The wardrobe workspace above is the product's anchor screen: it keeps imported garments searchable, category-aware, and visually ready for Agent recommendation and preview generation.
 
-| Discover | AI Stylist Agent |
+| Card Pack Discovery | AI Stylist Agent |
 | --- | --- |
 | <img src="documents/readme/assets/discover_page.png" alt="Discover page" width="100%"> | <img src="documents/readme/assets/wardrobe_agent_page.png" alt="AI Stylist Agent page" width="100%"> |
-| A discovery surface for creator card packs and shared styling ideas, separate from the user's private wardrobe data. | The Agent reads the user's request, checks context such as weather and wardrobe metadata, then returns a wearable outfit with item-level evidence. |
+| Users can browse published creator card packs and shared styling ideas without mixing them into their private wardrobe. This keeps public inspiration separate from owned garments while still making card-pack items available as reusable style references. | Users can ask for outfit help in natural language. The Agent reads the request, checks weather and wardrobe metadata, searches usable garments, and returns a wearable outfit with item-level evidence. |
 
-| Profile Assets | Styling Canvas |
+| Try-On Profile Assets | Outfit Preview Canvas |
 | --- | --- |
 | <img src="documents/readme/assets/profile_page.png" alt="Profile page with try-on image" width="100%"> | <img src="documents/readme/assets/outfit_preview_before.png" alt="Outfit preview setup canvas" width="100%"> |
-| The profile screen stores the user's generation assets, including the default full-body try-on image used by outfit preview flows. | The canvas maps selected garments onto body regions and layers, making the preview request explicit before generation. |
+| Users can manage the generation assets required for try-on previews, including the default full-body image used as the visual base for outfit generation. | Users can review selected garments before generation, assign them to body regions, and control layer order so the backend receives an explicit preview request. |
 
 <p align="center">
   <img src="documents/readme/assets/outfit_preview.png" alt="Generated outfit preview result" width="72%">
 </p>
 
-Preview generation returns a visual result that can be reviewed from the frontend after the backend task completes.
+Preview generation turns the selected garments and profile image into a frontend-reviewable outfit result after the backend task completes.
 
 ## Core Capabilities
 
@@ -58,7 +58,7 @@ AI_Wardrobe_Master/
 ├── ai_wardrobe_app/              # Flutter frontend
 ├── backend/                      # FastAPI backend, Agent services, Celery tasks
 ├── documents/                    # Architecture, API, data model, and feature docs
-│   └── readme/assets/            # README demo screenshots
+│   └── readme/assets/            # README feature screenshots
 ├── test/clothing/                # Prepared Agent test clothing metadata and PNG images
 ├── docker-compose.yml            # PostgreSQL, Redis, backend, workers, DreamO service
 └── README.md
@@ -73,13 +73,7 @@ Install or prepare the following:
 - Flutter SDK and Chrome, used for the Flutter web frontend.
 - Backend configuration in `backend/.env`, based on `backend/.env.example`.
 
-On this Windows workspace, Flutter is installed at:
-
-```powershell
-D:\Program\flutter\bin\flutter.bat
-```
-
-If `flutter` is not available in your current PowerShell session after updating `PATH`, either restart PowerShell or use the full path above.
+Make sure `flutter` and `docker` are available on `PATH` before starting the local services. If either command is unavailable after updating `PATH`, restart PowerShell and try again.
 
 ## Local Startup
 
@@ -90,15 +84,7 @@ Start the services in this order during normal development: database, backend, p
 From the repository root:
 
 ```powershell
-cd D:\AI_Wardrobe_Master
 docker compose up -d db redis
-```
-
-If `docker` is not on `PATH`, use Docker Desktop's full path:
-
-```powershell
-cd D:\AI_Wardrobe_Master
-& "C:\Program Files\Docker\Docker\resources\bin\docker.exe" compose up -d db redis
 ```
 
 The backend expects PostgreSQL on `localhost:5432` and Redis on `localhost:6379`, with development credentials configured in `backend/.env`.
