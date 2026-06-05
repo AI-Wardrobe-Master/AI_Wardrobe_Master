@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 import threading
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 from uuid import UUID, uuid4
@@ -56,6 +56,19 @@ class ConversationStore(Protocol):
         """
         ...
 
+    def load_user_profile(self, *, user_id: UUID) -> dict[str, Any]:
+        """Loads long-term wardrobe preferences for one user."""
+        ...
+
+    def merge_user_profile_patch(
+        self,
+        *,
+        user_id: UUID,
+        patch: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Merges a validated userProfile patch into persistent storage."""
+        ...
+
 
 class JsonlConversationStore:
     """Per-user JSONL conversation store for local MVP deployments."""
@@ -88,8 +101,11 @@ class JsonlConversationStore:
             Prompt-safe conversation context.
         """
         path = self._path_for_conversation(user_id, conversation_id)
+        profile_record = self._load_user_profile_record(user_id=user_id)
         if not path.exists():
-            return _empty_context(user_id, conversation_id)
+            context = _empty_context(user_id, conversation_id)
+            context.update(_profile_context_fields(profile_record))
+            return context
 
         # Keep file parsing inside a lock so a local append cannot interleave
         # with a read in the same FastAPI process.
@@ -103,6 +119,7 @@ class JsonlConversationStore:
             "conversationId": _conversation_id(user_id, conversation_id),
             "recentTurns": prompt_turns,
             "lastRecommendation": last_recommendation,
+            **_profile_context_fields(profile_record),
         }
 
     def append_turn(
@@ -143,6 +160,61 @@ class JsonlConversationStore:
                 file.write("\n")
         return turn
 
+    def load_user_profile(self, *, user_id: UUID) -> dict[str, Any]:
+        """Loads the user's long-term Agent profile.
+
+        The profile is separate from turn history so the Agent can load only the
+        previous turn while still keeping stable wardrobe preferences.
+        """
+        path = self._path_for_profile(user_id)
+        if not path.exists():
+            return {}
+
+        with self._lock:
+            try:
+                parsed = json.loads(path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                return {}
+        return _profile_from_record(parsed)
+
+    def merge_user_profile_patch(
+        self,
+        *,
+        user_id: UUID,
+        patch: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Merges a validated userProfile patch and persists the result."""
+        with self._lock:
+            current_record = self._load_user_profile_record(user_id=user_id)
+            merged = merge_user_profile(current_record["profile"], patch)
+            today = _today_iso()
+            metadata = dict(current_record.get("metadata") or {})
+            metadata.setdefault("createdAt", today)
+            metadata["updatedAt"] = today
+            record = {"profile": merged, "metadata": metadata}
+            path = self._path_for_profile(user_id)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = path.with_suffix(f".{uuid4()}.tmp")
+            tmp_path.write_text(
+                json.dumps(record, ensure_ascii=False, indent=2, default=str),
+                encoding="utf-8",
+            )
+            tmp_path.replace(path)
+        return merged
+
+    def _load_user_profile_record(self, *, user_id: UUID) -> dict[str, Any]:
+        """Loads profile plus metadata, accepting legacy profile-only JSON."""
+        path = self._path_for_profile(user_id)
+        if not path.exists():
+            return {"profile": {}, "metadata": {}}
+
+        with self._lock:
+            try:
+                parsed = json.loads(path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                return {"profile": {}, "metadata": {}}
+        return _profile_record_from_payload(parsed)
+
     def _path_for_user(self, user_id: UUID) -> Path:
         """Builds the JSONL path for one user.
 
@@ -179,6 +251,11 @@ class JsonlConversationStore:
             conversation_id,
         )
         return self.base_dir / safe_user_id / f"{safe_conversation_id}.jsonl"
+
+    def _path_for_profile(self, user_id: UUID) -> Path:
+        """Builds the JSON path for one user's long-term Agent profile."""
+        safe_user_id = re.sub(r"[^a-zA-Z0-9_.-]", "_", str(user_id))
+        return self.base_dir / "profiles" / f"{safe_user_id}.json"
 
 
 def compact_assistant_result(final_result: dict[str, Any]) -> dict[str, Any]:
@@ -221,7 +298,99 @@ def _empty_context(
         "conversationId": _conversation_id(user_id, conversation_id),
         "recentTurns": [],
         "lastRecommendation": None,
+        "userProfile": {},
+        "userProfileMetadata": {},
+        "userProfileMemoryNote": None,
     }
+
+
+def merge_user_profile(
+    current: dict[str, Any],
+    patch: dict[str, Any],
+) -> dict[str, Any]:
+    """Merges list-valued profile fields without duplicating values."""
+    merged = dict(current) if isinstance(current, dict) else {}
+    for key, raw_values in patch.items():
+        if not isinstance(raw_values, list):
+            continue
+        existing = merged.get(key, [])
+        values = existing if isinstance(existing, list) else []
+        seen = {str(value) for value in values}
+        next_values = list(values)
+        for raw_value in raw_values:
+            if not isinstance(raw_value, str):
+                continue
+            value = raw_value.strip()
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            next_values.append(value)
+        if next_values:
+            merged[key] = next_values
+    return merged
+
+
+def _profile_context_fields(record: dict[str, Any]) -> dict[str, Any]:
+    metadata = dict(record.get("metadata") or {})
+    note = _user_profile_memory_note(metadata)
+    return {
+        "userProfile": dict(record.get("profile") or {}),
+        "userProfileMetadata": metadata,
+        "userProfileMemoryNote": note,
+    }
+
+
+def _profile_record_from_payload(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {"profile": {}, "metadata": {}}
+
+    profile = payload.get("profile")
+    metadata = payload.get("metadata")
+    if isinstance(profile, dict):
+        return {
+            "profile": profile,
+            "metadata": metadata if isinstance(metadata, dict) else {},
+        }
+
+    # Legacy profile files were stored as the profile dictionary itself.
+    return {"profile": payload, "metadata": {}}
+
+
+def _profile_from_record(payload: Any) -> dict[str, Any]:
+    return _profile_record_from_payload(payload)["profile"]
+
+
+def _user_profile_memory_note(metadata: dict[str, Any]) -> str | None:
+    created_at = _parse_iso_date(metadata.get("createdAt"))
+    if created_at is None:
+        return None
+
+    age_days = (_today() - created_at).days
+    metadata["ageDays"] = age_days
+    if age_days < settings.AGENT_USER_PROFILE_STALE_DAYS:
+        return None
+
+    return (
+        f"This memory has existed here for {age_days} days. "
+        "You need to consider whether this memory is stale."
+    )
+
+
+def _parse_iso_date(value: Any) -> date | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return date.fromisoformat(value[:10])
+    except ValueError:
+        return None
+
+
+def _today() -> date:
+    return datetime.now(timezone.utc).date()
+
+
+def _today_iso() -> str:
+    return _today().isoformat()
 
 
 def _conversation_id(user_id: UUID, conversation_id: str | None = None) -> str:

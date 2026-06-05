@@ -57,7 +57,8 @@ class Settings(BaseSettings):
 
     # Local conversation history for the outfit Agent MVP.
     AGENT_CONVERSATION_STORAGE_PATH: str = "./storage/agent_conversations"
-    AGENT_CONVERSATION_HISTORY_LIMIT: int = 5
+    AGENT_CONVERSATION_HISTORY_LIMIT: int = 1
+    AGENT_USER_PROFILE_STALE_DAYS: int = 30
 
     # S3 / MinIO
     S3_ENDPOINT: Optional[str] = None

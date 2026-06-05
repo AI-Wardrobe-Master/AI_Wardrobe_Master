@@ -714,7 +714,7 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
 
   List<AgentChatStep> _visibleAgentSteps() {
     final startedSteps = _agentSteps
-        .where((step) => step.status != 'pending')
+        .where((step) => step.status != 'pending' && step.status != 'skipped')
         .toList(growable: false);
     if (startedSteps.isNotEmpty) {
       return startedSteps;

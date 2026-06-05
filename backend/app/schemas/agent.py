@@ -95,6 +95,7 @@ class OutfitRecommendationData(BaseModel):
     preview: AgentToolResult
     tools: dict[str, AgentToolResult]
     raw_model_output: dict[str, Any] | None = Field(default=None, alias="rawModelOutput")
+    memory_patch: dict[str, Any] | None = Field(default=None, alias="memoryPatch")
 
 
 class OutfitRecommendationResponse(BaseModel):
@@ -143,6 +144,15 @@ class AgentChatHistoryData(BaseModel):
     last_recommendation: dict[str, Any] | None = Field(
         default=None,
         alias="lastRecommendation",
+    )
+    user_profile: dict[str, Any] = Field(default_factory=dict, alias="userProfile")
+    user_profile_metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        alias="userProfileMetadata",
+    )
+    user_profile_memory_note: str | None = Field(
+        default=None,
+        alias="userProfileMemoryNote",
     )
 
 
