@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:http/http.dart' as http;
 
 import 'api_config.dart';
 
@@ -47,47 +48,68 @@ class AgentChatApiService {
     String? city,
   }) async* {
     final trimmedCity = city?.trim();
-    final response = await _dio.post<ResponseBody>(
-      '/agent/chat',
-      data: {
+    await ApiSession.loadToken();
+    final request = http.Request('POST', Uri.parse('$apiBaseUrl/agent/chat'))
+      ..headers.addAll({
+        'Accept': 'text/event-stream',
+        'Content-Type': 'application/json',
+        ...ApiSession.authHeaders,
+      })
+      ..body = jsonEncode({
         'message': message,
         if (conversationId != null && conversationId.isNotEmpty)
           'conversationId': conversationId,
         if (trimmedCity != null && trimmedCity.isNotEmpty) 'city': trimmedCity,
         'limit': 50,
         'generatePreview': false,
-      },
-      options: Options(
-        responseType: ResponseType.stream,
-        headers: {'Accept': 'text/event-stream'},
-      ),
-    );
-    final body = response.data;
-    if (body == null) {
-      throw StateError('Agent stream response was empty.');
-    }
+      });
 
-    var buffer = '';
-    await for (final text in utf8.decoder.bind(body.stream.cast<List<int>>())) {
-      buffer += text;
-      while (true) {
-        final separator = _nextSseSeparator(buffer);
-        if (separator == null) {
-          break;
-        }
-        final rawEvent = buffer.substring(0, separator.index);
-        buffer = buffer.substring(separator.index + separator.length);
-        final event = AgentChatStreamEvent.tryParse(rawEvent);
-        if (event != null) {
-          yield event;
+    final client = http.Client();
+    try {
+      final response = await client.send(request);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        final body = await utf8.decodeStream(response.stream);
+        throw StateError(_streamErrorMessage(response.statusCode, body));
+      }
+
+      var buffer = '';
+      await for (final text in utf8.decoder.bind(response.stream)) {
+        buffer += text;
+        while (true) {
+          final separator = _nextSseSeparator(buffer);
+          if (separator == null) {
+            break;
+          }
+          final rawEvent = buffer.substring(0, separator.index);
+          buffer = buffer.substring(separator.index + separator.length);
+          final event = AgentChatStreamEvent.tryParse(rawEvent);
+          if (event != null) {
+            yield event;
+          }
         }
       }
-    }
-    final event = AgentChatStreamEvent.tryParse(buffer);
-    if (event != null) {
-      yield event;
+      final event = AgentChatStreamEvent.tryParse(buffer);
+      if (event != null) {
+        yield event;
+      }
+    } finally {
+      client.close();
     }
   }
+}
+
+String _streamErrorMessage(int statusCode, String body) {
+  try {
+    final decoded = jsonDecode(body);
+    if (decoded is Map && decoded['detail'] != null) {
+      return decoded['detail'].toString();
+    }
+  } catch (_) {}
+  final trimmed = body.trim();
+  if (trimmed.isNotEmpty) {
+    return 'Agent stream failed with HTTP $statusCode: $trimmed';
+  }
+  return 'Agent stream failed with HTTP $statusCode.';
 }
 
 _SseSeparator? _nextSseSeparator(String buffer) {
@@ -186,13 +208,28 @@ class AgentChatStep {
   final String? detail;
 
   factory AgentChatStep.fromJson(Map<String, dynamic> json) {
+    final id = json['id']?.toString() ?? '';
     return AgentChatStep(
-      id: json['id']?.toString() ?? '',
-      label: json['label']?.toString() ?? '',
+      id: id,
+      label: _agentStepLabel(id, json['label']?.toString() ?? ''),
       status: json['status']?.toString() ?? 'running',
       detail: _nullableString(json['detail']),
     );
   }
+}
+
+String _agentStepLabel(String id, String fallback) {
+  return switch (id) {
+    'queued' => 'Start Agent',
+    'understand_request' => 'Understand request',
+    'get_weather' => 'Get weather',
+    'get_clothing_taxonomy' => 'Read wardrobe tags',
+    'search_wardrobe_items' => 'Search wardrobe',
+    'outfit_agent_loop' => 'Generate outfit',
+    'generate_outfit_preview' => 'Generate preview',
+    'final_response' => 'Complete',
+    _ => fallback,
+  };
 }
 
 class AgentChatData {

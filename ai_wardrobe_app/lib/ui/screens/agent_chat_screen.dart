@@ -132,7 +132,7 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
       _streamingMessageIndex = _messages.length - 1;
       _agentSteps
         ..clear()
-        ..addAll(_initialAgentSteps);
+        ..add(_initialAgentSteps.first);
       _messageController.clear();
       _sending = true;
       _error = null;
@@ -207,6 +207,11 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
     } else {
       _agentSteps.add(step);
     }
+    _agentSteps.sort(
+      (left, right) => _agentStepOrder(left.id).compareTo(
+        _agentStepOrder(right.id),
+      ),
+    );
   }
 
   void _clearStreamingMessage() {
@@ -230,21 +235,31 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
       return;
     }
 
-    for (var i = 1; i <= data.assistantMessage.length; i++) {
+    const chunkSize = 3;
+    const typingDelay = Duration(milliseconds: 8);
+    for (
+      var i = chunkSize;
+      i <= data.assistantMessage.length + chunkSize;
+      i += chunkSize
+    ) {
       if (!mounted) {
         return;
       }
+      final end = i.clamp(0, data.assistantMessage.length);
       setState(() {
         _messages[index] = _ChatMessage.assistant(
-          data.assistantMessage.substring(0, i),
-          recommendation: i == data.assistantMessage.length ? data : null,
-          isStreaming: i != data.assistantMessage.length,
+          data.assistantMessage.substring(0, end),
+          recommendation: end == data.assistantMessage.length ? data : null,
+          isStreaming: end != data.assistantMessage.length,
         );
       });
-      if (i % 4 == 0 || i == data.assistantMessage.length) {
+      if (end % 12 == 0 || end == data.assistantMessage.length) {
         _scrollToBottom();
       }
-      await Future<void>.delayed(const Duration(milliseconds: 18));
+      if (end == data.assistantMessage.length) {
+        break;
+      }
+      await Future<void>.delayed(typingDelay);
     }
     if (!mounted) {
       return;
@@ -646,9 +661,7 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
   }
 
   Widget _buildAgentTimeline() {
-    final steps = _agentSteps.isEmpty
-        ? _initialAgentSteps
-        : _agentSteps;
+    final steps = _visibleAgentSteps();
     return ConstrainedBox(
       constraints: const BoxConstraints(minWidth: 260),
       child: Column(
@@ -697,6 +710,18 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
         ],
       ),
     );
+  }
+
+  List<AgentChatStep> _visibleAgentSteps() {
+    final startedSteps = _agentSteps
+        .where((step) => step.status != 'pending')
+        .toList(growable: false);
+    if (startedSteps.isNotEmpty) {
+      return startedSteps;
+    }
+    return const [
+      AgentChatStep(id: 'queued', label: 'Start Agent', status: 'running'),
+    ];
   }
 
   Widget _buildStepIcon(String status) {
@@ -1091,15 +1116,40 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
 }
 
 const List<AgentChatStep> _initialAgentSteps = [
-  AgentChatStep(id: 'queued', label: '启动 Agent', status: 'running'),
-  AgentChatStep(id: 'understand_request', label: '理解需求', status: 'pending'),
-  AgentChatStep(id: 'get_weather', label: '获取天气', status: 'pending'),
-  AgentChatStep(id: 'get_clothing_taxonomy', label: '读取衣橱标签', status: 'pending'),
-  AgentChatStep(id: 'search_wardrobe_items', label: '搜索衣橱', status: 'pending'),
-  AgentChatStep(id: 'outfit_agent_loop', label: '生成穿搭', status: 'pending'),
-  AgentChatStep(id: 'generate_outfit_preview', label: '生成预览图', status: 'pending'),
-  AgentChatStep(id: 'final_response', label: '完成', status: 'pending'),
+  AgentChatStep(id: 'queued', label: 'Start Agent', status: 'running'),
+  AgentChatStep(
+    id: 'understand_request',
+    label: 'Understand request',
+    status: 'pending',
+  ),
+  AgentChatStep(id: 'get_weather', label: 'Get weather', status: 'pending'),
+  AgentChatStep(
+    id: 'get_clothing_taxonomy',
+    label: 'Read wardrobe tags',
+    status: 'pending',
+  ),
+  AgentChatStep(
+    id: 'search_wardrobe_items',
+    label: 'Search wardrobe',
+    status: 'pending',
+  ),
+  AgentChatStep(
+    id: 'outfit_agent_loop',
+    label: 'Generate outfit',
+    status: 'pending',
+  ),
+  AgentChatStep(
+    id: 'generate_outfit_preview',
+    label: 'Generate preview',
+    status: 'pending',
+  ),
+  AgentChatStep(id: 'final_response', label: 'Complete', status: 'pending'),
 ];
+
+int _agentStepOrder(String id) {
+  final index = _initialAgentSteps.indexWhere((step) => step.id == id);
+  return index >= 0 ? index : _initialAgentSteps.length;
+}
 
 enum _ChatRole { user, assistant }
 
