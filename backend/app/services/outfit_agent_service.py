@@ -7,7 +7,9 @@ from langgraph.graph import END, START, StateGraph
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.crud import outfit_preview as crud_outfit_preview
 from app.models.clothing_item import ClothingItem
+from app.models.user_tryon_image import UserTryOnImage
 from app.schemas.agent import (
     AgentChatRequest,
     AgentToolResult,
@@ -29,6 +31,10 @@ from app.services.conversation_store import (
 from app.services.outfit_agent_tools import (
     OutfitAgentToolExecutor,
     valid_tag_values_by_key,
+)
+from app.services.outfit_preview_service import (
+    create_preview_task_from_person_blob,
+    enqueue_preview_generation,
 )
 from app.services.weather_client import WeatherClient, WeatherClientError
 
@@ -278,7 +284,14 @@ class OutfitRecommendationAgent:
         workflow.add_edge(START, "understand_request")
         workflow.add_edge("understand_request", "get_weather")
         workflow.add_edge("get_weather", "get_clothing_taxonomy")
-        workflow.add_edge("get_clothing_taxonomy", "outfit_agent_loop")
+        workflow.add_conditional_edges(
+            "get_clothing_taxonomy",
+            self._after_taxonomy_branch,
+            {
+                "preview_previous": "generate_outfit_preview",
+                "recommend": "outfit_agent_loop",
+            },
+        )
 
         # Preview is conditional because the first JSON-only endpoint cannot
         # upload a person image. The graph still models the node so later work
@@ -294,6 +307,30 @@ class OutfitRecommendationAgent:
         workflow.add_edge("generate_outfit_preview", "final_response")
         workflow.add_edge("final_response", END)
         return workflow.compile()
+
+    def _after_taxonomy_branch(
+        self,
+        state: OutfitAgentState,
+    ) -> Literal["preview_previous", "recommend"]:
+        context = state.get("interpreted_context", {})
+        if (
+            context.get("previewRequested") is True
+            and context.get("previewSource") == "previous_outfit"
+        ):
+            self._emit_step(
+                "search_wardrobe_items",
+                label="搜索衣橱",
+                status="skipped",
+                detail="使用上一套推荐的衣物。",
+            )
+            self._emit_step(
+                "outfit_agent_loop",
+                label="生成穿搭",
+                status="skipped",
+                detail="使用上一套推荐。",
+            )
+            return "preview_previous"
+        return "recommend"
 
     def _understand_request(self, state: OutfitAgentState) -> dict[str, Any]:
         """Extracts structured request context from the user's message.
@@ -404,6 +441,8 @@ class OutfitRecommendationAgent:
                 "weatherRequired": "boolean",
                 "occasion": "string|null",
                 "styleIntent": "string|null",
+                "previewRequested": "boolean",
+                "previewSource": "previous_outfit|current_outfit|null",
                 "carryOverPreviousOutfit": "boolean",
                 "revisionRequest": {
                     "slot": "top|bottom|shoes|outerwear|accessory|null",
@@ -426,7 +465,10 @@ class OutfitRecommendationAgent:
                     "Do not recommend clothes and do not invent a city when the "
                     "request does not mention one. If the user asks to modify "
                     "the previous outfit, set intent=revise_outfit and "
-                    "carryOverPreviousOutfit=true."
+                    "carryOverPreviousOutfit=true. If the user asks to generate "
+                    "a preview, try-on image, outfit picture, or visualization "
+                    "for the previous recommendation, set previewRequested=true, "
+                    "previewSource=previous_outfit, and carryOverPreviousOutfit=true."
                 ),
             },
             {
@@ -867,55 +909,225 @@ class OutfitRecommendationAgent:
             `"preview"` when preview generation was requested, otherwise
             `"final"`.
         """
-        # This condition keeps the graph shape stable while allowing the first
-        # API version to skip preview generation by default.
-        return "preview" if state["request"].generate_preview else "final"
+        context = state.get("interpreted_context", {})
+        return (
+            "preview"
+            if state["request"].generate_preview
+            or context.get("previewRequested") is True
+            else "final"
+        )
 
     def _generate_outfit_preview(self, state: OutfitAgentState) -> dict[str, Any]:
-        """Builds the preview tool result for the current JSON-only endpoint.
+        """Creates an outfit preview task from the selected recommendation.
 
         Args:
             state: Current LangGraph state.
 
         Returns:
-            Partial state update containing a skipped preview result.
+            Partial state update containing the preview task result.
         """
         self._emit_step(
             "generate_outfit_preview",
             label="生成预览图",
             status="running",
         )
-        # The existing preview API requires multipart upload with a person image.
-        # This Agent endpoint is JSON-only, so it reports a truthful skipped
-        # state and still exposes which selected items could map to preview slots.
-        result = AgentToolResult(
-            status="skipped",
-            errorCode="PERSON_IMAGE_REQUIRED",
-            retryable=False,
-            messageForAgent=(
-                "The current outfit preview API requires a person image upload. "
-                "This JSON-only agent endpoint cannot create that task yet."
-            ),
-            messageForUser="当前 Agent 接口还没有上传真人照片参数，所以暂不生成预览图。",
-            data={
-                "selectedPreviewItems": self._selected_preview_items(
-                    state.get("recommendation", {}),
-                    state.get("wardrobe_items", []),
+        recommendation = self._preview_source_recommendation(state)
+        if recommendation is None:
+            result = AgentToolResult(
+                status="failed",
+                errorCode="PREVIOUS_OUTFIT_NOT_FOUND",
+                retryable=False,
+                messageForAgent="No previous outfit recommendation is available.",
+                messageForUser="还没有可用于生成预览图的上一套穿搭。",
+                data={},
+            )
+            return self._preview_result_update(state, result, None)
+
+        selected_items = self._selected_preview_items_for_task(
+            state["db"],
+            user_id=state["user_id"],
+            recommendation=recommendation,
+        )
+        if not selected_items:
+            result = AgentToolResult(
+                status="failed",
+                errorCode="NO_PREVIEW_COMPATIBLE_ITEMS",
+                retryable=False,
+                messageForAgent=(
+                    "The selected outfit has no TOP, BOTTOM, or SHOES items "
+                    "that can be sent to the preview API."
+                ),
+                messageForUser="这套穿搭里没有可用于生成预览图的上衣、下装或鞋子。",
+                data={},
+            )
+            return self._preview_result_update(state, result, recommendation)
+
+        default_image = (
+            state["db"]
+            .query(UserTryOnImage)
+            .filter(
+                UserTryOnImage.user_id == state["user_id"],
+                UserTryOnImage.is_default.is_(True),
+            )
+            .first()
+        )
+        if default_image is None:
+            result = AgentToolResult(
+                status="failed",
+                errorCode="DEFAULT_TRYON_IMAGE_REQUIRED",
+                retryable=False,
+                messageForAgent="User has no default try-on full-body image.",
+                messageForUser="请先在 Profile 上传默认全身照，再生成穿搭预览图。",
+                data={
+                    "selectedPreviewItems": selected_items,
+                },
+            )
+            return self._preview_result_update(state, result, recommendation)
+
+        try:
+            task = create_preview_task_from_person_blob(
+                state["db"],
+                user_id=state["user_id"],
+                person_image_blob_hash=default_image.blob_hash,
+                person_view_type=default_image.person_view_type,
+                clothing_item_ids=[
+                    UUID(item["clothingItemId"]) for item in selected_items
+                ],
+                garment_categories=[
+                    item["garmentCategory"] for item in selected_items
+                ],
+            )
+            try:
+                enqueue_preview_generation(task.id)
+            except Exception as exc:
+                crud_outfit_preview.mark_outfit_preview_failed(
+                    state["db"],
+                    task=task,
+                    error_code="DISPATCH_FAILED",
+                    error_message=str(exc),
                 )
+                raise
+        except Exception as exc:
+            result = AgentToolResult(
+                status="failed",
+                errorCode="PREVIEW_TASK_CREATE_FAILED",
+                retryable=True,
+                messageForAgent=f"Preview task creation failed: {exc}",
+                messageForUser="预览图任务创建失败，请稍后重试。",
+                data={
+                    "selectedPreviewItems": selected_items,
+                },
+            )
+            return self._preview_result_update(state, result, recommendation)
+
+        result = AgentToolResult(
+            status="success",
+            retryable=False,
+            messageForAgent="Outfit preview task was created and queued.",
+            messageForUser="已开始生成这套穿搭的预览图。",
+            data={
+                "taskId": str(task.id),
+                "taskStatus": task.status,
+                "previewImageUrl": None,
+                "selectedPreviewItems": selected_items,
             },
         )
+        recommendation = dict(recommendation)
+        recommendation["userMessage"] = "已开始生成这套穿搭的预览图。"
+        return self._preview_result_update(state, result, recommendation)
 
-        # Keep preview output in the same tool-result format as other nodes so
-        # the final response can present a consistent execution trace.
+    def _preview_result_update(
+        self,
+        state: OutfitAgentState,
+        result: AgentToolResult,
+        recommendation: dict[str, Any] | None,
+    ) -> dict[str, Any]:
         tools = dict(state.get("tools", {}))
         tools["generate_outfit_preview"] = result
+        status = result.status
         self._emit_step(
             "generate_outfit_preview",
             label="生成预览图",
-            status="skipped",
-            detail="当前 Agent 对话接口未接入真人照片上传。",
+            status=status,
+            detail=result.message_for_user,
         )
-        return {"tools": tools, "preview": result}
+        update: dict[str, Any] = {"tools": tools, "preview": result}
+        if recommendation is not None:
+            update["recommendation"] = recommendation
+        return update
+
+    def _preview_source_recommendation(
+        self,
+        state: OutfitAgentState,
+    ) -> dict[str, Any] | None:
+        recommendation = state.get("recommendation")
+        if isinstance(recommendation, dict) and recommendation.get("outfit"):
+            return recommendation
+
+        last = state.get("conversation_context", {}).get("lastRecommendation")
+        if isinstance(last, dict) and last.get("outfit"):
+            return dict(last)
+        return None
+
+    def _selected_preview_items_for_task(
+        self,
+        db: Session,
+        *,
+        user_id: UUID,
+        recommendation: dict[str, Any],
+    ) -> list[dict[str, str]]:
+        outfit = recommendation.get("outfit")
+        if not isinstance(outfit, dict):
+            return []
+        raw_items = outfit.get("items")
+        if not isinstance(raw_items, list):
+            return []
+
+        ordered_ids: list[UUID] = []
+        seen_ids: set[UUID] = set()
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
+            raw_id = item.get("clothingItemId")
+            try:
+                item_id = UUID(str(raw_id))
+            except (TypeError, ValueError):
+                continue
+            if item_id in seen_ids:
+                continue
+            seen_ids.add(item_id)
+            ordered_ids.append(item_id)
+        if not ordered_ids:
+            return []
+
+        rows = (
+            db.query(ClothingItem)
+            .filter(
+                ClothingItem.user_id == user_id,
+                ClothingItem.id.in_(ordered_ids),
+            )
+            .all()
+        )
+        rows_by_id = {item.id: item for item in rows}
+        selected: list[dict[str, str]] = []
+        used_categories: set[str] = set()
+        for item_id in ordered_ids:
+            clothing_item = rows_by_id.get(item_id)
+            if clothing_item is None:
+                continue
+            garment_category = CATEGORY_TO_PREVIEW_GARMENT_CATEGORY.get(
+                clothing_item.category or ""
+            )
+            if not garment_category or garment_category in used_categories:
+                continue
+            used_categories.add(garment_category)
+            selected.append(
+                {
+                    "clothingItemId": str(clothing_item.id),
+                    "garmentCategory": garment_category,
+                }
+            )
+        return selected
 
     def _final_response(self, state: OutfitAgentState) -> dict[str, Any]:
         """Assembles the public API response payload.
@@ -1101,6 +1313,13 @@ def _request_context_from_explicit_fields(
     """
     # This fallback keeps the graph runnable when the extraction model is absent
     # in tests or temporarily fails in production.
+    preview_request = _preview_request_from_message(request.message)
+    preview_requested = bool(request.generate_preview or preview_request["requested"])
+    preview_source = (
+        "current_outfit"
+        if request.generate_preview
+        else preview_request["source"]
+    )
     return {
         "intent": "new_outfit",
         "targetDate": request.target_date.isoformat() if request.target_date else None,
@@ -1110,13 +1329,64 @@ def _request_context_from_explicit_fields(
         ),
         "occasion": None,
         "styleIntent": None,
-        "carryOverPreviousOutfit": False,
+        "previewRequested": preview_requested,
+        "previewSource": preview_source,
+        "carryOverPreviousOutfit": preview_source == "previous_outfit",
         "revisionRequest": {
             "slot": None,
             "instruction": None,
         },
         "userConstraints": [],
     }
+
+
+def _preview_request_from_message(message: str) -> dict[str, Any]:
+    normalized = message.strip().lower()
+    preview_terms = (
+        "preview",
+        "try-on",
+        "try on",
+        "visualize",
+        "预览",
+        "预览图",
+        "试穿",
+        "试穿图",
+        "效果图",
+    )
+    previous_terms = (
+        "上一",
+        "上次",
+        "刚才",
+        "这套",
+        "previous",
+        "last",
+        "this outfit",
+        "that outfit",
+    )
+    new_outfit_terms = (
+        "推荐",
+        "搭配",
+        "穿搭",
+        "一套",
+        "recommend",
+        "suggest",
+        "pick",
+        "outfit",
+    )
+    requested = any(term in normalized for term in preview_terms)
+    if not requested:
+        return {"requested": False, "source": None}
+    has_new_outfit_intent = any(term in normalized for term in new_outfit_terms)
+    has_previous_reference = any(term in normalized for term in previous_terms)
+    has_weak_previous_reference = "对应" in normalized
+    if has_new_outfit_intent and not has_previous_reference:
+        return {"requested": True, "source": "current_outfit"}
+    source = (
+        "previous_outfit"
+        if has_previous_reference or has_weak_previous_reference
+        else "current_outfit"
+    )
+    return {"requested": True, "source": source}
 
 
 def _recommendation_request_from_chat(
@@ -1197,6 +1467,15 @@ def _normalize_interpreted_context(
         ),
         "occasion": _optional_string(raw_context.get("occasion")),
         "styleIntent": _optional_string(raw_context.get("styleIntent")),
+        "previewRequested": _boolean_or_default(
+            raw_context.get("previewRequested"),
+            bool(fallback_context.get("previewRequested")),
+        ),
+        "previewSource": _allowed_string(
+            raw_context.get("previewSource"),
+            allowed={"previous_outfit", "current_outfit"},
+            default=fallback_context.get("previewSource"),
+        ),
         "carryOverPreviousOutfit": _boolean_or_default(
             raw_context.get("carryOverPreviousOutfit"),
             bool(fallback_context.get("carryOverPreviousOutfit")),

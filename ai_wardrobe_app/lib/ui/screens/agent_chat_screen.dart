@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_strings_provider.dart';
 import '../../services/agent_chat_api_service.dart';
 import '../../services/clothing_api_service.dart';
+import '../../services/outfit_preview_api_service.dart';
 import '../../theme/app_theme.dart';
 import '../widgets/app_remote_image.dart';
 
@@ -27,6 +30,10 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
   bool _historyLoading = true;
   bool _sending = false;
   int? _streamingMessageIndex;
+  Map<String, dynamic>? _agentPreviewTask;
+  bool _previewPolling = false;
+  String? _previewError;
+  int _previewPollToken = 0;
   String? _error;
 
   bool get _isDark => Theme.of(context).brightness == Brightness.dark;
@@ -46,6 +53,7 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
 
   @override
   void dispose() {
+    _previewPollToken++;
     _messageController.dispose();
     _cityController.dispose();
     _scrollController.dispose();
@@ -167,6 +175,7 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
         _conversationId = data.conversationId;
         _latestRecommendation = data;
       });
+      _activateAgentPreview(data);
       await _typeAssistantMessage(data);
       await _loadRecommendedItemDetails(data.outfit.items);
     } catch (error) {
@@ -249,7 +258,88 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
 
   void _selectRecommendation(AgentChatData data) {
     setState(() => _latestRecommendation = data);
+    _activateAgentPreview(data);
     _loadRecommendedItemDetails(data.outfit.items);
+  }
+
+  void _activateAgentPreview(AgentChatData data) {
+    final previewData = _previewData(data.preview);
+    final taskId = previewData?['taskId']?.toString();
+    _previewPollToken++;
+    if (taskId == null || taskId.isEmpty) {
+      setState(() {
+        _agentPreviewTask = null;
+        _previewPolling = false;
+        _previewError = null;
+      });
+      return;
+    }
+
+    final token = _previewPollToken;
+    setState(() {
+      _agentPreviewTask = {
+        'id': taskId,
+        'status': previewData?['taskStatus']?.toString() ?? 'PENDING',
+        'previewImageUrl': previewData?['previewImageUrl']?.toString(),
+      };
+      _previewPolling = true;
+      _previewError = null;
+    });
+    unawaited(_pollAgentPreviewTask(taskId, token));
+  }
+
+  Map<String, dynamic>? _previewData(Map<String, dynamic> preview) {
+    final data = preview['data'];
+    if (data is Map) {
+      return Map<String, dynamic>.from(data);
+    }
+    return null;
+  }
+
+  Future<void> _pollAgentPreviewTask(String taskId, int token) async {
+    for (var attempt = 0; attempt < 80; attempt++) {
+      if (!mounted || token != _previewPollToken) {
+        return;
+      }
+      try {
+        final response = await OutfitPreviewApiService.getTask(taskId);
+        final rawData = response['data'] ?? response;
+        final task = rawData is Map
+            ? Map<String, dynamic>.from(rawData)
+            : <String, dynamic>{};
+        final status = task['status']?.toString() ?? 'PENDING';
+        if (!mounted || token != _previewPollToken) {
+          return;
+        }
+        setState(() {
+          _agentPreviewTask = task;
+          _previewPolling = status == 'PENDING' || status == 'PROCESSING';
+          _previewError = status == 'FAILED'
+              ? task['errorMessage']?.toString() ?? 'Preview generation failed.'
+              : null;
+        });
+        if (status == 'COMPLETED' || status == 'FAILED') {
+          return;
+        }
+      } catch (error) {
+        if (!mounted || token != _previewPollToken) {
+          return;
+        }
+        setState(() {
+          _previewPolling = false;
+          _previewError = _formatError(error);
+        });
+        return;
+      }
+      await Future<void>.delayed(const Duration(seconds: 3));
+    }
+    if (!mounted || token != _previewPollToken) {
+      return;
+    }
+    setState(() {
+      _previewPolling = false;
+      _previewError = 'Preview generation timed out.';
+    });
   }
 
   Future<void> _loadRecommendedItemDetails(
@@ -752,6 +842,10 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
           const SizedBox(height: 8),
           _buildReasonBlock(data.preferenceReason!),
         ],
+        if (_shouldShowAgentPreview(data)) ...[
+          const SizedBox(height: 10),
+          _buildAgentPreviewBlock(data),
+        ],
         const SizedBox(height: 14),
         for (final item in data.outfit.items) _buildOutfitItemTile(item),
         if (data.missingItems.isNotEmpty) ...[
@@ -793,6 +887,106 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
       child: Text(
         text,
         style: TextStyle(fontSize: 13, height: 1.35, color: _textSecondary),
+      ),
+    );
+  }
+
+  bool _shouldShowAgentPreview(AgentChatData data) {
+    final previewStatus = data.preview['status']?.toString();
+    return _agentPreviewTask != null ||
+        previewStatus == 'success' ||
+        previewStatus == 'failed';
+  }
+
+  Widget _buildAgentPreviewBlock(AgentChatData data) {
+    final task = _agentPreviewTask;
+    final status =
+        task?['status']?.toString() ??
+        data.preview['status']?.toString()?.toUpperCase() ??
+        'PENDING';
+    final imageUrl = task?['previewImageUrl']?.toString();
+    final message =
+        _previewError ??
+        data.preview['messageForUser']?.toString() ??
+        'Generating outfit preview...';
+    final completed =
+        status == 'COMPLETED' && imageUrl != null && imageUrl.isNotEmpty;
+    final failed = status == 'FAILED' || data.preview['status'] == 'failed';
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: _surface,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Theme.of(context).dividerColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                completed
+                    ? Icons.image_rounded
+                    : failed
+                    ? Icons.error_outline_rounded
+                    : Icons.auto_awesome_motion_rounded,
+                size: 18,
+                color: failed ? Colors.redAccent : _accent,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Outfit preview',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: _textPrimary,
+                  ),
+                ),
+              ),
+              if (_previewPolling)
+                SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: _accent,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (completed)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: SizedBox(
+                height: 260,
+                width: double.infinity,
+                child: AppRemoteImage(
+                  url: imageUrl,
+                  fit: BoxFit.contain,
+                  placeholder: Center(
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: _accent,
+                    ),
+                  ),
+                  errorWidget: Center(
+                    child: Icon(
+                      Icons.broken_image_outlined,
+                      color: _textSecondary,
+                    ),
+                  ),
+                ),
+              ),
+            )
+          else
+            Text(
+              failed ? message : 'Preview task is ${status.toLowerCase()}.',
+              style: TextStyle(fontSize: 12, height: 1.3, color: _textSecondary),
+            ),
+        ],
       ),
     );
   }
